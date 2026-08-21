@@ -3,7 +3,8 @@
 ## Language and build
 
 - C11 (`-std=gnu11`), compiled with `-Wall -Wextra`. Keep the build warning-free — treat any new warning as a bug to fix before moving on, not something to suppress.
-- No third-party dependencies. Only libc, pthreads, and (on Windows) the Win32 API.
+- No third-party dependencies, with one exception: `src/http.c` links libcurl (`-lcurl`) for HTTPS/TLS, since hand-rolling TLS is not something to do in-house. It's the only third-party dependency in the project, confined to that one file. The native build links it dynamically against the system's libcurl, never bundling/vendoring its source; the Windows cross-build statically links it (`mingw64-curl-static`), matching how it already statically links everything else there to ship one self-contained `.exe`. Don't reach for another dependency without the same justification (a capability libc genuinely can't provide).
+- Otherwise: only libc, pthreads, and (on Windows) the Win32 API.
 - Platform-specific code (`#ifdef _WIN32`) stays isolated inside `src/render/term.c`. No other file should need an `#ifdef` for OS differences — if a new platform-specific need shows up, add the primitive to `term.h`/`term.c` rather than spreading `#ifdef`s around.
 
 ## Naming

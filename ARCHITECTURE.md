@@ -1,27 +1,45 @@
 # Architecture
 
-clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. Right now it's just the render/UI layer plus a demo driver in `main.c` — there is no agent/model backend yet. The layering exists specifically so that backend can be dropped in later without touching the rendering code.
+clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. It's the render/UI layer plus a demo driver in `main.c`, and a separate backend layer (`json.c`, `http.c`, `providers/`) for talking to LLM APIs. The two aren't wired together yet - `providers/openai.c` is exercised standalone via `test_openai.c` (see "Backend" below), not through the render layer or `ClayApp`.
 
 ## Layers
 
 ```
 src/mm/            growable primitives: arena, str, array, map
+src/json.c          minimal JSON value tree: parse, build, stringify
+src/http.c          HTTP client, built on mm + libcurl
+src/providers/      LLM provider clients, built on http + json (openai.c, ...)
 src/render/         drawing primitives, built on mm + term
 src/render/modals/  purpose-built composite interactive widgets, built on render
 src/commands/       command registry + app state machine
 src/main.c          demo driver: wires commands to the app and render engine
+src/test_openai.c   standalone harness for the OpenAI provider (see "Backend")
 ```
 
-Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `render` depends on `mm` and `term`. `commands` depends on `render` (it calls render functions, never the other way around). `main.c` is the only file that knows about all of them at once.
+Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `render` depends on `mm` and `term`. `commands` depends on `render` (it calls render functions, never the other way around). `main.c` is the only file that knows about the render/commands stack as a whole; `test_openai.c` is the only file that knows about the backend stack as a whole - neither currently includes the other.
 
 ### `src/mm/` — memory
 
 - `arena.c` — bump allocator for scoped batch allocations.
 - `str.c` (`ClayStr`) — growable string buffer; the default choice for anything of unknown length.
-- `array.c` (`ClayArray`) — growable, type-erased dynamic array (doubles on growth).
+- `array.c` (`ClayArray`) — growable, type-erased dynamic array (doubles on growth), with `clay_array_insert`/`clay_array_remove` for mid-array edits.
 - `map.c` (`ClayMap`) — string-keyed hash map, separate chaining, used for the command registry's name → handler lookup.
 
 These have no knowledge of terminals or rendering. They exist so nothing above this layer needs a fixed-size buffer for caller-supplied data.
+
+### `src/json.c` — JSON
+
+An opaque `ClayJson` value tree (null/bool/number/string/array/object), built on `ClayStr`/`ClayArray`. Constructors (`clay_json_object`, `clay_json_string`, ...) and mutators (`clay_json_object_set`, `clay_json_array_push`) take ownership of what's passed in; `clay_json_clone` deep-copies a value the caller wants to keep borrowing (e.g. a tool schema reused across several requests) into an independently-owned tree. `clay_json_parse` is a plain recursive-descent parser; `clay_json_stringify` serializes compact JSON. No schema validation, no comments/trailing-comma leniency - it only needs to round-trip what the providers below send and receive.
+
+### `src/http.c` — HTTP client
+
+A thin wrapper over libcurl's easy interface - the only place in the project that links a third-party library, and only dynamically (`-lcurl`, never bundled/static; see CODESTYLE.md). `clay_http_request` runs synchronously on the calling thread; a streaming response is read via a caller-supplied `on_chunk` callback (raw bytes, not line-buffered) instead of being accumulated whole, since a chat completion can stay open for a while. Callers needing whole lines (SSE) do their own buffering - see `providers/openai.c`.
+
+### `src/providers/` — LLM provider clients
+
+- `openai.c` — talks to any OpenAI-compatible `/chat/completions` endpoint: streaming responses (SSE, parsed line-by-line as chunks arrive in `on_http_chunk`, since a chunk boundary can land mid-line), JSON tool calls (accumulated across streamed deltas by their `index`, since the API sends id/name/argument-fragments as separate events), and the tool-call loop (`clay_openai_run` appends the assistant's tool-call message and each tool's result to `messages`, then resends the conversation, up to `max_rounds`, until the model answers with plain content and no further tool calls).
+
+Not wired into `ClayApp`/the render layer yet - `src/test_openai.c` is a standalone binary (`bin/test_openai`, the Makefile's `test-openai` target) that exercises `providers/openai.c` directly against a real endpoint: streaming tokens to stdout, one demo tool (`get_weather`) to exercise the tool loop, and `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` read from the environment so a token never ends up in argv or committed code. It's excluded from the main `clay` binary (both define `main`).
 
 ### `src/render/` — drawing primitives
 
@@ -60,4 +78,4 @@ The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select
 
 ## Build
 
-`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` builds and runs the native binary.
+`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked except for libcurl - see CODESTYLE.md). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` builds and runs the native binary. `make test-openai` builds `bin/test_openai` from the same object tree minus `main.o`, plus `test_openai.o` - see "`src/providers/`" above.

@@ -1,0 +1,96 @@
+#include "clay/http.h"
+
+#include "clay/str.h"
+
+#include <curl/curl.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+    ClayHttpResponse *response;
+    ClayHttpChunkFn on_chunk;
+    void *userdata;
+} ClayHttpWriteCtx;
+
+static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    ClayHttpWriteCtx *ctx = userdata;
+    size_t len = size * nmemb;
+
+    if (ctx->on_chunk) {
+        return ctx->on_chunk(ptr, len, ctx->userdata) ? 0 : len;
+    }
+
+    ClayHttpResponse *r = ctx->response;
+    char *grown = realloc(r->body, r->body_len + len + 1);
+    if (!grown) return 0;
+    r->body = grown;
+    memcpy(r->body + r->body_len, ptr, len);
+    r->body_len += len;
+    r->body[r->body_len] = '\0';
+    return len;
+}
+
+int clay_http_init(void) {
+    return curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK ? 0 : -1;
+}
+
+void clay_http_cleanup(void) {
+    curl_global_cleanup();
+}
+
+int clay_http_request(const ClayHttpRequest *req, ClayHttpResponse *response) {
+    memset(response, 0, sizeof(*response));
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return -1;
+
+    struct curl_slist *headers = NULL;
+    for (size_t i = 0; i < req->header_count; i++) {
+        ClayStr line;
+        clay_str_init(&line);
+        clay_str_printf(&line, "%s: %s", req->headers[i].name, req->headers[i].value);
+        headers = curl_slist_append(headers, line.data);
+        clay_str_free(&line);
+    }
+
+    ClayHttpWriteCtx ctx = {response, req->on_chunk, req->userdata};
+
+    curl_easy_setopt(curl, CURLOPT_URL, req->url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    if (req->timeout_seconds > 0) {
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)req->timeout_seconds);
+    }
+
+    if (req->method && strcmp(req->method, "POST") == 0) {
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req->body ? req->body : "");
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)req->body_len);
+    } else if (req->method && strcmp(req->method, "GET") != 0) {
+        curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req->method);
+        if (req->body) {
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req->body);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)req->body_len);
+        }
+    }
+
+    CURLcode rc = curl_easy_perform(curl);
+
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    response->status = status;
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    return rc == CURLE_OK ? 0 : -1;
+}
+
+void clay_http_response_free(ClayHttpResponse *response) {
+    free(response->body);
+    response->body = NULL;
+    response->body_len = 0;
+}
