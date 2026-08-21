@@ -6,13 +6,16 @@
 
 Bring your own model. Stay in your flow. Ship better work.
 
-`C11` &nbsp;·&nbsp; `OpenAI-compatible` &nbsp;·&nbsp; `~46 KB compressed`
+[![Release](https://img.shields.io/github/v/release/sammwyy/clay?style=flat-square&color=orange&label=release&sort=semver)](https://github.com/sammwyy/clay/releases/latest)
+![Language](https://img.shields.io/badge/language-C11-blue?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational?style=flat-square)
+![Size](https://img.shields.io/badge/binary-~52%20KB%20compressed-success?style=flat-square)
 
 </div>
 
 ```text
   ┌────────────────────────────────────┐
-  │  clay — your AI code agent          │
+  │  clay v0.0.0 — your AI code agent  │
   └────────────────────────────────────┘
 
 > review this project and find the rough edges
@@ -20,7 +23,7 @@ Bring your own model. Stay in your flow. Ship better work.
   ✓ 1.2s · your-model (your-provider) · ↑ 842  ↓ 126
 ```
 
-Clay is a compact coding-agent harness built for people who prefer to stay in the terminal. It connects to the models you already use and keeps the work grounded in your workspace.
+Clay is a compact coding-agent harness built for people who prefer to stay in the terminal. It connects to the models you already use, remembers what matters between sessions, and keeps the work grounded in your workspace.
 
 No giant framework to learn. No crowded dashboard. Just you, your project, and an agent that can help move the work forward.
 
@@ -28,14 +31,15 @@ No giant framework to learn. No crowded dashboard. Just you, your project, and a
 
 | | |
 | --- | --- |
-| **Your models, your choice** | Connect OpenAI, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider’s models without leaving the terminal. |
+| **Your models, your choice** | Connect OpenAI, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider's models without leaving the terminal. |
 | **A real terminal partner** | Clay can inspect files, run project commands, make changes, and explain what it found as it works. |
+| **Memory that lasts** | Long-term memory (`/memory`) survives across every chat; a short-term scratchpad rides along with the active conversation as it grows. |
 | **Sandboxed by default** | On Linux, shell commands run in their own namespaced filesystem — `/workspace` is your project, `/scratch`/`/tmp` is conversation scratch space, your home is read-only. Opt out with `/sandbox`. |
 | **A focused interface** | Streaming output, visible status, reasoning controls, token counts, and instant cancellation stay out of the way of the prompt. |
 
 ## Get to your first task
 
-Start Clay in a safe playground:
+Grab a prebuilt binary from the [latest release](https://github.com/sammwyy/clay/releases/latest), or build from source and start in a safe playground:
 
 ```sh
 make run
@@ -60,13 +64,15 @@ make build
 
 ## Designed around the terminal
 
-**A model picker that respects your time.** Connected providers become tabs. Clay retrieves a provider’s models when you open it, then keeps that list available for the rest of the session.
+**A model picker that respects your time.** Connected providers become tabs. Clay retrieves a provider's models when you open it, then keeps that list available for the rest of the session.
 
-**Reasoning when you need it.** Use `/effort` to match the model’s reasoning level to the job: quick answers for small tasks, deeper thought for harder ones.
+**Reasoning when you need it.** Use `/effort` to match the model's reasoning level to the job: quick answers for small tasks, deeper thought for harder ones.
 
 **Your workspace is part of the conversation.** When the model needs evidence, it can use the terminal in the selected working directory instead of guessing.
 
 **Isolated by default, unleashed when you want.** On Linux, `shell_exec` runs inside its own user/mount/pid namespace: `/workspace` maps to your project, `/scratch` and `/tmp` are a per-conversation scratch dir, and your home is mounted read-only so `.bashrc` and your own binaries still work. `/sandbox` switches to Unleashed (no sandbox) or toggles whether paths outside the workspace are writable. Windows runs Unleashed only, for now.
+
+**Remembers on purpose, not by accident.** The agent saves a long-term memory entry after real decisions and bug fixes, and reads one back up in a future chat — you stay in control with `/memory`, which browses, reads, or deletes any entry.
 
 **Cancel without losing your place.** Press `Esc` or `Ctrl-C` while Clay is generating. The generation stops, the chat is preserved, and you are back at the prompt.
 
@@ -79,6 +85,7 @@ make build
 | `/effort` | Set the model reasoning effort when supported. |
 | `/sandbox` | Switch between Sandbox and Unleashed execution, and set access outside the workspace. |
 | `/exec <command>` | Run a shell command through the sandbox directly, without going through the model. |
+| `/memory [slug]` | Browse long-term memory, or read one entry directly. `/memory forget <slug>` deletes it. |
 | `/new` | Start fresh. Your next message creates a new chat. |
 | `/clear` | Alias for `/new`. |
 | `/resume` | Return to any saved conversation. |
@@ -99,7 +106,7 @@ make build
 
 - [ ] Reusable skills
 - [ ] Smoother use of multiple providers in one conversation
-- [ ] Memory across chats
+- [x] Memory across chats
 - [ ] A Windows sandbox (Unleashed only today)
 - [ ] A built-in shell with real intent detection (`rm`, `mv`, `cp`, ...), not just a namespaced `bash`
 - [ ] Image support
