@@ -26,6 +26,16 @@ typedef struct {
     const char *description;
 } ClayReasoningEffort;
 
+/* Approval categories, independent of the sandbox (namespace) axis: whether
+   a tool call needs the user's OK before it runs at all. */
+typedef enum {
+    CLAY_PERMISSION_READ,      /* read/glob/grep */
+    CLAY_PERMISSION_EDIT,      /* write/edit */
+    CLAY_PERMISSION_EXEC_SAFE, /* shell_exec, curated read-only-ish commands */
+    CLAY_PERMISSION_EXEC_ALL,  /* shell_exec, everything else */
+    CLAY_PERMISSION_CATEGORY_COUNT,
+} ClayPermissionCategory;
+
 struct ClayCommands {
     ClayApp *app;
     int running;
@@ -43,6 +53,8 @@ struct ClayCommands {
     int reasoning_effort_index;
     ClaySandboxMode sandbox_mode;
     ClaySandboxAccess sandbox_access;
+    int auto_approve[CLAY_PERMISSION_CATEGORY_COUNT];
+    ClayArray remembered_patterns[CLAY_PERMISSION_CATEGORY_COUNT]; /* char*, approved for this session only */
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands, const char *id);
@@ -59,6 +71,19 @@ size_t clay_commands_reasoning_effort_count(void);
 const ClayReasoningEffort *clay_commands_reasoning_efforts(void);
 void clay_commands_load_provider(ClayCommands *commands, const ClayProviderType *type);
 void clay_commands_print_history(ClayCommands *commands, size_t count);
+
+/* Approval gate (src/commands/permissions.c). `action` is a short present-
+   tense verb phrase shown in the prompt ("Write", "Run"); `detail` is the
+   file path (read/edit) or full command (exec) - used for the prompt and to
+   derive a wildcard pattern when the user chooses to remember it for the
+   session. True if allowed. */
+int clay_permissions_check(ClayCommands *commands, ClayPermissionCategory category, const char *action,
+                           const char *detail);
+/* True if `command`'s program name is on the curated read-only-ish
+   whitelist (ls, cat, grep, git status, ...). */
+int clay_permissions_is_safe_command(const char *command);
+const char *clay_permissions_category_name(ClayPermissionCategory category);
+const char *clay_permissions_category_label(ClayPermissionCategory category);
 
 void clay_cmd_exit(const char *args, void *user_data);
 void clay_cmd_help(const char *args, void *user_data);
@@ -78,6 +103,7 @@ void clay_cmd_demo(const char *args, void *user_data);
 void clay_cmd_sandbox(const char *args, void *user_data);
 void clay_cmd_exec(const char *args, void *user_data);
 void clay_cmd_checkpoints(const char *args, void *user_data);
+void clay_cmd_permissions(const char *args, void *user_data);
 
 /* Dedicated filesystem tools (src/commands/fs_tools.c), each scoped to the
    current workspace directory. userdata is a ClayCommands*. */

@@ -23,4 +23,9 @@ void clay_str_remove_n(ClayStr *s, size_t at, size_t len);                   /* 
 void clay_str_printf(ClayStr *s, const char *fmt, ...);
 void clay_str_vprintf(ClayStr *s, const char *fmt, va_list args);
 
+/* Classic shell-style wildcard match against plain C strings (not
+   ClayStr): '*' matches any run of characters (including '/'), '?' matches
+   exactly one. No libc glob/fnmatch, which Windows doesn't provide. */
+int clay_str_wildcard_match(const char *pattern, const char *text);
+
 #endif /* CLAY_STR_H */

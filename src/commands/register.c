@@ -24,5 +24,7 @@ void clay_commands_register(ClayCommands *commands) {
                           commands);
     clay_command_register(registry, "checkpoints", "Browse and restore this chat's workspace checkpoints",
                           clay_cmd_checkpoints, commands);
+    clay_command_register(registry, "permissions", "Toggle auto-approval for read/edit/exec tool calls",
+                          clay_cmd_permissions, commands);
     clay_command_register(registry, "demo_all", "Run the complete render demo sequence", clay_cmd_demo, commands);
 }

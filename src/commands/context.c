@@ -327,6 +327,10 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     commands->sandbox_access =
         strcmp(sandbox_access, "writable") == 0 ? CLAY_SANDBOX_ACCESS_WRITABLE : CLAY_SANDBOX_ACCESS_READONLY;
     free(sandbox_access);
+    for (int i = 0; i < CLAY_PERMISSION_CATEGORY_COUNT; i++) {
+        commands->auto_approve[i] = clay_config_auto_approve(clay_permissions_category_name((ClayPermissionCategory)i));
+        clay_array_init(&commands->remembered_patterns[i], sizeof(char *));
+    }
     clay_commands_reset_conversation(commands);
     clay_config_selection_save(commands->selected_provider, commands->selected_model);
     clay_below_add(0, "status");
@@ -349,6 +353,11 @@ void clay_commands_destroy(ClayCommands *commands) {
     clay_chat_destroy(commands->chat);
     free(commands->selected_provider);
     free(commands->selected_model);
+    for (int i = 0; i < CLAY_PERMISSION_CATEGORY_COUNT; i++) {
+        ClayArray *remembered = &commands->remembered_patterns[i];
+        for (size_t j = 0; j < remembered->count; j++) free(*(char **)clay_array_get(remembered, j));
+        clay_array_free(remembered);
+    }
     free(commands);
 }
 

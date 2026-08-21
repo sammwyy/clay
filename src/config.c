@@ -258,3 +258,32 @@ char *clay_config_sandbox_access(void) {
 int clay_config_set_sandbox_access(const char *access) {
     return set_string_field("sandbox_access", access);
 }
+
+/* Reads and edits are low-risk (and edits are checkpointed, see
+   clay/checkpoint.h) so they default to on; running arbitrary commands
+   defaults to off, with a curated safe subset defaulting on. */
+static int auto_approve_default(const char *category) {
+    return strcmp(category, "exec_all") != 0;
+}
+
+int clay_config_auto_approve(const char *category) {
+    ClayJson *root = load_selection_root();
+    ClayStr key;
+    clay_str_init(&key);
+    clay_str_printf(&key, "auto_approve_%s", category);
+    ClayJson *value = clay_json_object_get(root, key.data);
+    int result = clay_json_type(value) == CLAY_JSON_BOOL ? clay_json_bool_value(value) : auto_approve_default(category);
+    clay_str_free(&key);
+    clay_json_free(root);
+    return result;
+}
+
+int clay_config_set_auto_approve(const char *category, int value) {
+    ClayJson *root = load_selection_root();
+    ClayStr key;
+    clay_str_init(&key);
+    clay_str_printf(&key, "auto_approve_%s", category);
+    clay_json_object_set(root, key.data, clay_json_bool(value));
+    clay_str_free(&key);
+    return save_selection_root(root);
+}

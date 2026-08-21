@@ -40,4 +40,9 @@ int clay_config_set_sandbox_mode(const char *mode);
 char *clay_config_sandbox_access(void);
 int clay_config_set_sandbox_access(const char *access);
 
+/* Auto-approve toggles for tool categories. `category` is "read", "edit",
+   "exec_safe", or "exec_all". */
+int clay_config_auto_approve(const char *category);
+int clay_config_set_auto_approve(const char *category, int value);
+
 #endif /* CLAY_CONFIG_H */

@@ -34,8 +34,36 @@ static void checkpoint_before(ClayCommands *commands, const char *label) {
     free(workspace_dir);
 }
 
+static ClayJson *denied_result(void) {
+    ClayJson *result = clay_json_object();
+    clay_json_object_set(result, "ok", clay_json_bool(0));
+    clay_json_object_set(result, "error", clay_json_string("denied by the user"));
+    return result;
+}
+
+static ClayJson *read_tool_gated(const ClayJson *arguments, void *userdata) {
+    const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
+    if (path && *path && !clay_permissions_check(userdata, CLAY_PERMISSION_READ, "Read", path)) return denied_result();
+    return clay_fs_tool_read(arguments, userdata);
+}
+
+static ClayJson *glob_tool_gated(const ClayJson *arguments, void *userdata) {
+    const char *pattern = clay_json_string_value(clay_json_object_get(arguments, "pattern"));
+    if (pattern && *pattern && !clay_permissions_check(userdata, CLAY_PERMISSION_READ, "List files matching", pattern))
+        return denied_result();
+    return clay_fs_tool_glob(arguments, userdata);
+}
+
+static ClayJson *grep_tool_gated(const ClayJson *arguments, void *userdata) {
+    const char *pattern = clay_json_string_value(clay_json_object_get(arguments, "pattern"));
+    if (pattern && *pattern && !clay_permissions_check(userdata, CLAY_PERMISSION_READ, "Search for", pattern))
+        return denied_result();
+    return clay_fs_tool_grep(arguments, userdata);
+}
+
 static ClayJson *write_tool_checkpointed(const ClayJson *arguments, void *userdata) {
     const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
+    if (path && *path && !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Write", path)) return denied_result();
     ClayStr label;
     clay_str_init(&label);
     clay_str_printf(&label, "write: %s", path && *path ? path : "?");
@@ -46,6 +74,7 @@ static ClayJson *write_tool_checkpointed(const ClayJson *arguments, void *userda
 
 static ClayJson *edit_tool_checkpointed(const ClayJson *arguments, void *userdata) {
     const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
+    if (path && *path && !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Edit", path)) return denied_result();
     ClayStr label;
     clay_str_init(&label);
     clay_str_printf(&label, "edit: %s", path && *path ? path : "?");
@@ -68,6 +97,13 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     clay_str_init(&invocation);
     clay_str_push(&invocation, command);
     if (*args) clay_str_printf(&invocation, " %s", args);
+    ClayPermissionCategory exec_category =
+        clay_permissions_is_safe_command(invocation.data) ? CLAY_PERMISSION_EXEC_SAFE : CLAY_PERMISSION_EXEC_ALL;
+    if (!clay_permissions_check(commands, exec_category, "Run", invocation.data)) {
+        clay_json_free(result);
+        clay_str_free(&invocation);
+        return denied_result();
+    }
     checkpoint_before(commands, invocation.data);
     ClayStr output;
     clay_str_init(&output);
@@ -538,15 +574,15 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         {"remember", "Replaces this chat's short-term scratchpad, shown alongside the conversation every turn.",
          remember_schema_json, remember_tool, commands},
         {"read", "Reads a file from the workspace, with line numbers. Prefer this over shell_exec for reading files.",
-         read_schema_json, clay_fs_tool_read, commands},
+         read_schema_json, read_tool_gated, commands},
         {"write", "Creates or overwrites a file in the workspace with the given content.", write_schema_json,
          write_tool_checkpointed, commands},
         {"edit", "Replaces an exact, unique text match in a file. Prefer this over shell_exec/sed for edits.",
          edit_schema_json, edit_tool_checkpointed, commands},
         {"glob", "Lists files in the workspace whose path matches a wildcard pattern.", glob_schema_json,
-         clay_fs_tool_glob, commands},
+         glob_tool_gated, commands},
         {"grep", "Searches file contents in the workspace for a regular expression.", grep_schema_json,
-         clay_fs_tool_grep, commands},
+         grep_tool_gated, commands},
     };
     if (clay_term_is_interactive()) clay_term_raw_enable();
     int rc = clay_openai_run(client, messages, tools, sizeof(tools) / sizeof(tools[0]), 8, &callbacks);

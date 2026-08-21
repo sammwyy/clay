@@ -82,3 +82,24 @@ void clay_str_printf(ClayStr *s, const char *fmt, ...) {
     clay_str_vprintf(s, fmt, args);
     va_end(args);
 }
+
+int clay_str_wildcard_match(const char *pattern, const char *text) {
+    const char *p = pattern;
+    const char *t = text;
+    const char *star_p = NULL;
+    const char *star_t = NULL;
+    while (*t) {
+        if (*p == '?' || (*p && *p == *t)) {
+            p++;
+            t++;
+        } else if (*p == '*') {
+            star_p = p++;
+            star_t = t;
+        } else if (star_p) {
+            p = star_p + 1;
+            t = ++star_t;
+        } else return 0;
+    }
+    while (*p == '*') p++;
+    return *p == '\0';
+}

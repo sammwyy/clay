@@ -429,30 +429,6 @@ ClayJson *clay_fs_tool_edit_schema(void) {
     return schema;
 }
 
-/* Classic shell-style wildcard match: '*' matches any run of characters
-   (including '/'), '?' matches exactly one. No libc glob/fnmatch, which
-   Windows doesn't provide - see CODESTYLE.md. */
-static int wildcard_match(const char *pattern, const char *text) {
-    const char *p = pattern;
-    const char *t = text;
-    const char *star_p = NULL;
-    const char *star_t = NULL;
-    while (*t) {
-        if (*p == '?' || (*p && *p == *t)) {
-            p++;
-            t++;
-        } else if (*p == '*') {
-            star_p = p++;
-            star_t = t;
-        } else if (star_p) {
-            p = star_p + 1;
-            t = ++star_t;
-        } else return 0;
-    }
-    while (*p == '*') p++;
-    return *p == '\0';
-}
-
 static void glob_walk(const char *base_dir, const char *rel_prefix, const char *pattern, ClayArray *matches,
                       int *truncated) {
     if (*truncated || matches->count >= CLAY_FS_GLOB_MAX_MATCHES) {
@@ -481,7 +457,7 @@ static void glob_walk(const char *base_dir, const char *rel_prefix, const char *
 
         if (clay_term_is_dir(full.data)) {
             glob_walk(full.data, rel.data, pattern, matches, truncated);
-        } else if (wildcard_match(pattern, rel.data)) {
+        } else if (clay_str_wildcard_match(pattern, rel.data)) {
             if (matches->count >= CLAY_FS_GLOB_MAX_MATCHES) *truncated = 1;
             else {
                 char *copy = strdup(rel.data);
