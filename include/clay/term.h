@@ -1,6 +1,8 @@
 #ifndef CLAY_TERM_H
 #define CLAY_TERM_H
 
+#include "clay/str.h"
+
 #include <stddef.h>
 
 /* Enables ANSI escapes on Windows consoles; no-op elsewhere. Call once
@@ -15,6 +17,11 @@ void clay_term_cursor_down(int n);
 void clay_term_cursor_col(int col); /* 0-based column, absolute */
 void clay_term_insert_line(void); /* inserts one blank row at the cursor */
 void clay_term_sleep_ms(int ms);
+
+/* Runs a shell command in the current directory, appending combined
+   stdout/stderr to output up to output_limit. */
+int clay_term_shell_exec(const char *command, ClayStr *output, size_t output_limit, int *exit_code,
+                         int *output_truncated);
 
 int clay_term_width(void);
 int clay_term_supports_color(void); /* terminal capability: isatty + not "dumb" */

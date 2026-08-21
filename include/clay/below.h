@@ -44,6 +44,7 @@ void clay_below_render_status(void);
    prepare_prompt when the stream completes. */
 void clay_below_status_insert_above(void);
 void clay_below_status_push_down(void);
+void clay_below_status_finish_output(void);
 void clay_below_status_refresh_below(void);
 void clay_below_status_prepare_prompt(void);
 

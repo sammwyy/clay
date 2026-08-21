@@ -9,7 +9,12 @@
 
 #define CLAY_VERSION "0.0.0"
 #define CLAY_SYSTEM_PROMPT "You are clay, a helpful AI coding assistant. Be concise, accurate, and practical. " \
-                           "Explain code changes clearly and ask for clarification when the request is ambiguous."
+                           "Explain code changes clearly and ask for clarification when the request is ambiguous. " \
+                           "Use shell_exec when inspecting or changing the current workspace helps answer the user. " \
+                           "It runs its command in the current workspace; prefer focused commands and summarize results."
+
+#define CLAY_SHELL_OUTPUT_LIMIT (64 * 1024)
+#define CLAY_TOOL_VISIBLE_LINES 8
 
 static int g_running = 1;
 static ClayJson *g_conversation = NULL;
@@ -246,6 +251,65 @@ static void conversation_reset(void) {
     clay_json_array_push(g_conversation, clay_openai_message("system", CLAY_SYSTEM_PROMPT));
 }
 
+static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
+    (void)userdata;
+    const char *command = clay_json_string_value(clay_json_object_get(arguments, "command"));
+    const char *args = clay_json_string_value(clay_json_object_get(arguments, "args"));
+
+    ClayJson *result = clay_json_object();
+    if (!*command) {
+        clay_json_object_set(result, "ok", clay_json_bool(0));
+        clay_json_object_set(result, "error", clay_json_string("command is required"));
+        return result;
+    }
+
+    ClayStr invocation;
+    clay_str_init(&invocation);
+    clay_str_push(&invocation, command);
+    if (*args) clay_str_printf(&invocation, " %s", args);
+
+    ClayStr output;
+    clay_str_init(&output);
+    int exit_code = -1;
+    int output_truncated = 0;
+    int rc = clay_term_shell_exec(invocation.data, &output, CLAY_SHELL_OUTPUT_LIMIT, &exit_code, &output_truncated);
+
+    clay_json_object_set(result, "command", clay_json_string(invocation.data));
+    clay_json_object_set(result, "ok", clay_json_bool(rc == 0 && exit_code == 0));
+    clay_json_object_set(result, "exit_code", clay_json_number(exit_code));
+    clay_json_object_set(result, "output", clay_json_string(output.data));
+    clay_json_object_set(result, "output_truncated", clay_json_bool(output_truncated));
+    if (rc != 0) clay_json_object_set(result, "error", clay_json_string("failed to start command"));
+
+    clay_str_free(&output);
+    clay_str_free(&invocation);
+    return result;
+}
+
+static ClayJson *shell_exec_schema(void) {
+    ClayJson *command = clay_json_object();
+    clay_json_object_set(command, "type", clay_json_string("string"));
+    clay_json_object_set(command, "description", clay_json_string("Program or shell command to run."));
+
+    ClayJson *args = clay_json_object();
+    clay_json_object_set(args, "type", clay_json_string("string"));
+    clay_json_object_set(args, "description", clay_json_string("Optional command arguments, including shell quoting."));
+
+    ClayJson *properties = clay_json_object();
+    clay_json_object_set(properties, "command", command);
+    clay_json_object_set(properties, "args", args);
+
+    ClayJson *required = clay_json_array();
+    clay_json_array_push(required, clay_json_string("command"));
+
+    ClayJson *schema = clay_json_object();
+    clay_json_object_set(schema, "type", clay_json_string("object"));
+    clay_json_object_set(schema, "properties", properties);
+    clay_json_object_set(schema, "required", required);
+    clay_json_object_set(schema, "additionalProperties", clay_json_bool(0));
+    return schema;
+}
+
 static int fetch_connected_models(void *ctx, ClayArray *out) {
     ClayConnectedProvider *provider = ctx;
     if (!provider->models_fetched) {
@@ -391,11 +455,13 @@ static void cmd_model(const char *args, void *user_data) {
 typedef struct {
     int status_visible;
     int started;
+    int response_active;
     int output_col;
     long error_status;
     long input_tokens;
     long output_tokens;
     int has_usage;
+    ClayTask *tool_task;
 } ClayConversationStream;
 
 static void hide_conversation_status(ClayConversationStream *stream) {
@@ -417,9 +483,127 @@ static void set_conversation_status(double seconds, int success) {
     clay_str_free(&text);
 }
 
-static void on_conversation_token(const char *text, void *userdata) {
+static void show_conversation_thinking(ClayConversationStream *stream) {
+    clay_below_set_text("status", "");
+    clay_below_set_state("status", CLAY_BELOW_LOADING);
+    clay_below_set_enabled("status", 1);
+    clay_below_start_elapsed("status");
+    if (clay_term_is_interactive()) {
+        clay_below_set_editing(1);
+        clay_below_render_status();
+        stream->status_visible = 1;
+    }
+}
+
+static void close_response_for_tool(ClayConversationStream *stream) {
+    clay_below_set_editing(0);
+    if (stream->response_active) {
+        clay_response_end();
+        if (stream->status_visible) {
+            clay_below_status_finish_output();
+        } else {
+            fputc('\n', stdout);
+        }
+        stream->response_active = 0;
+        stream->status_visible = 0;
+    } else if (stream->status_visible) {
+        clay_below_finish();
+        stream->status_visible = 0;
+    }
+}
+
+static void append_tool_label_text(ClayStr *out, const char *text) {
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        if (*p == 0x1b) {
+            clay_str_push(out, "\\x1b");
+        } else if (*p < 0x20) {
+            clay_str_push_char(out, '?');
+        } else {
+            clay_str_push_char(out, (char)*p);
+        }
+    }
+}
+
+static void print_tool_output(const ClayJson *result) {
+    const char *output = clay_json_string_value(clay_json_object_get(result, "output"));
+    int truncated = clay_json_bool_value(clay_json_object_get(result, "output_truncated"));
+    if (!*output) {
+        clay_list_bullet("(no output)");
+        return;
+    }
+
+    ClayStr line;
+    clay_str_init(&line);
+    int shown = 0;
+    int omitted = 0;
+    for (const unsigned char *p = (const unsigned char *)output;; p++) {
+        if (*p == '\n' || *p == '\0') {
+            if (line.len > 0 && shown < CLAY_TOOL_VISIBLE_LINES) {
+                clay_list_bullet("%s", line.data);
+                shown++;
+            } else if (line.len > 0) {
+                omitted = 1;
+            }
+            clay_str_clear(&line);
+            if (*p == '\0') break;
+            continue;
+        }
+        if (*p == '\r') continue;
+        if (*p == 0x1b) {
+            clay_str_push(&line, "\\\\x1b");
+        } else if (*p < 0x20) {
+            clay_str_push_char(&line, '?');
+        } else {
+            clay_str_push_char(&line, (char)*p);
+        }
+    }
+    if (omitted || truncated) clay_list_bullet("%s…%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
+    clay_str_free(&line);
+}
+
+static void on_conversation_tool_call(const char *name, const char *arguments_json, void *userdata) {
     ClayConversationStream *stream = userdata;
-    if (!stream->started) {
+    close_response_for_tool(stream);
+
+    ClayJson *arguments = clay_json_parse(arguments_json, NULL);
+    const char *command = clay_json_string_value(clay_json_object_get(arguments, "command"));
+    const char *args = clay_json_string_value(clay_json_object_get(arguments, "args"));
+    ClayStr label;
+    clay_str_init(&label);
+    append_tool_label_text(&label, name);
+    if (*command) {
+        clay_str_push(&label, ": ");
+        append_tool_label_text(&label, command);
+    }
+    if (*args) {
+        clay_str_push_char(&label, ' ');
+        append_tool_label_text(&label, args);
+    }
+    stream->tool_task = clay_task_start("Running %s", label.data);
+    clay_str_free(&label);
+    clay_json_free(arguments);
+}
+
+static void on_conversation_tool_result(const char *name, const ClayJson *result, void *userdata) {
+    ClayConversationStream *stream = userdata;
+    int ok = clay_json_bool_value(clay_json_object_get(result, "ok"));
+    long exit_code = (long)clay_json_number_value(clay_json_object_get(result, "exit_code"));
+
+    if (stream->tool_task) {
+        if (ok) clay_task_success(stream->tool_task, "exit %ld", exit_code);
+        else clay_task_fail(stream->tool_task, "exit %ld", exit_code);
+        stream->tool_task = NULL;
+    } else {
+        clay_sayc(ok ? CLAY_GREEN : CLAY_RED, "%s finished with exit %ld.", name, exit_code);
+    }
+    print_tool_output(result);
+    show_conversation_thinking(stream);
+}
+
+static void on_conversation_token(const char *text, void *userdata) {
+    if (!text || !*text) return;
+    ClayConversationStream *stream = userdata;
+    if (!stream->response_active) {
         if (stream->status_visible) {
             clay_below_set_editing(0);
             clay_below_stop_elapsed("status");
@@ -429,6 +613,7 @@ static void on_conversation_token(const char *text, void *userdata) {
         }
         clay_response_begin();
         stream->output_col = clay_response_prefix_width();
+        stream->response_active = 1;
         stream->started = 1;
     }
 
@@ -473,8 +658,8 @@ static void on_conversation_error(long status, const char *body, void *userdata)
 
 static void on_conversation_usage(long input_tokens, long output_tokens, void *userdata) {
     ClayConversationStream *stream = userdata;
-    stream->input_tokens = input_tokens;
-    stream->output_tokens = output_tokens;
+    stream->input_tokens += input_tokens;
+    stream->output_tokens += output_tokens;
     stream->has_usage = 1;
 }
 
@@ -498,6 +683,8 @@ static int run_conversation(ClayApp *app, const char *input) {
     ClayConversationStream stream = {0};
     ClayOpenAICallbacks callbacks = {0};
     callbacks.on_token = on_conversation_token;
+    callbacks.on_tool_call = on_conversation_tool_call;
+    callbacks.on_tool_result = on_conversation_tool_result;
     callbacks.on_usage = on_conversation_usage;
     callbacks.on_error = on_conversation_error;
     callbacks.userdata = &stream;
@@ -505,17 +692,15 @@ static int run_conversation(ClayApp *app, const char *input) {
 
     struct timespec started_at;
     clock_gettime(CLOCK_MONOTONIC, &started_at);
-    clay_below_set_text("status", "");
-    clay_below_set_state("status", CLAY_BELOW_LOADING);
-    clay_below_set_enabled("status", 1);
-    clay_below_start_elapsed("status");
-    if (clay_term_is_interactive()) {
-        clay_below_set_editing(1);
-        clay_below_render_status();
-        stream.status_visible = 1;
-    }
+    show_conversation_thinking(&stream);
     clay_app_set_state(app, CLAY_APP_BUSY);
-    int rc = clay_openai_run(client, messages, NULL, 0, 1, &callbacks);
+    ClayJson *tool_schema = shell_exec_schema();
+    ClayTool tools[] = {
+        {"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.",
+         tool_schema, shell_exec_tool, NULL},
+    };
+    int rc = clay_openai_run(client, messages, tools, sizeof(tools) / sizeof(tools[0]), 8, &callbacks);
+    clay_json_free(tool_schema);
     clay_openai_destroy(client);
 
     struct timespec finished_at;
@@ -523,7 +708,7 @@ static int run_conversation(ClayApp *app, const char *input) {
     double seconds = (double)(finished_at.tv_sec - started_at.tv_sec) +
                      (double)(finished_at.tv_nsec - started_at.tv_nsec) / 1e9;
 
-    if (stream.started) clay_response_end();
+    if (stream.response_active) clay_response_end();
     if (rc == 0) {
         clay_json_free(g_conversation);
         g_conversation = messages;

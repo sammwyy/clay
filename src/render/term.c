@@ -16,6 +16,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 #define CLAY_PATH_MAX 4096
@@ -82,6 +83,41 @@ void clay_term_sleep_ms(int ms) {
 #else
     usleep((unsigned int)ms * 1000);
 #endif
+}
+
+int clay_term_shell_exec(const char *command, ClayStr *output, size_t output_limit, int *exit_code,
+                         int *output_truncated) {
+    ClayStr invocation;
+    clay_str_init(&invocation);
+    clay_str_printf(&invocation, "%s 2>&1", command);
+
+#ifdef _WIN32
+    FILE *pipe = _popen(invocation.data, "r");
+#else
+    FILE *pipe = popen(invocation.data, "r");
+#endif
+    clay_str_free(&invocation);
+    if (!pipe) return -1;
+
+    int truncated = 0;
+    int character;
+    while ((character = fgetc(pipe)) != EOF) {
+        if (output->len < output_limit) {
+            clay_str_push_char(output, character == '\0' ? '?' : (char)character);
+        } else {
+            truncated = 1;
+        }
+    }
+
+#ifdef _WIN32
+    int status = _pclose(pipe);
+    if (exit_code) *exit_code = status < 0 ? -1 : status;
+#else
+    int status = pclose(pipe);
+    if (exit_code) *exit_code = status < 0 ? -1 : (WIFEXITED(status) ? WEXITSTATUS(status) : status);
+#endif
+    if (output_truncated) *output_truncated = truncated;
+    return 0;
 }
 
 int clay_term_width(void) {

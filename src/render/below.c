@@ -359,6 +359,19 @@ void clay_below_status_push_down(void) {
     pthread_mutex_unlock(&g_lock);
 }
 
+void clay_below_status_finish_output(void) {
+    pthread_mutex_lock(&g_lock);
+    if (g_status_only) {
+        clay_term_cursor_down(1);
+        fputc('\r', stdout);
+        clay_term_clear_line();
+        g_status_only = 0;
+        g_last_line_count = 0;
+        fflush(stdout);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
 void clay_below_status_refresh_below(void) {
     pthread_mutex_lock(&g_lock);
     if (g_status_only) {
