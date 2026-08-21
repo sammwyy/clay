@@ -156,6 +156,19 @@ ClayJson *clay_fs_tool_glob(const ClayJson *arguments, void *userdata);
 ClayJson *clay_fs_tool_glob_schema(void);
 ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata);
 ClayJson *clay_fs_tool_grep_schema(void);
+/* Recursively collects every file under base_dir whose path (joined with
+   rel_prefix, "" at the top call) matches `pattern` (clay_str_wildcard_match)
+   into `matches` (char*, caller frees each entry and the array). Skips
+   .git. Caps at an internal match limit, setting *truncated if it hits it. */
+void clay_fs_walk_files(const char *base_dir, const char *rel_prefix, const char *pattern, ClayArray *matches,
+                        int *truncated);
+
+/* Heuristic repo map (src/commands/repo_map.c): ranked top-level symbol
+   definitions across the workspace, via ctags if installed, else a
+   per-language line-heuristic fallback. Not gated by clay_permissions_check
+   - it returns only symbol names/kinds/line numbers, not file content. */
+ClayJson *clay_fs_tool_repo_map(const ClayJson *arguments, void *userdata);
+ClayJson *clay_fs_tool_repo_map_schema(void);
 
 /* Plan/checklist tool (src/commands/message.c). Replaces commands->todos
    wholesale on each call. userdata is a ClayCommands*. */

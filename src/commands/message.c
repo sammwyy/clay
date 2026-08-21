@@ -469,6 +469,7 @@ static void tool_label(ClayStr *out, const char *name, int completed, int succes
     else if (strcmp(name, "glob") == 0) verb = completed ? (success ? "Found files" : "Glob failed") : "Globbing";
     else if (strcmp(name, "grep") == 0) verb = completed ? (success ? "Searched" : "Search failed") : "Searching";
     else if (strcmp(name, "todowrite") == 0) verb = completed ? (success ? "Updated plan" : "Failed to update plan") : "Updating plan";
+    else if (strcmp(name, "repo_map") == 0) verb = completed ? (success ? "Mapped repo" : "Repo map failed") : "Mapping repo";
     if (verb) {
         clay_str_push(out, verb);
         if (detail && *detail) {
@@ -706,6 +707,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     ClayJson *glob_schema_json = clay_fs_tool_glob_schema();
     ClayJson *grep_schema_json = clay_fs_tool_grep_schema();
     ClayJson *todowrite_schema_json = todowrite_schema();
+    ClayJson *repo_map_schema_json = clay_fs_tool_repo_map_schema();
     clay_commands_connect_mcp_servers(commands);
     ClayArray tool_list;
     clay_array_init(&tool_list, sizeof(ClayTool));
@@ -730,6 +732,10 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
          grep_tool_gated, commands},
         {"todowrite", "Writes the full task plan, shown to the user as a checklist. Use for any multi-step task.",
          todowrite_schema_json, todowrite_tool, commands},
+        {"repo_map", "Lists the workspace's top-level definitions (functions, classes, structs, ...) ranked by how "
+                    "often each is referenced elsewhere. Good for orienting in an unfamiliar codebase before "
+                    "reading specific files.",
+         repo_map_schema_json, clay_fs_tool_repo_map, commands},
     };
     for (size_t i = 0; i < sizeof(builtin_tools) / sizeof(builtin_tools[0]); i++) {
         clay_array_push_val(&tool_list, &builtin_tools[i]);
@@ -756,6 +762,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_json_free(glob_schema_json);
     clay_json_free(grep_schema_json);
     clay_json_free(todowrite_schema_json);
+    clay_json_free(repo_map_schema_json);
     clay_openai_destroy(client);
     struct timespec finished_at;
     clock_gettime(CLOCK_MONOTONIC, &finished_at);

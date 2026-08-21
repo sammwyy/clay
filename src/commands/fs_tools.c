@@ -11,9 +11,6 @@
 #define CLAY_FS_GLOB_MAX_MATCHES 500
 #define CLAY_FS_READ_SUGGESTION_LIMIT 5
 
-static void glob_walk(const char *base_dir, const char *rel_prefix, const char *pattern, ClayArray *matches,
-                      int *truncated);
-
 /* Resolves `path` (relative to the workspace, or absolute) to a normalized
    absolute path in `abs_out`. Returns 0 if the result stays inside
    `workspace_dir`, -1 if it would escape it. */
@@ -165,7 +162,7 @@ ClayJson *clay_fs_tool_read(const ClayJson *arguments, void *userdata) {
                 ClayArray matches;
                 clay_array_init(&matches, sizeof(char *));
                 int suggest_truncated = 0;
-                glob_walk(ws, "", suggest_pattern.data, &matches, &suggest_truncated);
+                clay_fs_walk_files(ws, "", suggest_pattern.data, &matches, &suggest_truncated);
                 clay_str_free(&suggest_pattern);
                 free(ws);
                 if (matches.count > 0) {
@@ -467,7 +464,7 @@ ClayJson *clay_fs_tool_edit_schema(void) {
     return schema;
 }
 
-static void glob_walk(const char *base_dir, const char *rel_prefix, const char *pattern, ClayArray *matches,
+void clay_fs_walk_files(const char *base_dir, const char *rel_prefix, const char *pattern, ClayArray *matches,
                       int *truncated) {
     if (*truncated || matches->count >= CLAY_FS_GLOB_MAX_MATCHES) {
         *truncated = 1;
@@ -494,7 +491,7 @@ static void glob_walk(const char *base_dir, const char *rel_prefix, const char *
         clay_str_push(&full, name);
 
         if (clay_term_is_dir(full.data)) {
-            glob_walk(full.data, rel.data, pattern, matches, truncated);
+            clay_fs_walk_files(full.data, rel.data, pattern, matches, truncated);
         } else if (clay_str_wildcard_match(pattern, rel.data)) {
             if (matches->count >= CLAY_FS_GLOB_MAX_MATCHES) *truncated = 1;
             else {
@@ -540,7 +537,7 @@ ClayJson *clay_fs_tool_glob(const ClayJson *arguments, void *userdata) {
     ClayArray matches;
     clay_array_init(&matches, sizeof(char *));
     int truncated = 0;
-    glob_walk(abs_base.data, "", pattern, &matches, &truncated);
+    clay_fs_walk_files(abs_base.data, "", pattern, &matches, &truncated);
     clay_str_free(&abs_base);
 
     if (matches.count > 0) qsort(matches.data, matches.count, sizeof(char *), compare_strings);

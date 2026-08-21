@@ -88,6 +88,10 @@ MCP_TEST_SRC    := tests/test_mcp.c
 MCP_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(MCP_TEST_SRC))
 MCP_TEST_TARGET := $(BIN_DIR)/test_mcp
 
+REPO_MAP_TEST_SRC    := tests/test_repo_map.c
+REPO_MAP_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(REPO_MAP_TEST_SRC))
+REPO_MAP_TEST_TARGET := $(BIN_DIR)/test_repo_map
+
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
@@ -101,7 +105,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp run compress compress-win clean debug
+.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map run compress compress-win clean debug
 
 all: build
 
@@ -179,6 +183,11 @@ test-mcp: $(MCP_TEST_TARGET)
 
 $(MCP_TEST_TARGET): $(LIB_OBJ) $(MCP_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(MCP_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-repo-map: $(REPO_MAP_TEST_TARGET)
+
+$(REPO_MAP_TEST_TARGET): $(LIB_OBJ) $(REPO_MAP_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(REPO_MAP_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)
