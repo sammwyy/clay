@@ -5,7 +5,8 @@
 #include <string.h>
 #include <time.h>
 
-#define CLAY_SHELL_OUTPUT_LIMIT (64 * 1024)
+#define CLAY_SHELL_OUTPUT_LIMIT (64 * 1024)  /* shown inline to the model */
+#define CLAY_SHELL_CAPTURE_LIMIT (4 * 1024 * 1024) /* captured, for the scratch dump */
 #define CLAY_TOOL_VISIBLE_LINES 8
 
 typedef struct {
@@ -138,15 +139,29 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
     };
-    int rc = clay_sandbox_exec(&sandbox, invocation.data, &output, CLAY_SHELL_OUTPUT_LIMIT, &exit_code,
+    int rc = clay_sandbox_exec(&sandbox, invocation.data, &output, CLAY_SHELL_CAPTURE_LIMIT, &exit_code,
                                &output_truncated);
     free(workspace_dir);
     free(scratch_dir);
     clay_json_object_set(result, "command", clay_json_string(invocation.data));
     clay_json_object_set(result, "ok", clay_json_bool(rc == 0 && exit_code == 0));
     clay_json_object_set(result, "exit_code", clay_json_number(exit_code));
-    clay_json_object_set(result, "output", clay_json_string(output.data));
-    clay_json_object_set(result, "output_truncated", clay_json_bool(output_truncated));
+    if (output.len > CLAY_SHELL_OUTPUT_LIMIT) {
+        char *scratch_path = clay_chat_dump_scratch(commands->chat, "shell", output.data);
+        ClayStr preview;
+        clay_str_init(&preview);
+        clay_str_push_n(&preview, output.data, CLAY_SHELL_OUTPUT_LIMIT);
+        if (scratch_path) clay_str_printf(&preview, "\n... (%zu bytes total, full output at %s)", output.len, scratch_path);
+        else clay_str_push(&preview, "\n... (truncated)");
+        clay_json_object_set(result, "output", clay_json_string(preview.data));
+        clay_json_object_set(result, "output_truncated", clay_json_bool(1));
+        if (scratch_path) clay_json_object_set(result, "scratch_path", clay_json_string(scratch_path));
+        clay_str_free(&preview);
+        free(scratch_path);
+    } else {
+        clay_json_object_set(result, "output", clay_json_string(output.data));
+        clay_json_object_set(result, "output_truncated", clay_json_bool(output_truncated));
+    }
     if (rc != 0) clay_json_object_set(result, "error", clay_json_string("failed to start command"));
     clay_str_free(&output);
     clay_str_free(&invocation);

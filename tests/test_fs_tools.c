@@ -52,6 +52,14 @@ int main(void) {
     assert(!ok(result));
     clay_json_free(result);
 
+    /* A nonexistent file suggests the real one by substring match. */
+    result = call(clay_fs_tool_read, "{\"path\":\"a.tx\"}");
+    assert(!ok(result));
+    const char *error = clay_json_string_value(clay_json_object_get(result, "error"));
+    assert(strstr(error, "did you mean"));
+    assert(strstr(error, "a.txt"));
+    clay_json_free(result);
+
     result = call(clay_fs_tool_glob, "{\"pattern\":\"*.txt\"}");
     assert(ok(result));
     output = clay_json_string_value(clay_json_object_get(result, "output"));

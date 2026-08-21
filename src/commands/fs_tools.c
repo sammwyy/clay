@@ -6,8 +6,13 @@
 #include <string.h>
 
 #define CLAY_FS_READ_LIMIT (256 * 1024)
-#define CLAY_FS_GREP_LIMIT (64 * 1024)
+#define CLAY_FS_GREP_LIMIT (64 * 1024)      /* shown inline to the model */
+#define CLAY_FS_GREP_CAPTURE_LIMIT (4 * 1024 * 1024) /* captured, for the scratch dump */
 #define CLAY_FS_GLOB_MAX_MATCHES 500
+#define CLAY_FS_READ_SUGGESTION_LIMIT 5
+
+static void glob_walk(const char *base_dir, const char *rel_prefix, const char *pattern, ClayArray *matches,
+                      int *truncated);
 
 /* Resolves `path` (relative to the workspace, or absolute) to a normalized
    absolute path in `abs_out`. Returns 0 if the result stays inside
@@ -144,7 +149,40 @@ ClayJson *clay_fs_tool_read(const ClayJson *arguments, void *userdata) {
     clay_str_free(&abs);
     if (!file) {
         clay_json_object_set(result, "ok", clay_json_bool(0));
-        clay_json_object_set(result, "error", clay_json_string(strerror(errno)));
+        ClayStr error;
+        clay_str_init(&error);
+        clay_str_push(&error, strerror(errno));
+        if (errno == ENOENT) {
+            const char *base_name = path;
+            for (const char *p = path; *p; p++) {
+                if (*p == '/') base_name = p + 1;
+            }
+            if (*base_name) {
+                char *ws = clay_term_cwd();
+                ClayStr suggest_pattern;
+                clay_str_init(&suggest_pattern);
+                clay_str_printf(&suggest_pattern, "*%s*", base_name);
+                ClayArray matches;
+                clay_array_init(&matches, sizeof(char *));
+                int suggest_truncated = 0;
+                glob_walk(ws, "", suggest_pattern.data, &matches, &suggest_truncated);
+                clay_str_free(&suggest_pattern);
+                free(ws);
+                if (matches.count > 0) {
+                    clay_str_push(&error, " - did you mean: ");
+                    size_t shown = matches.count < CLAY_FS_READ_SUGGESTION_LIMIT ? matches.count : CLAY_FS_READ_SUGGESTION_LIMIT;
+                    for (size_t i = 0; i < shown; i++) {
+                        if (i > 0) clay_str_push(&error, ", ");
+                        clay_str_push(&error, *(char **)clay_array_get(&matches, i));
+                    }
+                    clay_str_push_char(&error, '?');
+                }
+                for (size_t i = 0; i < matches.count; i++) free(*(char **)clay_array_get(&matches, i));
+                clay_array_free(&matches);
+            }
+        }
+        clay_json_object_set(result, "error", clay_json_string(error.data));
+        clay_str_free(&error);
         return result;
     }
 
@@ -583,7 +621,7 @@ ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata) {
     clay_str_init(&output);
     int exit_code = -1;
     int truncated = 0;
-    int rc = clay_sandbox_exec(&sandbox, invocation.data, &output, CLAY_FS_GREP_LIMIT, &exit_code, &truncated);
+    int rc = clay_sandbox_exec(&sandbox, invocation.data, &output, CLAY_FS_GREP_CAPTURE_LIMIT, &exit_code, &truncated);
     free(workspace_dir);
     free(scratch_dir);
     clay_str_free(&invocation);
@@ -592,8 +630,25 @@ ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata) {
        >1 for a real error (bad pattern, missing path, ...). */
     int ok = rc == 0 && exit_code <= 1;
     clay_json_object_set(result, "ok", clay_json_bool(ok));
-    clay_json_object_set(result, "output", clay_json_string(exit_code == 1 ? "" : output.data));
-    clay_json_object_set(result, "output_truncated", clay_json_bool(truncated));
+    if (exit_code == 1) {
+        clay_json_object_set(result, "output", clay_json_string(""));
+        clay_json_object_set(result, "output_truncated", clay_json_bool(0));
+    } else if (output.len > CLAY_FS_GREP_LIMIT) {
+        char *scratch_path = clay_chat_dump_scratch(commands->chat, "grep", output.data);
+        ClayStr preview;
+        clay_str_init(&preview);
+        clay_str_push_n(&preview, output.data, CLAY_FS_GREP_LIMIT);
+        if (scratch_path) clay_str_printf(&preview, "\n... (%zu bytes total, full output at %s)", output.len, scratch_path);
+        else clay_str_push(&preview, "\n... (truncated)");
+        clay_json_object_set(result, "output", clay_json_string(preview.data));
+        clay_json_object_set(result, "output_truncated", clay_json_bool(1));
+        if (scratch_path) clay_json_object_set(result, "scratch_path", clay_json_string(scratch_path));
+        clay_str_free(&preview);
+        free(scratch_path);
+    } else {
+        clay_json_object_set(result, "output", clay_json_string(output.data));
+        clay_json_object_set(result, "output_truncated", clay_json_bool(truncated));
+    }
     if (!ok) clay_json_object_set(result, "error", clay_json_string(rc != 0 ? "failed to start grep" : "grep failed"));
     clay_str_free(&output);
     return result;

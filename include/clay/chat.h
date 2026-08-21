@@ -41,6 +41,11 @@ char *clay_chat_scratch_dir(const ClayChat *chat);
    holding this chat's workspace snapshots, created if missing. Malloc'd;
    NULL on failure. */
 char *clay_chat_checkpoints_dir(const ClayChat *chat);
+
+/* Writes `content` to a fresh file under this chat's scratch dir, named
+   "<prefix>-<uuid>.txt". For dumping tool output too large to return
+   inline. Malloc'd path, or NULL on failure. */
+char *clay_chat_dump_scratch(const ClayChat *chat, const char *prefix, const char *content);
 int clay_chat_list(ClayArray *summaries); /* ClayChatSummary, caller frees with clay_chat_list_free */
 void clay_chat_list_free(ClayArray *summaries);
 ClayJson *clay_chat_recent_messages(const ClayChat *chat, size_t count);

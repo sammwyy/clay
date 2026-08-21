@@ -258,6 +258,34 @@ char *clay_chat_checkpoints_dir(const ClayChat *chat) {
     return path.data;
 }
 
+char *clay_chat_dump_scratch(const ClayChat *chat, const char *prefix, const char *content) {
+    char *dir = clay_chat_scratch_dir(chat);
+    if (!dir) return NULL;
+    char *id = clay_uuid_v4();
+    if (!id) {
+        free(dir);
+        return NULL;
+    }
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/%s-%s.txt", dir, prefix, id);
+    free(dir);
+    free(id);
+
+    FILE *file = fopen(path.data, "wb");
+    if (!file) {
+        clay_str_free(&path);
+        return NULL;
+    }
+    size_t len = strlen(content);
+    int ok = fwrite(content, 1, len, file) == len && fclose(file) == 0;
+    if (!ok) {
+        clay_str_free(&path);
+        return NULL;
+    }
+    return path.data;
+}
+
 void clay_chat_list_free(ClayArray *summaries) {
     for (size_t i = 0; i < summaries->count; i++) free(((ClayChatSummary *)clay_array_get(summaries, i))->id);
     clay_array_free(summaries);
