@@ -21,6 +21,39 @@ typedef struct {
     ClayStr response;
 } ClayConversationStream;
 
+/* Snapshots the workspace before a tool call that might mutate it, so
+   /checkpoints can undo it. Best-effort: a failed snapshot doesn't block
+   the tool call itself. */
+static void checkpoint_before(ClayCommands *commands, const char *label) {
+    if (!commands->chat) return;
+    char *checkpoints_dir = clay_chat_checkpoints_dir(commands->chat);
+    if (!checkpoints_dir) return;
+    char *workspace_dir = clay_term_cwd();
+    clay_checkpoint_save(checkpoints_dir, workspace_dir, label);
+    free(checkpoints_dir);
+    free(workspace_dir);
+}
+
+static ClayJson *write_tool_checkpointed(const ClayJson *arguments, void *userdata) {
+    const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
+    ClayStr label;
+    clay_str_init(&label);
+    clay_str_printf(&label, "write: %s", path && *path ? path : "?");
+    checkpoint_before(userdata, label.data);
+    clay_str_free(&label);
+    return clay_fs_tool_write(arguments, userdata);
+}
+
+static ClayJson *edit_tool_checkpointed(const ClayJson *arguments, void *userdata) {
+    const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
+    ClayStr label;
+    clay_str_init(&label);
+    clay_str_printf(&label, "edit: %s", path && *path ? path : "?");
+    checkpoint_before(userdata, label.data);
+    clay_str_free(&label);
+    return clay_fs_tool_edit(arguments, userdata);
+}
+
 static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     ClayCommands *commands = userdata;
     const char *command = clay_json_string_value(clay_json_object_get(arguments, "command"));
@@ -35,6 +68,7 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     clay_str_init(&invocation);
     clay_str_push(&invocation, command);
     if (*args) clay_str_printf(&invocation, " %s", args);
+    checkpoint_before(commands, invocation.data);
     ClayStr output;
     clay_str_init(&output);
     int exit_code = -1;
@@ -506,9 +540,9 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         {"read", "Reads a file from the workspace, with line numbers. Prefer this over shell_exec for reading files.",
          read_schema_json, clay_fs_tool_read, commands},
         {"write", "Creates or overwrites a file in the workspace with the given content.", write_schema_json,
-         clay_fs_tool_write, commands},
+         write_tool_checkpointed, commands},
         {"edit", "Replaces an exact, unique text match in a file. Prefer this over shell_exec/sed for edits.",
-         edit_schema_json, clay_fs_tool_edit, commands},
+         edit_schema_json, edit_tool_checkpointed, commands},
         {"glob", "Lists files in the workspace whose path matches a wildcard pattern.", glob_schema_json,
          clay_fs_tool_glob, commands},
         {"grep", "Searches file contents in the workspace for a regular expression.", grep_schema_json,

@@ -36,6 +36,11 @@ int clay_chat_set_notes(ClayChat *chat, const char *notes); /* persists; 0 on su
 /* ~/.clay/chats/<id>/scratch, created if missing. Malloc'd; NULL on
    failure. */
 char *clay_chat_scratch_dir(const ClayChat *chat);
+
+/* ~/.clay/chats/<id>/checkpoints - a bare git repo (see clay/checkpoint.h)
+   holding this chat's workspace snapshots, created if missing. Malloc'd;
+   NULL on failure. */
+char *clay_chat_checkpoints_dir(const ClayChat *chat);
 int clay_chat_list(ClayArray *summaries); /* ClayChatSummary, caller frees with clay_chat_list_free */
 void clay_chat_list_free(ClayArray *summaries);
 ClayJson *clay_chat_recent_messages(const ClayChat *chat, size_t count);

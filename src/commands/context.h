@@ -77,6 +77,7 @@ void clay_cmd_mm(const char *args, void *user_data);
 void clay_cmd_demo(const char *args, void *user_data);
 void clay_cmd_sandbox(const char *args, void *user_data);
 void clay_cmd_exec(const char *args, void *user_data);
+void clay_cmd_checkpoints(const char *args, void *user_data);
 
 /* Dedicated filesystem tools (src/commands/fs_tools.c), each scoped to the
    current workspace directory. userdata is a ClayCommands*. */

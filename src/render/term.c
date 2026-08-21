@@ -128,6 +128,24 @@ int clay_term_shell_exec(const char *command, ClayStr *output, size_t output_lim
     return 0;
 }
 
+void clay_term_shell_quote(ClayStr *out, const char *value) {
+    clay_str_push_char(out, '\'');
+    for (const char *p = value; *p; p++) {
+        if (*p == '\'') clay_str_push(out, "'\\''");
+        else clay_str_push_char(out, *p);
+    }
+    clay_str_push_char(out, '\'');
+}
+
+void clay_term_setenv(const char *name, const char *value) {
+#ifdef _WIN32
+    _putenv_s(name, value ? value : "");
+#else
+    if (value) setenv(name, value, 1);
+    else unsetenv(name);
+#endif
+}
+
 int clay_term_change_dir(const char *path) {
 #ifdef _WIN32
     return _chdir(path);

@@ -102,11 +102,6 @@ static int make_parent_dirs(const char *abs_path) {
     return ok;
 }
 
-typedef struct {
-    ClayJson *result;
-    int escapes;
-} ClayFsPathResolution;
-
 /* Common path arg handling shared by read/write/edit. On success returns 0
    and fills abs_out/workspace_out (caller frees both); on failure fills
    *result_out with the error tool result to return immediately. */
@@ -575,15 +570,6 @@ ClayJson *clay_fs_tool_glob_schema(void) {
     return schema;
 }
 
-static void shell_quote(ClayStr *out, const char *value) {
-    clay_str_push_char(out, '\'');
-    for (const char *p = value; *p; p++) {
-        if (*p == '\'') clay_str_push(out, "'\\''");
-        else clay_str_push_char(out, *p);
-    }
-    clay_str_push_char(out, '\'');
-}
-
 ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata) {
     ClayCommands *commands = userdata;
     const char *pattern = clay_json_string_value(clay_json_object_get(arguments, "pattern"));
@@ -601,13 +587,13 @@ ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata) {
     ClayStr invocation;
     clay_str_init(&invocation);
     clay_str_push(&invocation, "grep -rn -I --binary-files=without-match -e ");
-    shell_quote(&invocation, pattern);
+    clay_term_shell_quote(&invocation, pattern);
     if (include && *include) {
         clay_str_push(&invocation, " --include=");
-        shell_quote(&invocation, include);
+        clay_term_shell_quote(&invocation, include);
     }
     clay_str_push_char(&invocation, ' ');
-    shell_quote(&invocation, path);
+    clay_term_shell_quote(&invocation, path);
 
     char *workspace_dir = clay_term_cwd();
     char *scratch_dir = clay_chat_scratch_dir(commands->chat);

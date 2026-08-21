@@ -22,5 +22,7 @@ void clay_commands_register(ClayCommands *commands) {
                           clay_cmd_sandbox, commands);
     clay_command_register(registry, "exec", "Run a shell command through the sandbox directly", clay_cmd_exec,
                           commands);
+    clay_command_register(registry, "checkpoints", "Browse and restore this chat's workspace checkpoints",
+                          clay_cmd_checkpoints, commands);
     clay_command_register(registry, "demo_all", "Run the complete render demo sequence", clay_cmd_demo, commands);
 }

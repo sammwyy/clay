@@ -8,6 +8,7 @@
 #include "clay/config.h"
 #include "clay/memory.h"
 #include "clay/chat.h"
+#include "clay/checkpoint.h"
 #include "clay/cli.h"
 #include "clay/term.h"
 #include "clay/render.h"

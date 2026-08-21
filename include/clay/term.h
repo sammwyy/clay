@@ -24,6 +24,17 @@ int clay_term_shell_exec(const char *command, ClayStr *output, size_t output_lim
                          int *output_truncated);
 int clay_term_change_dir(const char *path);
 
+/* Appends `value` to `out`, quoted so the shell clay_term_shell_exec/
+   clay_sandbox_exec invokes it through treats it as one literal argument.
+   Targets POSIX shells (sh/bash) - the shell clay uses everywhere sandbox
+   mode is supported. */
+void clay_term_shell_quote(ClayStr *out, const char *value);
+
+/* Process-wide environment variable, inherited by every child process
+   started afterward (clay_term_shell_exec, clay_sandbox_exec). Set value
+   to NULL to unset. */
+void clay_term_setenv(const char *name, const char *value);
+
 int clay_term_width(void);
 int clay_term_supports_color(void); /* terminal capability: isatty + not "dumb" */
 int clay_term_is_interactive(void); /* stdin and stdout are both a real tty */
