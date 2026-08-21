@@ -17,8 +17,9 @@
 
 ## Comments
 
-- English, technical, to the point. State the non-obvious fact or constraint, not the reasoning essay behind it.
+- English, technical, to the point. State the non-obvious fact or constraint in one clause, not the reasoning essay, the alternative you considered, or the debugging story that led there.
 - Default to no comment. Add one only when the code alone would mislead or hide a real gotcha (e.g. why a cursor-down escape can't be used here, why a lock is held across this call).
+- One line beats three. Even a genuinely non-obvious kernel/protocol gotcha should land as a single terse line naming the fact, e.g. `/* newuidmap/newgidmap: some distros deny a direct uid_map/gid_map write. */` — not a paragraph walking through why. If a comment has more than one clause, cut it.
 - No decorative separators (`---- SECTION ----`, `==== SECTION ====`). No em dashes in comments. No multi-paragraph explanations — if a comment needs more than ~3-4 lines, the design is probably too subtle and should be simplified instead.
 - Don't restate what the code obviously does. Don't reference the task/request/issue that led to the change — that belongs in the commit message, not the source.
 

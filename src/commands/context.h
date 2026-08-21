@@ -3,6 +3,7 @@
 
 #include "clay/clay.h"
 #include "clay/providers/openai.h"
+#include "clay/sandbox.h"
 
 typedef struct {
     const char *id;
@@ -39,6 +40,8 @@ struct ClayCommands {
     char *selected_provider;
     char *selected_model;
     int reasoning_effort_index;
+    ClaySandboxMode sandbox_mode;
+    ClaySandboxAccess sandbox_access;
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands, const char *id);
@@ -70,5 +73,7 @@ void clay_cmd_history(const char *args, void *user_data);
 void clay_cmd_new(const char *args, void *user_data);
 void clay_cmd_mm(const char *args, void *user_data);
 void clay_cmd_demo(const char *args, void *user_data);
+void clay_cmd_sandbox(const char *args, void *user_data);
+void clay_cmd_exec(const char *args, void *user_data);
 
 #endif /* CLAY_COMMANDS_CONTEXT_H */

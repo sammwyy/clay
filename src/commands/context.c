@@ -7,7 +7,9 @@
 #define CLAY_SYSTEM_PROMPT "You are clay, a helpful AI coding assistant. Be concise, accurate, and practical. " \
                            "Explain code changes clearly and ask for clarification when the request is ambiguous. " \
                            "Use shell_exec when inspecting or changing the current workspace helps answer the user. " \
-                           "It runs its command in the current workspace; prefer focused commands and summarize results."
+                           "It runs in /workspace (the project root); /scratch and /tmp are a temporary scratch " \
+                           "area for this conversation. Depending on the user's /sandbox settings, paths outside " \
+                           "those may be read-only or unavailable. Prefer focused commands and summarize results."
 
 static const ClayProviderType PROVIDER_TYPES[] = {
     {"openai", "OpenAI", "https://api.openai.com/v1"},
@@ -199,6 +201,14 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     const ClayProviderType *types = clay_commands_provider_types(&count);
     for (size_t i = 0; i < count; i++) clay_commands_load_provider(commands, &types[i]);
     clay_config_selection_load(&commands->selected_provider, &commands->selected_model);
+    char *sandbox_mode = clay_config_sandbox_mode();
+    commands->sandbox_mode = strcmp(sandbox_mode, "unleashed") == 0 ? CLAY_SANDBOX_MODE_UNLEASHED : CLAY_SANDBOX_MODE_SANDBOX;
+    free(sandbox_mode);
+    if (!clay_sandbox_supported()) commands->sandbox_mode = CLAY_SANDBOX_MODE_UNLEASHED;
+    char *sandbox_access = clay_config_sandbox_access();
+    commands->sandbox_access =
+        strcmp(sandbox_access, "writable") == 0 ? CLAY_SANDBOX_ACCESS_WRITABLE : CLAY_SANDBOX_ACCESS_READONLY;
+    free(sandbox_access);
     clay_commands_reset_conversation(commands);
     clay_config_selection_save(commands->selected_provider, commands->selected_model);
     clay_below_add(0, "status");

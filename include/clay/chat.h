@@ -19,6 +19,10 @@ ClayChat *clay_chat_load(const char *id);
 void clay_chat_destroy(ClayChat *chat);
 const char *clay_chat_id(const ClayChat *chat);
 size_t clay_chat_message_count(const ClayChat *chat);
+
+/* ~/.clay/chats/<id>/scratch, created if missing. Malloc'd; NULL on
+   failure. */
+char *clay_chat_scratch_dir(const ClayChat *chat);
 int clay_chat_list(ClayArray *summaries); /* ClayChatSummary, caller frees with clay_chat_list_free */
 void clay_chat_list_free(ClayArray *summaries);
 ClayJson *clay_chat_recent_messages(const ClayChat *chat, size_t count);

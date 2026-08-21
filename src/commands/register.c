@@ -16,5 +16,9 @@ void clay_commands_register(ClayCommands *commands) {
     clay_command_register(registry, "new", "Start a new empty chat", clay_cmd_new, commands);
     clay_command_register(registry, "clear", "Alias for /new", clay_cmd_new, commands);
     clay_command_register(registry, "connect", "Connect a provider, or /connect <id> directly", clay_cmd_connect, commands);
+    clay_command_register(registry, "sandbox", "Configure the shell sandbox (mode, outside-workspace access)",
+                          clay_cmd_sandbox, commands);
+    clay_command_register(registry, "exec", "Run a shell command through the sandbox directly", clay_cmd_exec,
+                          commands);
     clay_command_register(registry, "demo_all", "Run the complete render demo sequence", clay_cmd_demo, commands);
 }

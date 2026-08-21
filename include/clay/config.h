@@ -30,4 +30,14 @@ int clay_config_selection_save(const char *provider, const char *model);
 /* Number of previous messages shown after /resume. Defaults to 4. */
 int clay_config_history_preview_count(void);
 
+/* "sandbox" (default) or "unleashed". Malloc'd. Doesn't know about
+   ClaySandboxMode - callers map the string, same as PROVIDER_TYPES does
+   for provider ids. */
+char *clay_config_sandbox_mode(void);
+int clay_config_set_sandbox_mode(const char *mode);
+
+/* "readonly" (default) or "writable". Malloc'd. */
+char *clay_config_sandbox_access(void);
+int clay_config_set_sandbox_access(const char *access);
+
 #endif /* CLAY_CONFIG_H */

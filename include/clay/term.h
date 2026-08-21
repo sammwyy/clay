@@ -95,6 +95,9 @@ void clay_term_row_enter(int row, int *established);
 /* $HOME, or %USERPROFILE% on Windows. Malloc'd; NULL if unset. */
 char *clay_term_home_dir(void);
 
+/* Current working directory, absolute. Malloc'd; NULL on failure. */
+char *clay_term_cwd(void);
+
 /* Creates one directory level (not recursive). 0 on success or if it
    already exists, nonzero on failure. */
 int clay_term_mkdir(const char *path);

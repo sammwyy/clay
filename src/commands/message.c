@@ -1,6 +1,7 @@
 #include "context.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -21,7 +22,7 @@ typedef struct {
 } ClayConversationStream;
 
 static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
-    (void)userdata;
+    ClayCommands *commands = userdata;
     const char *command = clay_json_string_value(clay_json_object_get(arguments, "command"));
     const char *args = clay_json_string_value(clay_json_object_get(arguments, "args"));
     ClayJson *result = clay_json_object();
@@ -38,7 +39,18 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     clay_str_init(&output);
     int exit_code = -1;
     int output_truncated = 0;
-    int rc = clay_term_shell_exec(invocation.data, &output, CLAY_SHELL_OUTPUT_LIMIT, &exit_code, &output_truncated);
+    char *workspace_dir = clay_term_cwd();
+    char *scratch_dir = clay_chat_scratch_dir(commands->chat);
+    ClaySandboxConfig sandbox = {
+        .mode = commands->sandbox_mode,
+        .access = commands->sandbox_access,
+        .workspace_dir = workspace_dir,
+        .scratch_dir = scratch_dir,
+    };
+    int rc = clay_sandbox_exec(&sandbox, invocation.data, &output, CLAY_SHELL_OUTPUT_LIMIT, &exit_code,
+                               &output_truncated);
+    free(workspace_dir);
+    free(scratch_dir);
     clay_json_object_set(result, "command", clay_json_string(invocation.data));
     clay_json_object_set(result, "ok", clay_json_bool(rc == 0 && exit_code == 0));
     clay_json_object_set(result, "exit_code", clay_json_number(exit_code));
@@ -319,7 +331,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     show_thinking(&stream);
     clay_app_set_state(commands->app, CLAY_APP_BUSY);
     ClayJson *schema = shell_exec_schema();
-    ClayTool tools[] = {{"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.", schema, shell_exec_tool, NULL}};
+    ClayTool tools[] = {{"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.", schema, shell_exec_tool, commands}};
     if (clay_term_is_interactive()) clay_term_raw_enable();
     int rc = clay_openai_run(client, messages, tools, 1, 8, &callbacks);
     if (clay_term_is_interactive()) clay_term_raw_disable();

@@ -410,6 +410,14 @@ char *clay_term_home_dir(void) {
     return home ? strdup(home) : NULL;
 }
 
+char *clay_term_cwd(void) {
+#ifdef _WIN32
+    return _getcwd(NULL, 0);
+#else
+    return getcwd(NULL, 0);
+#endif
+}
+
 int clay_term_mkdir(const char *path) {
 #ifdef _WIN32
     return _mkdir(path) == 0 || errno == EEXIST ? 0 : -1;

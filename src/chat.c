@@ -217,6 +217,21 @@ size_t clay_chat_message_count(const ClayChat *chat) {
     return count;
 }
 
+char *clay_chat_scratch_dir(const ClayChat *chat) {
+    if (ensure_chat_dir(chat->id) != 0) return NULL;
+    char *dir = clay_dir();
+    if (!dir) return NULL;
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/chats/%s/scratch", dir, chat->id);
+    free(dir);
+    if (clay_term_mkdir(path.data) != 0) {
+        clay_str_free(&path);
+        return NULL;
+    }
+    return path.data;
+}
+
 void clay_chat_list_free(ClayArray *summaries) {
     for (size_t i = 0; i < summaries->count; i++) free(((ClayChatSummary *)clay_array_get(summaries, i))->id);
     clay_array_free(summaries);

@@ -71,6 +71,57 @@ static char *read_whole_file(FILE *f) {
     return s.data;
 }
 
+/* Empty object if missing/malformed - every field below is read with a
+   fallback default, so a fresh or corrupt file behaves like defaults. */
+static ClayJson *load_selection_root(void) {
+    char *path = selection_path();
+    if (!path) return clay_json_object();
+    FILE *file = fopen(path, "r");
+    free(path);
+    if (!file) return clay_json_object();
+    char *text = read_whole_file(file);
+    fclose(file);
+    ClayJson *root = clay_json_parse(text, NULL);
+    free(text);
+    if (!root || clay_json_type(root) != CLAY_JSON_OBJECT) {
+        clay_json_free(root);
+        return clay_json_object();
+    }
+    return root;
+}
+
+static int save_selection_root(ClayJson *root) {
+    char *dir = config_dir();
+    if (!dir || clay_term_mkdir(dir) != 0) {
+        free(dir);
+        clay_json_free(root);
+        return -1;
+    }
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/config.json", dir);
+    free(dir);
+
+    ClayStr body;
+    clay_str_init(&body);
+    clay_json_stringify(root, &body);
+    clay_json_free(root);
+
+    FILE *f = fopen(path.data, "w");
+    if (!f) {
+        clay_str_free(&path);
+        clay_str_free(&body);
+        return -1;
+    }
+    fwrite(body.data, 1, body.len, f);
+    fclose(f);
+    clay_term_restrict_file(path.data);
+
+    clay_str_free(&path);
+    clay_str_free(&body);
+    return 0;
+}
+
 ClayProviderConfig *clay_config_load(const char *id) {
     char *path = provider_path(id);
     if (!path) return NULL;
@@ -149,85 +200,61 @@ void clay_config_free(ClayProviderConfig *config) {
 }
 
 int clay_config_selection_load(char **provider_out, char **model_out) {
-    *provider_out = NULL;
-    *model_out = NULL;
-
-    char *path = selection_path();
-    if (!path) return -1;
-    FILE *f = fopen(path, "r");
-    free(path);
-    if (!f) return 0;
-
-    char *text = read_whole_file(f);
-    fclose(f);
-    ClayJson *root = clay_json_parse(text, NULL);
-    free(text);
-    if (!root || clay_json_type(root) != CLAY_JSON_OBJECT) {
-        clay_json_free(root);
-        return -1;
-    }
-
+    ClayJson *root = load_selection_root();
     ClayJson *provider = clay_json_object_get(root, "provider");
     ClayJson *model = clay_json_object_get(root, "model");
-    if (clay_json_type(provider) == CLAY_JSON_STRING) {
-        *provider_out = strdup(clay_json_string_value(provider));
-    }
-    if (clay_json_type(model) == CLAY_JSON_STRING) {
-        *model_out = strdup(clay_json_string_value(model));
-    }
+    *provider_out = clay_json_type(provider) == CLAY_JSON_STRING ? strdup(clay_json_string_value(provider)) : NULL;
+    *model_out = clay_json_type(model) == CLAY_JSON_STRING ? strdup(clay_json_string_value(model)) : NULL;
     clay_json_free(root);
     return 0;
 }
 
+/* Only touches provider/model - other fields keep whatever
+   load_selection_root already found. */
 int clay_config_selection_save(const char *provider, const char *model) {
-    char *dir = config_dir();
-    if (!dir || clay_term_mkdir(dir) != 0) {
-        free(dir);
-        return -1;
-    }
-
-    ClayStr path;
-    clay_str_init(&path);
-    clay_str_printf(&path, "%s/config.json", dir);
-    free(dir);
-
-    ClayJson *root = clay_json_object();
+    ClayJson *root = load_selection_root();
     clay_json_object_set(root, "provider", provider ? clay_json_string(provider) : clay_json_null());
     clay_json_object_set(root, "model", model ? clay_json_string(model) : clay_json_null());
-    clay_json_object_set(root, "history_preview_count", clay_json_number(clay_config_history_preview_count()));
-
-    ClayStr body;
-    clay_str_init(&body);
-    clay_json_stringify(root, &body);
-    clay_json_free(root);
-
-    FILE *f = fopen(path.data, "w");
-    if (!f) {
-        clay_str_free(&path);
-        clay_str_free(&body);
-        return -1;
-    }
-    fwrite(body.data, 1, body.len, f);
-    fclose(f);
-    clay_term_restrict_file(path.data);
-
-    clay_str_free(&path);
-    clay_str_free(&body);
-    return 0;
+    return save_selection_root(root);
 }
 
 int clay_config_history_preview_count(void) {
-    char *path = selection_path();
-    if (!path) return 4;
-    FILE *file = fopen(path, "r");
-    free(path);
-    if (!file) return 4;
-    char *text = read_whole_file(file);
-    fclose(file);
-    ClayJson *root = clay_json_parse(text, NULL);
-    free(text);
+    ClayJson *root = load_selection_root();
     ClayJson *value = clay_json_object_get(root, "history_preview_count");
     int count = clay_json_type(value) == CLAY_JSON_NUMBER ? (int)clay_json_number_value(value) : 4;
     clay_json_free(root);
     return count >= 0 ? count : 4;
+}
+
+static char *string_field(ClayJson *root, const char *key, const char *fallback) {
+    ClayJson *value = clay_json_object_get(root, key);
+    return strdup(clay_json_type(value) == CLAY_JSON_STRING ? clay_json_string_value(value) : fallback);
+}
+
+static int set_string_field(const char *key, const char *value) {
+    ClayJson *root = load_selection_root();
+    clay_json_object_set(root, key, clay_json_string(value));
+    return save_selection_root(root);
+}
+
+char *clay_config_sandbox_mode(void) {
+    ClayJson *root = load_selection_root();
+    char *mode = string_field(root, "sandbox_mode", "sandbox");
+    clay_json_free(root);
+    return mode;
+}
+
+int clay_config_set_sandbox_mode(const char *mode) {
+    return set_string_field("sandbox_mode", mode);
+}
+
+char *clay_config_sandbox_access(void) {
+    ClayJson *root = load_selection_root();
+    char *access = string_field(root, "sandbox_access", "readonly");
+    clay_json_free(root);
+    return access;
+}
+
+int clay_config_set_sandbox_access(const char *access) {
+    return set_string_field("sandbox_access", access);
 }
