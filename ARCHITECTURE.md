@@ -10,6 +10,7 @@ src/json.c          minimal JSON value tree: parse, build, stringify
 src/http.c          HTTP client, built on mm + libcurl
 src/providers/      LLM provider clients, built on http + json (openai.c, ...)
 src/config.c         saved provider credentials and model selection (~/.clay), built on mm + json + term
+src/cli/             typed process argument registry and clay startup options
 src/render/         drawing primitives, built on mm + term
 src/render/modals/  purpose-built composite interactive widgets, built on render
 src/commands/       command registry + app state machine
@@ -17,7 +18,7 @@ src/main.c          demo driver: wires commands to the app and render engine
 src/test_openai.c   standalone harness for the OpenAI provider (see "Backend")
 ```
 
-Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists connection and selection data. `render` depends on `mm` and `term`. `commands` depends on `render` and, as of `/connect`, on `config`. `main.c` is the integration point for the render/commands/config/provider stack; `test_openai.c` is a separate provider/http harness.
+Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists connection data. `cli/` depends on `mm` and `term`. `render` depends on `mm` and `term`. `commands` depends on `render` and, as of `/connect`, on `config`. `main.c` is the integration point for the render/commands/config/provider stack; `test_openai.c` is a separate provider/http harness.
 
 ### `src/mm/` — memory
 
@@ -45,6 +46,10 @@ A thin wrapper over libcurl's easy interface - the only place in the project tha
 ### `src/config.c` — saved provider credentials
 
 Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. `~/.clay/config.json` separately stores the selected `provider` and `model` (or JSON null when unset). Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `main.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
+
+### `src/cli/` — process arguments
+
+`cli.c` owns a dynamic registry of typed process options: booleans, strings, and numbers. It accepts `--name` and `-name`, values separated by a space or `=`, and retains positional command arguments for future subcommands. `startup.c` keeps clay's process-level behavior out of the agent loop: it registers `--help`, `--version`, `--no-color`, and `--cwd`; applies color/cwd choices; and exits before initialization for help or version.
 
 ### `src/render/` — drawing primitives
 
@@ -85,4 +90,4 @@ The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select
 
 ## Build
 
-`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked except for libcurl - see CODESTYLE.md). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` builds and runs the native binary. `make test-openai` builds `bin/test_openai` from the same object tree minus `main.o`, plus `test_openai.o` - see "`src/providers/`" above.
+`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked except for libcurl - see CODESTYLE.md). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` creates the ignored `.playground/` directory and starts the native binary with `--cwd .playground`, so tool calls do not use the repository root. `make test-cli` exercises typed option parsing; `make test-openai` builds `bin/test_openai` from the same object tree minus `main.o`, plus `test_openai.o` - see "`src/providers/`" above.

@@ -824,11 +824,8 @@ static void cmd_demo(const char *args, void *user_data) {
 }
 
 int main(int argc, char **argv) {
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--no-color") == 0) {
-            clay_term_set_color_enabled(0);
-        }
-    }
+    int cli_status = clay_cli_startup(argc, argv, CLAY_VERSION);
+    if (cli_status != 0) return cli_status < 0 ? 1 : 0;
 
     clay_term_init();
     if (clay_http_init() != 0) {

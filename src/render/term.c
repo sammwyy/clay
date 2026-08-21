@@ -120,6 +120,14 @@ int clay_term_shell_exec(const char *command, ClayStr *output, size_t output_lim
     return 0;
 }
 
+int clay_term_change_dir(const char *path) {
+#ifdef _WIN32
+    return _chdir(path);
+#else
+    return chdir(path);
+#endif
+}
+
 int clay_term_width(void) {
 #ifdef _WIN32
     CONSOLE_SCREEN_BUFFER_INFO info;
