@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    if: github.event.created
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y upx-ucl
+      - run: make compress
+      - run: cp bin/clay clay-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clay-linux-x86_64
+          path: clay-linux-x86_64
+          if-no-files-found: error
+
+  windows:
+    if: github.event.created
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-upx
+      - shell: msys2 {0}
+        run: make build LDFLAGS="-static $(pkg-config --static --libs libcurl) -lwinpthread"
+      - shell: msys2 {0}
+        run: upx --best --lzma bin/clay.exe
+      - shell: msys2 {0}
+        run: cp bin/clay.exe clay-win-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clay-win-x86_64.exe
+          path: clay-win-x86_64.exe
+          if-no-files-found: error
+
+  release:
+    if: github.event.created
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - run: chmod +x release/clay-linux-x86_64
+      - run: >-
+          gh release create "$GITHUB_REF_NAME"
+          release/clay-linux-x86_64
+          release/clay-win-x86_64.exe
+          --title "$GITHUB_REF_NAME"
+          --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
