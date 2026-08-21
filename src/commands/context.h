@@ -96,6 +96,13 @@ void clay_commands_reset_conversation(ClayCommands *commands);
 /* Walks up from the cwd to the repo root, concatenating AGENTS.md/CLAY.md
    at each level (root-first). Malloc'd; NULL if none found. */
 char *clay_commands_load_project_instructions(void);
+/* Walks up from the cwd looking for a .git directory, returning its
+   current branch (or a short SHA in detached HEAD). Malloc'd; NULL if not
+   in a git repo. */
+char *clay_commands_find_git_branch(void);
+/* Comma-separated, sorted, capped names of `dir`'s direct entries. Malloc'd;
+   NULL if the directory can't be listed. */
+char *clay_commands_list_top_level(const char *dir);
 /* Deterministic context compaction (no LLM call): once the last request's
    input tokens crossed ~90% of the context budget, collapses tool-result
    content older than the last few turns to a short preview, in place on

@@ -271,6 +271,73 @@ char *clay_commands_load_project_instructions(void) {
     return combined.data;
 }
 
+#define CLAY_ENV_REPO_ROOT_MAX_DEPTH 32
+#define CLAY_ENV_DIR_LISTING_MAX 50
+
+/* Walks up from the cwd looking for a .git directory, returning its
+   current branch (or a short SHA in detached HEAD). Malloc'd; NULL if not
+   in a git repo. */
+char *clay_commands_find_git_branch(void) {
+    char *dir = clay_term_cwd();
+    if (!dir) return NULL;
+    char *branch = NULL;
+    for (int depth = 0; depth < CLAY_ENV_REPO_ROOT_MAX_DEPTH; depth++) {
+        ClayStr head_path;
+        clay_str_init(&head_path);
+        clay_str_printf(&head_path, "%s/.git/HEAD", dir);
+        FILE *file = fopen(head_path.data, "r");
+        clay_str_free(&head_path);
+        if (file) {
+            ClayStr content;
+            clay_str_init(&content);
+            int ch;
+            while ((ch = fgetc(file)) != EOF && ch != '\n') clay_str_push_char(&content, (char)ch);
+            fclose(file);
+            const char *prefix = "ref: refs/heads/";
+            if (strncmp(content.data, prefix, strlen(prefix)) == 0) branch = strdup(content.data + strlen(prefix));
+            else if (content.len >= 7) {
+                ClayStr short_sha;
+                clay_str_init(&short_sha);
+                clay_str_push_n(&short_sha, content.data, 7);
+                branch = short_sha.data;
+            }
+            clay_str_free(&content);
+            break;
+        }
+        if (strcmp(dir, "/") == 0) break;
+        char *slash = strrchr(dir, '/');
+        if (!slash) break;
+        if (slash == dir) slash[1] = '\0';
+        else *slash = '\0';
+    }
+    free(dir);
+    return branch;
+}
+
+static int compare_strings(const void *a, const void *b) {
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+/* Comma-separated, sorted, capped names of `dir`'s direct entries. Malloc'd;
+   NULL if the directory can't be listed. */
+char *clay_commands_list_top_level(const char *dir) {
+    ClayArray entries;
+    if (clay_term_list_entries(dir, &entries) != 0) return NULL;
+    if (entries.count > 0) qsort(entries.data, entries.count, sizeof(char *), compare_strings);
+
+    ClayStr out;
+    clay_str_init(&out);
+    size_t shown = entries.count < CLAY_ENV_DIR_LISTING_MAX ? entries.count : CLAY_ENV_DIR_LISTING_MAX;
+    for (size_t i = 0; i < shown; i++) {
+        if (i > 0) clay_str_push(&out, ", ");
+        clay_str_push(&out, *(char **)clay_array_get(&entries, i));
+    }
+    if (entries.count > shown) clay_str_printf(&out, ", ... (%zu more)", entries.count - shown);
+    for (size_t i = 0; i < entries.count; i++) free(*(char **)clay_array_get(&entries, i));
+    clay_array_free(&entries);
+    return out.data;
+}
+
 static char *build_fresh_system_prompt(void) {
     ClayStr text;
     clay_str_init(&text);
@@ -281,6 +348,20 @@ static char *build_fresh_system_prompt(void) {
     clay_str_printf(&text, "\n\nEnvironment: %s. Today's date (UTC): %s.", platform, date);
     free(platform);
     free(date);
+
+    char *cwd = clay_term_cwd();
+    if (cwd) {
+        clay_str_printf(&text, " Working directory: %s.", cwd);
+        char *branch = clay_commands_find_git_branch();
+        if (branch) {
+            clay_str_printf(&text, " Git branch: %s.", branch);
+            free(branch);
+        }
+        char *listing = clay_commands_list_top_level(cwd);
+        if (listing && *listing) clay_str_printf(&text, "\nTop-level directory listing: %s", listing);
+        free(listing);
+        free(cwd);
+    }
 
     char *index = clay_memory_index();
     if (*index) clay_str_printf(&text, "\n\nLong-term memory index:\n%s", index);
