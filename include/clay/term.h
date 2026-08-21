@@ -75,4 +75,15 @@ int clay_term_input_pending(void);
    them up the screen when pinned to the bottom of the terminal. */
 void clay_term_row_enter(int row, int *established);
 
+/* $HOME, or %USERPROFILE% on Windows. Malloc'd; NULL if unset. */
+char *clay_term_home_dir(void);
+
+/* Creates one directory level (not recursive). 0 on success or if it
+   already exists, nonzero on failure. */
+int clay_term_mkdir(const char *path);
+
+/* Restricts `path` to owner-only access (POSIX chmod 0600); no-op on
+   Windows. For files holding secrets. */
+void clay_term_restrict_file(const char *path);
+
 #endif /* CLAY_TERM_H */

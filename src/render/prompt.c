@@ -362,6 +362,60 @@ char *clay_prompt_line(void) {
     return interactive_prompt_line();
 }
 
+static void render_secret_line(const char *question, size_t len) {
+    clay_term_clear_line();
+    printf("%s%s%s  ", clay_color(CLAY_WHITE), question, clay_color(CLAY_RESET));
+    for (size_t i = 0; i < len; i++) fputc('*', stdout);
+    fflush(stdout);
+}
+
+static char *secret_fallback(const char *question) {
+    printf("%s%s%s\n", clay_color(CLAY_WHITE), question, clay_color(CLAY_RESET));
+    printf("%s%s>%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET));
+    fflush(stdout);
+    return read_line_dynamic();
+}
+
+char *clay_prompt_secret(const char *question) {
+    if (!clay_term_is_interactive()) return secret_fallback(question);
+
+    ClayStr buf;
+    clay_str_init(&buf);
+    int got_eof = 0;
+
+    clay_term_raw_enable();
+    render_secret_line(question, buf.len);
+
+    for (;;) {
+        char ch = 0;
+        ClayKey key = clay_term_read_key(&ch);
+
+        if (key == CLAY_KEY_ENTER) {
+            break;
+        } else if (key == CLAY_KEY_EOF) {
+            got_eof = 1;
+            break;
+        } else if (key == CLAY_KEY_BACKSPACE) {
+            if (buf.len > 0) buf.data[--buf.len] = '\0';
+        } else if (key == CLAY_KEY_CHAR) {
+            clay_str_push_char(&buf, ch);
+        } else {
+            continue;
+        }
+
+        render_secret_line(question, buf.len);
+    }
+
+    fputc('\n', stdout);
+    clay_term_raw_disable();
+
+    if (got_eof && buf.len == 0) {
+        clay_str_free(&buf);
+        return NULL;
+    }
+    return buf.data;
+}
+
 static void render_select_line(const char *question, const ClayChoice *options, int count, int selected) {
     clay_term_clear_line();
     printf("%s%s%s  ", clay_color(CLAY_WHITE), question, clay_color(CLAY_RESET));
@@ -539,6 +593,7 @@ int clay_prompt_choice(const char *question, const ClayChoice *choices, int coun
         clay_term_row_enter(i, &established);
         print_choice_row(choices, count, allow_custom, i, selected, title_width);
     }
+    fflush(stdout);
 
     int result = -1;
     int entering_custom = 0;
@@ -566,6 +621,7 @@ int clay_prompt_choice(const char *question, const ClayChoice *choices, int coun
             clay_term_row_enter(i, &established);
             print_choice_row(choices, count, allow_custom, i, selected, title_width);
         }
+        fflush(stdout);
     }
 
     fputc('\n', stdout);

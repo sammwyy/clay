@@ -3,6 +3,7 @@
 
 #include "clay/mm.h"
 #include "clay/color.h"
+#include "clay/config.h"
 #include "clay/term.h"
 #include "clay/render.h"
 #include "clay/box.h"

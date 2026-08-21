@@ -168,6 +168,93 @@ static void cmd_model(const char *args, void *user_data) {
     clay_model_selection_free(&sel);
 }
 
+typedef struct {
+    const char *id;
+    const char *label;
+    const char *default_base_url; /* NULL: ask the user for it */
+} ClayProviderType;
+
+static const ClayProviderType PROVIDER_TYPES[] = {
+    {"openai", "OpenAI", "https://api.openai.com/v1"},
+    {"openrouter", "OpenRouter", "https://openrouter.ai/api/v1"},
+    {"custom", "OpenAI Custom", NULL},
+};
+#define PROVIDER_TYPE_COUNT (sizeof(PROVIDER_TYPES) / sizeof(PROVIDER_TYPES[0]))
+
+static const ClayProviderType *find_provider_type(const char *id) {
+    for (size_t i = 0; i < PROVIDER_TYPE_COUNT; i++) {
+        if (strcmp(PROVIDER_TYPES[i].id, id) == 0) return &PROVIDER_TYPES[i];
+    }
+    return NULL;
+}
+
+static void connect_provider_type(ClayApp *app, const ClayProviderType *type) {
+    char *base_url;
+    if (type->default_base_url) {
+        base_url = strdup(type->default_base_url);
+        clay_app_say(app, "Base URL: %s", base_url);
+    } else {
+        clay_app_say(app, "Base URL for %s:", type->label);
+        base_url = clay_prompt_line();
+    }
+    if (!base_url || !*base_url) {
+        clay_sayc(CLAY_RED, "Cancelled.");
+        free(base_url);
+        return;
+    }
+
+    char *apikey = clay_prompt_secret("API key:");
+    if (!apikey || !*apikey) {
+        clay_sayc(CLAY_RED, "Cancelled.");
+        free(base_url);
+        free(apikey);
+        return;
+    }
+
+    ClayProviderConfig config = {strdup(type->id), apikey, base_url};
+    int ok = clay_config_save(&config) == 0;
+    clay_sayc(ok ? CLAY_GREEN : CLAY_RED, ok ? "Connected %s." : "Failed to save config for %s.", type->label);
+
+    free(config.id);
+    free(apikey);
+    free(base_url);
+}
+
+static void cmd_connect(const char *args, void *user_data) {
+    ClayApp *app = user_data;
+
+    if (args && *args) {
+        const ClayProviderType *type = find_provider_type(args);
+        if (!type) {
+            clay_sayc(CLAY_RED, "Unknown provider type: %s", args);
+            return;
+        }
+        connect_provider_type(app, type);
+        return;
+    }
+
+    ClayChoice choices[PROVIDER_TYPE_COUNT];
+    ClayStr titles[PROVIDER_TYPE_COUNT];
+    for (size_t i = 0; i < PROVIDER_TYPE_COUNT; i++) {
+        clay_str_init(&titles[i]);
+        clay_str_push(&titles[i], PROVIDER_TYPES[i].label);
+        if (clay_config_exists(PROVIDER_TYPES[i].id)) {
+            clay_str_printf(&titles[i], " %s%s%s", clay_color(CLAY_GREEN), CLAY_ICON_CHECK, clay_color(CLAY_RESET));
+        }
+        choices[i].title = titles[i].data;
+        choices[i].desc = NULL;
+    }
+
+    int index = clay_app_choice(app, "Connect a provider:", choices, (int)PROVIDER_TYPE_COUNT, 0, NULL);
+    for (size_t i = 0; i < PROVIDER_TYPE_COUNT; i++) clay_str_free(&titles[i]);
+
+    if (index < 0) {
+        clay_sayc(CLAY_RED, "Cancelled.");
+        return;
+    }
+    connect_provider_type(app, &PROVIDER_TYPES[index]);
+}
+
 static void cmd_mm(const char *args, void *user_data) {
     (void)args;
     (void)user_data;
@@ -252,6 +339,7 @@ int main(int argc, char **argv) {
     clay_command_register(commands, "mm", "Smoke-test the mm module", cmd_mm, app);
     clay_command_register(commands, "below", "Cycle the below-prompt status modules", cmd_below, app);
     clay_command_register(commands, "model", "Pick a model/provider, or /model <id> directly", cmd_model, app);
+    clay_command_register(commands, "connect", "Connect a provider, or /connect <id> directly", cmd_connect, app);
 
     clay_below_add(0, "model");
     clay_below_set_text("model", "Model: claude-sonnet-5");

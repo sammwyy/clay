@@ -1,17 +1,20 @@
 #include "clay/term.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
 #include <conio.h>
+#include <direct.h>
 #include <io.h>
 #include <windows.h>
 #define CLAY_PATH_MAX MAX_PATH
 #else
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
 #define CLAY_PATH_MAX 4096
@@ -264,5 +267,30 @@ int clay_term_input_pending(void) {
     FD_SET(STDIN_FILENO, &fds);
     struct timeval tv = {0, 0};
     return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
+#endif
+}
+
+char *clay_term_home_dir(void) {
+#ifdef _WIN32
+    const char *home = getenv("USERPROFILE");
+#else
+    const char *home = getenv("HOME");
+#endif
+    return home ? strdup(home) : NULL;
+}
+
+int clay_term_mkdir(const char *path) {
+#ifdef _WIN32
+    return _mkdir(path) == 0 || errno == EEXIST ? 0 : -1;
+#else
+    return mkdir(path, 0700) == 0 || errno == EEXIST ? 0 : -1;
+#endif
+}
+
+void clay_term_restrict_file(const char *path) {
+#ifndef _WIN32
+    chmod(path, 0600);
+#else
+    (void)path;
 #endif
 }

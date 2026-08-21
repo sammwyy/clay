@@ -8,6 +8,11 @@
    frees), NULL on EOF with no input. */
 char *clay_prompt_line(void);
 
+/* Same, but echoes `*` per character instead of the real text (paste
+   still works, just masked) and skips history. Prints `question` first.
+   Malloc'd, caller frees; NULL on EOF with no input. */
+char *clay_prompt_secret(const char *question);
+
 /* Submitted lines, oldest first, most recent last; consecutive duplicate
    entries are collapsed into one. */
 size_t clay_prompt_history_count(void);

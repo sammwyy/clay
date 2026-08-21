@@ -1,6 +1,6 @@
 # Architecture
 
-clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. It's the render/UI layer plus a demo driver in `main.c`, and a separate backend layer (`json.c`, `http.c`, `providers/`) for talking to LLM APIs. The two aren't wired together yet - `providers/openai.c` is exercised standalone via `test_openai.c` (see "Backend" below), not through the render layer or `ClayApp`.
+clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. It's the render/UI layer plus a demo driver in `main.c`, and a separate backend layer (`json.c`, `http.c`, `providers/`, `config.c`) for talking to LLM APIs and remembering how to reach them. The two are only partly wired together: `main.c`'s `/connect` command uses `config.c` to save/list provider credentials, but `providers/openai.c` itself is still only exercised standalone via `test_openai.c` (see "Backend" below), not through `ClayApp`.
 
 ## Layers
 
@@ -9,6 +9,7 @@ src/mm/            growable primitives: arena, str, array, map
 src/json.c          minimal JSON value tree: parse, build, stringify
 src/http.c          HTTP client, built on mm + libcurl
 src/providers/      LLM provider clients, built on http + json (openai.c, ...)
+src/config.c         saved provider credentials (~/.clay/providers/*.json), built on mm + json + term
 src/render/         drawing primitives, built on mm + term
 src/render/modals/  purpose-built composite interactive widgets, built on render
 src/commands/       command registry + app state machine
@@ -16,7 +17,7 @@ src/main.c          demo driver: wires commands to the app and render engine
 src/test_openai.c   standalone harness for the OpenAI provider (see "Backend")
 ```
 
-Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `render` depends on `mm` and `term`. `commands` depends on `render` (it calls render functions, never the other way around). `main.c` is the only file that knows about the render/commands stack as a whole; `test_openai.c` is the only file that knows about the backend stack as a whole - neither currently includes the other.
+Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists credentials, it doesn't use them. `render` depends on `mm` and `term`. `commands` depends on `render` and, as of `/connect`, on `config`. `main.c` is the only file that knows about the render/commands/config stack as a whole; `test_openai.c` is the only file that knows about the `providers`/`http` stack as a whole - neither currently includes the other.
 
 ### `src/mm/` — memory
 
@@ -41,14 +42,18 @@ A thin wrapper over libcurl's easy interface - the only place in the project tha
 
 Not wired into `ClayApp`/the render layer yet - `src/test_openai.c` is a standalone binary (`bin/test_openai`, the Makefile's `test-openai` target) that exercises `providers/openai.c` directly against a real endpoint: streaming tokens to stdout, one demo tool (`get_weather`) to exercise the tool loop, and `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` read from the environment so a token never ends up in argv or committed code. It's excluded from the main `clay` binary (both define `main`).
 
+### `src/config.c` — saved provider credentials
+
+Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `main.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
+
 ### `src/render/` — drawing primitives
 
-- `term.c` — the only platform-aware file. Cursor movement, raw mode, key reading (`ClayKey`), color enable/disable (`clay_color`, `NO_COLOR` handling), UTF-8-aware width, OSC 8 hyperlinks, and `clay_term_row_enter` (the shared safe-redraw primitive, see CODESTYLE.md).
+- `term.c` — the only platform-aware file. Cursor movement, raw mode, key reading (`ClayKey`), color enable/disable (`clay_color`, `NO_COLOR` handling), UTF-8-aware width, OSC 8 hyperlinks, `clay_term_row_enter` (the shared safe-redraw primitive, see CODESTYLE.md), and the small OS-specific primitives other layers need (`clay_term_home_dir`, `clay_term_mkdir`, `clay_term_restrict_file`) rather than letting them spread their own `#ifdef _WIN32`.
 - `box.c` — bordered boxes with per-line text/border colors.
 - `banner.c` — the startup banner, built on `box.c`.
 - `list.c` — the `◆ clay` response prefix (`clay_say`/`clay_sayc`), plan/list rendering (`clay_list_step`), bullets.
 - `task.c` — spinner-driven task lines (`clay_task_start/success/fail`), each on its own background thread that animates until stopped.
-- `prompt.c` — the main `>` input line (history-aware, arrow-key recall) and the two general-purpose interactive pickers: `clay_prompt_select` (horizontal, left/right, no free text) and `clay_prompt_choice` (vertical, up/down, optional free-text fallback row).
+- `prompt.c` — the main `>` input line (history-aware, arrow-key recall, paste detection) and the general-purpose interactive prompts: `clay_prompt_select` (horizontal, left/right, no free text), `clay_prompt_choice` (vertical, up/down, optional free-text fallback row), and `clay_prompt_secret` (masked, for API keys).
 - `below.c` — the status-module system: named modules registered via `clay_below_add`, rendered inline on one row under the prompt (`Model: ... · Tokens: ... · Provider: ...`), each with an optional icon state (`NONE`/`LOADING`/`FINISHED`/`IDLE`). Owns a background animator thread that only redraws while `clay_below_set_editing(1)` is active, so it never clobbers unrelated output. `clay_prompt_line`'s interactive path is the only caller of `clay_below_render`/`clay_below_finish`.
 
 ### `src/render/modals/` — composite widgets
@@ -64,7 +69,9 @@ Purpose-built interactive widgets that combine several `render/` primitives into
 
 ### `src/main.c`
 
-The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select`, `/choice`, `/below`, `/model`, `/mm`), registers the below-prompt status modules (`model`, `tokens`, `provider`), and runs the main read-parse-dispatch loop. `run_demo_turn` is a canned sequence (scan → plan → write → test) that exercises the render engine end to end; it doesn't inspect the actual message text yet, since there's no agent behind it.
+The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select`, `/choice`, `/below`, `/model`, `/connect`, `/mm`), registers the below-prompt status modules (`model`, `tokens`, `provider`), and runs the main read-parse-dispatch loop. `run_demo_turn` is a canned sequence (scan → plan → write → test) that exercises the render engine end to end; it doesn't inspect the actual message text yet, since there's no agent behind it.
+
+`/connect [type]` is the one command that reaches into the backend stack: with no argument it's a `clay_app_choice` picker over `PROVIDER_TYPES` (`openai`, `openrouter`, `custom`), each row's title getting a green checkmark appended when `clay_config_exists` finds a saved config; with an argument it skips straight to that type. Either way it prompts for a base URL (skipped - `type->default_base_url` is used - unless the type is `custom`) and an API key (`clay_prompt_secret`), then `clay_config_save`s the result. No `openrouter.c`/`openai_custom.c` exist - every entry in `PROVIDER_TYPES` is the same `providers/openai.c` client underneath, just a different `id`/default `base_url`.
 
 ## Key design decisions
 
