@@ -182,6 +182,18 @@ static void render_status_locked(void) {
     fflush(stdout);
 }
 
+static int status_module_loading(void) {
+    ClayBelowModule *status = find_module("status");
+    return status && status->enabled && status->state == CLAY_BELOW_LOADING;
+}
+
+static void render_status_spinner_locked(void) {
+    clay_term_cursor_col(2);
+    printf("%s%s%s", clay_color(CLAY_YELLOW), SPINNER_FRAMES[g_spinner_frame], clay_color(CLAY_RESET));
+    fputc('\r', stdout);
+    fflush(stdout);
+}
+
 static void *animator_loop(void *arg) {
     (void)arg;
     for (;;) {
@@ -189,7 +201,8 @@ static void *animator_loop(void *arg) {
         pthread_mutex_lock(&g_lock);
         if (g_editing && has_loading_module()) {
             g_spinner_frame = (g_spinner_frame + 1) % CLAY_BELOW_SPINNER_FRAMES;
-            if (g_status_only) render_status_locked();
+            if (g_status_only && status_module_loading()) render_status_spinner_locked();
+            else if (g_status_only) render_status_locked();
             else render_locked();
         }
         pthread_mutex_unlock(&g_lock);
@@ -282,6 +295,50 @@ void clay_below_render_status(void) {
     pthread_mutex_lock(&g_lock);
     g_status_only = 1;
     render_status_locked();
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_status_insert_above(void) {
+    pthread_mutex_lock(&g_lock);
+    if (g_status_only) {
+        clay_term_insert_line();
+        fflush(stdout);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_status_push_down(void) {
+    pthread_mutex_lock(&g_lock);
+    if (g_status_only) {
+        clay_term_cursor_down(1);
+        clay_term_insert_line();
+        clay_term_cursor_up(1);
+        fflush(stdout);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_status_refresh_below(void) {
+    pthread_mutex_lock(&g_lock);
+    if (g_status_only) {
+        clay_term_cursor_down(1);
+        render_status_locked();
+        clay_term_cursor_up(1);
+        fflush(stdout);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_status_prepare_prompt(void) {
+    pthread_mutex_lock(&g_lock);
+    if (g_status_only) {
+        clay_term_cursor_down(1);
+        clay_term_insert_line();
+        g_status_only = 0;
+        g_last_line_count = 0;
+        g_max_rows_established = 2;
+        fflush(stdout);
+    }
     pthread_mutex_unlock(&g_lock);
 }
 

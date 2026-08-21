@@ -374,6 +374,7 @@ static void cmd_model(const char *args, void *user_data) {
 typedef struct {
     int status_visible;
     int started;
+    int output_col;
     long error_status;
     long input_tokens;
     long output_tokens;
@@ -399,11 +400,49 @@ static void set_conversation_status(double seconds, int success) {
 static void on_conversation_token(const char *text, void *userdata) {
     ClayConversationStream *stream = userdata;
     if (!stream->started) {
-        hide_conversation_status(stream);
+        if (stream->status_visible) {
+            clay_below_set_editing(0);
+            clay_below_set_text("status", "Streaming...");
+            clay_below_set_state("status", CLAY_BELOW_NONE);
+            clay_below_render_status();
+            clay_below_status_insert_above();
+        }
         clay_response_begin();
+        stream->output_col = clay_response_prefix_width();
         stream->started = 1;
     }
-    clay_response_write(text);
+
+    ClayStr pending;
+    clay_str_init(&pending);
+    int width = clay_term_width();
+    for (const unsigned char *p = (const unsigned char *)text; *p;) {
+        if (*p == '\n') {
+            clay_response_write(pending.data);
+            clay_str_clear(&pending);
+            if (stream->status_visible) clay_below_status_push_down();
+            clay_response_write("\n");
+            stream->output_col = 0;
+            p++;
+            continue;
+        }
+
+        size_t char_len = 1;
+        if ((*p & 0xE0) == 0xC0) char_len = 2;
+        else if ((*p & 0xF0) == 0xE0) char_len = 3;
+        else if ((*p & 0xF8) == 0xF0) char_len = 4;
+
+        if (stream->status_visible && stream->output_col + 1 >= width) {
+            clay_response_write(pending.data);
+            clay_str_clear(&pending);
+            clay_below_status_push_down();
+            stream->output_col = 0;
+        }
+        clay_str_push_n(&pending, (const char *)p, char_len);
+        stream->output_col++;
+        p += char_len;
+    }
+    clay_response_write(pending.data);
+    clay_str_free(&pending);
 }
 
 static void on_conversation_error(long status, const char *body, void *userdata) {
@@ -419,16 +458,16 @@ static void on_conversation_usage(long input_tokens, long output_tokens, void *u
     stream->has_usage = 1;
 }
 
-static void run_conversation(ClayApp *app, const char *input) {
+static int run_conversation(ClayApp *app, const char *input) {
     if (!g_selected_provider || !g_selected_model) {
         clay_sayc(CLAY_RED, "Select a provider and model with /model before sending a message.");
-        return;
+        return 0;
     }
 
     ClayConnectedProvider *provider = find_connected_provider(g_selected_provider);
     if (!provider) {
         clay_sayc(CLAY_RED, "Selected provider %s is not connected.", g_selected_provider);
-        return;
+        return 0;
     }
     if (!g_conversation) conversation_reset();
 
@@ -462,7 +501,6 @@ static void run_conversation(ClayApp *app, const char *input) {
                      (double)(finished_at.tv_nsec - started_at.tv_nsec) / 1e9;
 
     if (stream.started) clay_response_end();
-    hide_conversation_status(&stream);
     if (rc == 0) {
         clay_json_free(g_conversation);
         g_conversation = messages;
@@ -473,10 +511,26 @@ static void run_conversation(ClayApp *app, const char *input) {
             g_output_tokens = stream.output_tokens;
             update_tokens_below();
         }
+        if (stream.started && stream.status_visible) {
+            clay_below_status_refresh_below();
+            clay_below_status_prepare_prompt();
+            stream.status_visible = 0;
+            clay_app_set_state(app, CLAY_APP_IDLE);
+            return 1;
+        }
+        hide_conversation_status(&stream);
     } else {
         clay_json_free(messages);
         clay_below_set_state("provider", CLAY_BELOW_IDLE);
         set_conversation_status(seconds, 0);
+        if (stream.started && stream.status_visible) {
+            clay_below_status_refresh_below();
+            clay_below_status_prepare_prompt();
+            stream.status_visible = 0;
+            clay_app_set_state(app, CLAY_APP_IDLE);
+            return 1;
+        }
+        hide_conversation_status(&stream);
         if (stream.error_status > 0) {
             clay_sayc(CLAY_RED, "Provider request failed (HTTP %ld).", stream.error_status);
         } else {
@@ -484,6 +538,7 @@ static void run_conversation(ClayApp *app, const char *input) {
         }
     }
     clay_app_set_state(app, CLAY_APP_IDLE);
+    return 0;
 }
 
 static void cmd_mm(const char *args, void *user_data) {
@@ -606,6 +661,7 @@ int main(int argc, char **argv) {
         ClayInput input = clay_input_parse(line);
         free(line);
 
+        int prompt_ready = 0;
         switch (input.kind) {
         case CLAY_INPUT_EMPTY:
             break;
@@ -615,12 +671,12 @@ int main(int argc, char **argv) {
             }
             break;
         case CLAY_INPUT_MESSAGE:
-            run_conversation(app, input.raw);
+            prompt_ready = run_conversation(app, input.raw);
             break;
         }
 
         clay_input_free(&input);
-        fputc('\n', stdout);
+        if (!prompt_ready) fputc('\n', stdout);
     }
 
     clay_app_destroy(app);

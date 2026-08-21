@@ -17,10 +17,12 @@ void clay_say(const char *fmt, ...);
 void clay_sayc(const char *color, const char *fmt, ...);
 
 /* Begins, incrementally writes, and ends one streamed assistant reply.
-   The writer flushes each chunk so text appears as the provider sends it. */
+   The writer flushes each chunk so text appears as the provider sends it.
+   Ending restores the terminal style but leaves cursor placement to caller. */
 void clay_response_begin(void);
 void clay_response_write(const char *text);
 void clay_response_end(void);
+int clay_response_prefix_width(void);
 
 /* Prints "◆ clay  <message>" meant to head a list of steps that follow. */
 void clay_list_header(const char *fmt, ...);

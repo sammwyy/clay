@@ -57,8 +57,11 @@ void clay_response_write(const char *text) {
 
 void clay_response_end(void) {
     fputs(clay_color(CLAY_RESET), stdout);
-    fputc('\n', stdout);
     fflush(stdout);
+}
+
+int clay_response_prefix_width(void) {
+    return (int)clay_utf8_width("\xe2\x97\x86 clay  ");
 }
 
 void clay_list_header(const char *fmt, ...) {

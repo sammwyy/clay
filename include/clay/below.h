@@ -32,8 +32,16 @@ void clay_below_set_editing(int editing);
 void clay_below_render(const char *input, size_t cursor);
 
 /* Renders only the enabled modules on the current row, without a prompt.
-   Used for live status between a submitted prompt and streamed output. */
+   Used for live status below streamed output. */
 void clay_below_render_status(void);
+
+/* Keeps a status-only row below streamed text. insert_above reserves the
+   first response row; call push_down before each streamed newline, then
+   prepare_prompt when the stream completes. */
+void clay_below_status_insert_above(void);
+void clay_below_status_push_down(void);
+void clay_below_status_refresh_below(void);
+void clay_below_status_prepare_prompt(void);
 
 /* Erases the modules row and moves the cursor to a fresh line below it.
    The prompt line itself stays on screen as history. */

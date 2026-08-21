@@ -13,6 +13,7 @@ void clay_term_clear_line(void);
 void clay_term_cursor_up(int n);
 void clay_term_cursor_down(int n);
 void clay_term_cursor_col(int col); /* 0-based column, absolute */
+void clay_term_insert_line(void); /* inserts one blank row at the cursor */
 void clay_term_sleep_ms(int ms);
 
 int clay_term_width(void);
