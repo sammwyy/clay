@@ -39,11 +39,9 @@ jobs:
             mingw-w64-x86_64-pkgconf
             mingw-w64-x86_64-upx
       - shell: msys2 {0}
-        run: make build LDFLAGS="-static $(pkg-config --static --libs libcurl) -lwinpthread"
+        run: make compress-win LDFLAGS_WIN="-static $(pkg-config --static --libs libcurl) -lwinpthread"
       - shell: msys2 {0}
-        run: upx --best --lzma bin/clay.exe
-      - shell: msys2 {0}
-        run: cp bin/clay.exe clay-win-x86_64.exe
+        run: cp bin-win/clay.exe clay-win-x86_64.exe
       - uses: actions/upload-artifact@v4
         with:
           name: clay-win-x86_64.exe

@@ -58,7 +58,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid run compress clean debug
+.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid run compress compress-win clean debug
 
 all: build
 
@@ -118,6 +118,10 @@ run: build
 compress: build
 	@upx -d $(TARGET) >/dev/null 2>&1 || true
 	upx --best --lzma $(TARGET)
+
+compress-win: build-win
+	@upx -d $(TARGET_WIN) >/dev/null 2>&1 || true
+	upx --best --lzma $(TARGET_WIN)
 
 debug: CFLAGS += -g -O0 -DDEBUG
 debug: clean build

@@ -3,6 +3,10 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
+#ifdef _WIN32
+/* MinGW exposes the CRT's secure rand_s declaration behind this switch. */
+#define _CRT_RAND_S
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,8 +43,13 @@ void clay_term_init(void) {
     HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode = 0;
     if (GetConsoleMode(out, &mode)) {
+        /* The UI strings are UTF-8. cmd.exe commonly starts with an OEM
+           code page, which renders each UTF-8 byte as a separate glyph. */
+        SetConsoleOutputCP(CP_UTF8);
         SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     }
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    if (GetConsoleMode(in, &mode)) SetConsoleCP(CP_UTF8);
 #else
     struct sigaction action;
     memset(&action, 0, sizeof(action));
