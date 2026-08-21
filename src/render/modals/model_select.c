@@ -229,7 +229,7 @@ ClayModelSelection clay_model_select(const ClayModelProvider *providers, int pro
                 result.ok = 1;
             }
             break;
-        } else if (key == CLAY_KEY_EOF || key == CLAY_KEY_ESCAPE) {
+        } else if (key == CLAY_KEY_INTERRUPT || key == CLAY_KEY_EOF || key == CLAY_KEY_ESCAPE) {
             break;
         }
     }

@@ -41,6 +41,7 @@ static char *trim(char *s) {
 
 static ClayArray g_history; /* char*, oldest first */
 static int g_history_ready = 0;
+static int g_last_line_interrupted = 0;
 
 static void ensure_history(void) {
     if (!g_history_ready) {
@@ -250,6 +251,7 @@ static char *interactive_prompt_line(void) {
     size_t cursor = 0;
     int history_pos = -1; /* -1 = editing a fresh line, not browsing history */
     int got_eof = 0;
+    int interrupted = 0;
 
     int pending_valid = 0; /* a key already read while scanning a burst, not yet handled */
     ClayKey pending_key = CLAY_KEY_CHAR;
@@ -272,7 +274,10 @@ static char *interactive_prompt_line(void) {
 
         if (key == CLAY_KEY_ENTER) {
             break;
-        } else if (key == CLAY_KEY_EOF) {
+        } else if (key == CLAY_KEY_INTERRUPT) {
+            interrupted = 1;
+            break;
+        } else if (key == CLAY_KEY_INTERRUPT || key == CLAY_KEY_EOF) {
             got_eof = 1;
             break;
         } else if (key == CLAY_KEY_BACKSPACE) {
@@ -341,7 +346,10 @@ static char *interactive_prompt_line(void) {
     clay_below_finish();
     clay_term_raw_disable();
 
-    if (got_eof && buf.len == 0) {
+    if (interrupted) {
+        g_last_line_interrupted = 1;
+    }
+    if (interrupted || (got_eof && buf.len == 0)) {
         clay_str_free(&buf);
         paste_blocks_free(&blocks);
         clay_array_free(&blocks);
@@ -358,8 +366,15 @@ static char *interactive_prompt_line(void) {
 }
 
 char *clay_prompt_line(void) {
+    g_last_line_interrupted = 0;
     if (!clay_term_is_interactive()) return fallback_prompt_line();
-    return interactive_prompt_line();
+    char *line = interactive_prompt_line();
+    if (!line && clay_term_take_interrupt()) g_last_line_interrupted = 1;
+    return line;
+}
+
+int clay_prompt_was_interrupted(void) {
+    return g_last_line_interrupted;
 }
 
 static void render_secret_line(const char *question, size_t len) {
@@ -476,7 +491,7 @@ int clay_prompt_select(const char *question, const ClayChoice *options, int coun
         } else if (key == CLAY_KEY_ENTER) {
             result = selected;
             break;
-        } else if (key == CLAY_KEY_EOF || key == CLAY_KEY_ESCAPE) {
+        } else if (key == CLAY_KEY_INTERRUPT || key == CLAY_KEY_EOF || key == CLAY_KEY_ESCAPE) {
             result = default_index;
             break;
         } else {
@@ -608,7 +623,7 @@ int clay_prompt_choice(const char *question, const ClayChoice *choices, int coun
             if (allow_custom && selected == count) entering_custom = 1;
             else result = selected;
             break;
-        } else if (key == CLAY_KEY_EOF || key == CLAY_KEY_ESCAPE) {
+        } else if (key == CLAY_KEY_INTERRUPT || key == CLAY_KEY_EOF || key == CLAY_KEY_ESCAPE) {
             break;
         } else {
             continue;

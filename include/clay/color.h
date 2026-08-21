@@ -15,6 +15,7 @@
 #define CLAY_CYAN   "\x1b[38;2;102;204;204m"
 #define CLAY_GREEN  "\x1b[38;2;96;200;120m"
 #define CLAY_YELLOW "\x1b[38;2;230;190;80m"
+#define CLAY_CORAL  "\x1b[38;2;240;138;120m"
 #define CLAY_RED    "\x1b[38;2;225;95;95m"
 
 /* Icons (UTF-8) */

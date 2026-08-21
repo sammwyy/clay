@@ -49,6 +49,7 @@ typedef enum {
     CLAY_KEY_LEFT,
     CLAY_KEY_RIGHT,
     CLAY_KEY_ESCAPE,
+    CLAY_KEY_INTERRUPT,
     CLAY_KEY_EOF
 } ClayKey;
 
@@ -56,6 +57,9 @@ typedef enum {
    reads. */
 void clay_term_raw_enable(void);
 void clay_term_raw_disable(void);
+
+/* True once after Ctrl-C/SIGINT is received; consumes that notification. */
+int clay_term_take_interrupt(void);
 
 /* Reads one key in raw mode; *ch_out (if set) receives the char for
    CLAY_KEY_CHAR. */

@@ -15,9 +15,19 @@ static int g_running = 1;
 static ClayJson *g_conversation = NULL;
 static long g_input_tokens = 0;
 static long g_output_tokens = 0;
+static long g_total_input_tokens = 0;
+static long g_total_output_tokens = 0;
+static long g_messages_sent = 0;
 
 static void conversation_reset(void);
 static void update_tokens_below(void);
+
+static void print_session_summary(void) {
+    printf("%sSession summary%s  %s\xe2\x86\x91 %ld%s  %s\xe2\x86\x93 %ld%s  %s%ld messages sent%s\n",
+           clay_color(CLAY_GRAY), clay_color(CLAY_RESET), clay_color(CLAY_CYAN), g_total_input_tokens,
+           clay_color(CLAY_RESET), clay_color(CLAY_CYAN), g_total_output_tokens, clay_color(CLAY_RESET),
+           clay_color(CLAY_GRAY), g_messages_sent, clay_color(CLAY_RESET));
+}
 
 static void cmd_exit(const char *args, void *user_data) {
     (void)args;
@@ -86,12 +96,12 @@ static void cmd_below(const char *args, void *user_data) {
     static int tokens_on = 1;
 
     i = (i + 1) % 4;
-    clay_below_set_state("provider", states[i]);
+    clay_below_set_state("status", states[i]);
 
     tokens_on = !tokens_on;
     clay_below_set_enabled("tokens", tokens_on);
 
-    clay_sayc(CLAY_CYAN, "provider state cycled, tokens module %s", tokens_on ? "enabled" : "disabled");
+    clay_sayc(CLAY_CYAN, "status state cycled, tokens module %s", tokens_on ? "enabled" : "disabled");
 }
 
 typedef struct {
@@ -188,20 +198,27 @@ static void connected_providers_free(void) {
 static void update_selected_below(void) {
     ClayStr text;
     clay_str_init(&text);
-    clay_str_printf(&text, "Model: %s", g_selected_model ? g_selected_model : "None");
+    if (g_selected_model && g_selected_provider) {
+        clay_str_printf(&text, "%s%s%s %s(%s)%s", clay_color(CLAY_CORAL), g_selected_model,
+                        clay_color(CLAY_RESET), clay_color(CLAY_GRAY), g_selected_provider, clay_color(CLAY_RESET));
+    } else {
+        clay_str_push(&text, "None");
+    }
     clay_below_set_text("model", text.data);
-    clay_str_clear(&text);
-    clay_str_printf(&text, "Provider: %s", g_selected_provider ? g_selected_provider : "None");
-    clay_below_set_text("provider", text.data);
+    clay_str_free(&text);
+}
+
+static void set_tokens_below(long input_tokens, long output_tokens) {
+    ClayStr text;
+    clay_str_init(&text);
+    clay_str_printf(&text, "%s\xe2\x86\x91 %ld  \xe2\x86\x93 %ld%s", clay_color(CLAY_CYAN), input_tokens,
+                    output_tokens, clay_color(CLAY_RESET));
+    clay_below_set_text("tokens", text.data);
     clay_str_free(&text);
 }
 
 static void update_tokens_below(void) {
-    ClayStr text;
-    clay_str_init(&text);
-    clay_str_printf(&text, "Tokens: %ld in / %ld out", g_input_tokens, g_output_tokens);
-    clay_below_set_text("tokens", text.data);
-    clay_str_free(&text);
+    set_tokens_below(g_input_tokens, g_output_tokens);
 }
 
 static int select_model(const char *provider, const char *model) {
@@ -391,9 +408,12 @@ static void hide_conversation_status(ClayConversationStream *stream) {
 static void set_conversation_status(double seconds, int success) {
     ClayStr text;
     clay_str_init(&text);
-    clay_str_printf(&text, success ? "Idle · Last turn: %.1fs" : "Idle · Last request failed: %.1fs", seconds);
+    clay_str_printf(&text, "%s%.1fs%s", clay_color(success ? CLAY_GREEN : CLAY_RED), seconds,
+                    clay_color(CLAY_RESET));
     clay_below_set_text("status", text.data);
-    clay_below_set_state("status", CLAY_BELOW_IDLE);
+    clay_below_stop_elapsed("status");
+    clay_below_set_state("status", success ? CLAY_BELOW_FINISHED : CLAY_BELOW_NONE);
+    clay_below_set_enabled("status", 1);
     clay_str_free(&text);
 }
 
@@ -402,8 +422,8 @@ static void on_conversation_token(const char *text, void *userdata) {
     if (!stream->started) {
         if (stream->status_visible) {
             clay_below_set_editing(0);
-            clay_below_set_text("status", "Streaming...");
-            clay_below_set_state("status", CLAY_BELOW_NONE);
+            clay_below_stop_elapsed("status");
+            clay_below_set_enabled("status", 0);
             clay_below_render_status();
             clay_below_status_insert_above();
         }
@@ -481,11 +501,14 @@ static int run_conversation(ClayApp *app, const char *input) {
     callbacks.on_usage = on_conversation_usage;
     callbacks.on_error = on_conversation_error;
     callbacks.userdata = &stream;
+    g_messages_sent++;
 
     struct timespec started_at;
     clock_gettime(CLOCK_MONOTONIC, &started_at);
-    clay_below_set_text("status", "Thinking...");
+    clay_below_set_text("status", "");
     clay_below_set_state("status", CLAY_BELOW_LOADING);
+    clay_below_set_enabled("status", 1);
+    clay_below_start_elapsed("status");
     if (clay_term_is_interactive()) {
         clay_below_set_editing(1);
         clay_below_render_status();
@@ -504,11 +527,12 @@ static int run_conversation(ClayApp *app, const char *input) {
     if (rc == 0) {
         clay_json_free(g_conversation);
         g_conversation = messages;
-        clay_below_set_state("provider", CLAY_BELOW_FINISHED);
         set_conversation_status(seconds, 1);
         if (stream.has_usage) {
             g_input_tokens = stream.input_tokens;
             g_output_tokens = stream.output_tokens;
+            g_total_input_tokens += stream.input_tokens;
+            g_total_output_tokens += stream.output_tokens;
             update_tokens_below();
         }
         if (stream.started && stream.status_visible) {
@@ -521,7 +545,6 @@ static int run_conversation(ClayApp *app, const char *input) {
         hide_conversation_status(&stream);
     } else {
         clay_json_free(messages);
-        clay_below_set_state("provider", CLAY_BELOW_IDLE);
         set_conversation_status(seconds, 0);
         if (stream.started && stream.status_visible) {
             clay_below_status_refresh_below();
@@ -576,12 +599,15 @@ static void cmd_mm(const char *args, void *user_data) {
 
 /* Exercises task spinners, a plan list, and a summary line. */
 static void run_demo_turn(ClayApp *app) {
-    clay_below_set_state("provider", CLAY_BELOW_LOADING);
+    clay_below_set_text("status", "");
+    clay_below_set_state("status", CLAY_BELOW_LOADING);
+    clay_below_set_enabled("status", 1);
+    clay_below_start_elapsed("status");
 
     ClayTask *scan = clay_app_task_start(app, "Scanning project");
     clay_term_sleep_ms(600);
     clay_app_task_success(app, scan, "42 files indexed");
-    clay_below_set_text("tokens", "Tokens: 128 in / 0 out");
+    set_tokens_below(128, 0);
 
     clay_app_list_header(app, "Plan:");
     clay_app_list_step(app, 1, "Add", "src/middleware/rateLimit.ts", "new, token-bucket", 1);
@@ -597,8 +623,10 @@ static void run_demo_turn(ClayApp *app) {
     ClayTask *tests = clay_app_task_start(app, "Running %snpm test%s", clay_color(CLAY_CYAN), clay_color(CLAY_GRAY));
     clay_term_sleep_ms(1200);
     clay_app_task_success(app, tests, "87 passed, 0 failed");
-    clay_below_set_text("tokens", "Tokens: 128 in / 340 out");
-    clay_below_set_state("provider", CLAY_BELOW_FINISHED);
+    clay_below_stop_elapsed("status");
+    clay_below_set_text("status", "2.3s");
+    set_tokens_below(128, 340);
+    clay_below_set_state("status", CLAY_BELOW_FINISHED);
 
     fputc('\n', stdout);
     clay_app_say(app, "Done. Commit with %sclay commit%s or review with %sclay diff%s.",
@@ -642,21 +670,22 @@ int main(int argc, char **argv) {
     clay_command_register(commands, "demo", "Run the render demo sequence", cmd_demo, app);
 
     clay_below_add(0, "status");
-    clay_below_set_text("status", "Idle");
-    clay_below_set_state("status", CLAY_BELOW_IDLE);
+    clay_below_set_enabled("status", 0);
 
     clay_below_add(1, "model");
 
     clay_below_add(2, "tokens");
     update_tokens_below();
 
-    clay_below_add(3, "provider");
-    clay_below_set_state("provider", CLAY_BELOW_IDLE);
     update_selected_below();
 
+    int interrupted = 0;
     while (g_running) {
         char *line = clay_prompt_line();
-        if (!line) break;
+        if (!line) {
+            interrupted = clay_prompt_was_interrupted() || clay_term_take_interrupt();
+            break;
+        }
 
         ClayInput input = clay_input_parse(line);
         free(line);
@@ -676,15 +705,20 @@ int main(int argc, char **argv) {
         }
 
         clay_input_free(&input);
+        if (clay_term_take_interrupt()) {
+            interrupted = 1;
+            break;
+        }
         if (!prompt_ready) fputc('\n', stdout);
     }
 
+    if (interrupted) print_session_summary();
     clay_app_destroy(app);
     connected_providers_free();
     clay_json_free(g_conversation);
     free(g_selected_provider);
     free(g_selected_model);
     clay_http_cleanup();
-    printf("%sGoodbye.%s\n", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
+    if (!interrupted) printf("%sGoodbye.%s\n", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
     return 0;
 }

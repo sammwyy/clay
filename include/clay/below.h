@@ -21,6 +21,10 @@ void clay_below_set_state(const char *id, ClayBelowState state);
 void clay_below_set_enabled(const char *id, int enabled);
 void clay_below_reorder(const char *id, int index);
 
+/* Shows a fixed-width elapsed timer in place of a module's text. */
+void clay_below_start_elapsed(const char *id);
+void clay_below_stop_elapsed(const char *id);
+
 /* Gates the background animator's redraws to when a prompt is actually
    being edited. Managed by clay_prompt_line. */
 void clay_below_set_editing(int editing);

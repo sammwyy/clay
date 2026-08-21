@@ -8,6 +8,9 @@
    frees), NULL on EOF with no input. */
 char *clay_prompt_line(void);
 
+/* True when the most recent clay_prompt_line was cancelled by Ctrl-C. */
+int clay_prompt_was_interrupted(void);
+
 /* Same, but echoes `*` per character instead of the real text (paste
    still works, just masked) and skips history. Prints `question` first.
    Malloc'd, caller frees; NULL on EOF with no input. */

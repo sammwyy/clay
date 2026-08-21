@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CLAY_BELOW_MAX_MODULES 64
 #define CLAY_BELOW_SPINNER_FRAMES 10
@@ -19,6 +20,8 @@ typedef struct {
     ClayBelowState state;
     int enabled;
     int index;
+    int show_elapsed;
+    struct timespec elapsed_start;
 } ClayBelowModule;
 
 static const char *SPINNER_FRAMES[CLAY_BELOW_SPINNER_FRAMES] = {
@@ -116,7 +119,16 @@ static void print_module_inline(const ClayBelowModule *m) {
         default:
             break;
     }
-    printf("%s%s%s", clay_color(CLAY_GRAY), m->text.data, clay_color(CLAY_RESET));
+    if (m->show_elapsed) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double seconds = (double)(now.tv_sec - m->elapsed_start.tv_sec) +
+                         (double)(now.tv_nsec - m->elapsed_start.tv_nsec) / 1e9;
+        const char *color = m->state == CLAY_BELOW_LOADING ? CLAY_YELLOW : CLAY_GRAY;
+        printf("%s%5.1fs%s", clay_color(color), seconds, clay_color(CLAY_RESET));
+    } else {
+        printf("%s%s%s", clay_color(CLAY_GRAY), m->text.data, clay_color(CLAY_RESET));
+    }
 }
 
 /* Cursor rests at row 0 col 0 between calls. Rows that already exist use
@@ -190,6 +202,15 @@ static int status_module_loading(void) {
 static void render_status_spinner_locked(void) {
     clay_term_cursor_col(2);
     printf("%s%s%s", clay_color(CLAY_YELLOW), SPINNER_FRAMES[g_spinner_frame], clay_color(CLAY_RESET));
+    ClayBelowModule *status = find_module("status");
+    if (status && status->show_elapsed) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double seconds = (double)(now.tv_sec - status->elapsed_start.tv_sec) +
+                         (double)(now.tv_nsec - status->elapsed_start.tv_nsec) / 1e9;
+        clay_term_cursor_col(4);
+        printf("%s%5.1fs%s", clay_color(CLAY_YELLOW), seconds, clay_color(CLAY_RESET));
+    }
     fputc('\r', stdout);
     fflush(stdout);
 }
@@ -232,6 +253,7 @@ void clay_below_add(int index, const char *id) {
         m.state = CLAY_BELOW_NONE;
         m.enabled = 1;
         m.index = index;
+        m.show_elapsed = 0;
         clay_array_push_val(&g_modules, &m);
     }
 
@@ -271,6 +293,25 @@ void clay_below_reorder(const char *id, int index) {
     ensure_modules();
     ClayBelowModule *m = find_module(id);
     if (m) m->index = index;
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_start_elapsed(const char *id) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) {
+        clock_gettime(CLOCK_MONOTONIC, &m->elapsed_start);
+        m->show_elapsed = 1;
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_stop_elapsed(const char *id) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) m->show_elapsed = 0;
     pthread_mutex_unlock(&g_lock);
 }
 

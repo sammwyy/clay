@@ -1,6 +1,7 @@
 #include "clay/term.h"
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,15 @@
 #define CLAY_PATH_MAX 4096
 #endif
 
+static volatile sig_atomic_t g_interrupted = 0;
+
+#ifndef _WIN32
+static void handle_sigint(int signal_number) {
+    (void)signal_number;
+    g_interrupted = 1;
+}
+#endif
+
 void clay_term_init(void) {
 #ifdef _WIN32
     HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -27,6 +37,12 @@ void clay_term_init(void) {
     if (GetConsoleMode(out, &mode)) {
         SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     }
+#else
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = handle_sigint;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGINT, &action, NULL);
 #endif
 }
 
@@ -214,13 +230,19 @@ void clay_term_raw_disable(void) {
 #endif
 }
 
+int clay_term_take_interrupt(void) {
+    if (!g_interrupted) return 0;
+    g_interrupted = 0;
+    return 1;
+}
+
 ClayKey clay_term_read_key(char *ch_out) {
 #ifdef _WIN32
     int c = _getch();
     if (c == EOF) return CLAY_KEY_EOF;
     if (c == '\r' || c == '\n') return CLAY_KEY_ENTER;
     if (c == 8 || c == 127) return CLAY_KEY_BACKSPACE;
-    if (c == 3) return CLAY_KEY_EOF;
+    if (c == 3) return CLAY_KEY_INTERRUPT;
     if (c == 27) return CLAY_KEY_ESCAPE;
     if (c == 0 || c == 0xE0) {
         int ext = _getch();
@@ -237,10 +259,11 @@ ClayKey clay_term_read_key(char *ch_out) {
 #else
     unsigned char c;
     ssize_t n = read(STDIN_FILENO, &c, 1);
+    if (n < 0 && errno == EINTR && g_interrupted) return CLAY_KEY_INTERRUPT;
     if (n <= 0) return CLAY_KEY_EOF;
     if (c == '\r' || c == '\n') return CLAY_KEY_ENTER;
     if (c == 127 || c == 8) return CLAY_KEY_BACKSPACE;
-    if (c == 3) return CLAY_KEY_EOF;
+    if (c == 3) return CLAY_KEY_INTERRUPT;
 
     if (c == 0x1b) {
         unsigned char seq[2];
