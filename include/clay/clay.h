@@ -14,6 +14,7 @@
 #include "clay/model_select.h"
 #include "clay/prompt.h"
 #include "clay/command.h"
+#include "clay/commands.h"
 #include "clay/app.h"
 
 #endif /* CLAY_H */

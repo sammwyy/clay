@@ -94,6 +94,7 @@ run: build
 	@./$(TARGET) --cwd .playground
 
 compress: build
+	@upx -d $(TARGET) >/dev/null 2>&1 || true
 	upx --best --lzma $(TARGET)
 
 debug: CFLAGS += -g -O0 -DDEBUG

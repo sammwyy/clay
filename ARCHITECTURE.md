@@ -1,6 +1,6 @@
 # Architecture
 
-clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. It's the render/UI layer plus a demo driver in `main.c`, and a separate backend layer (`json.c`, `http.c`, `providers/`, `config.c`) for talking to LLM APIs and remembering how to reach them. `/connect` saves provider credentials; `/model` uses those live connections to retrieve and select their available models.
+clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. It has a render/UI layer, a command/session layer, and a backend layer (`json.c`, `http.c`, `providers/`, `config.c`) for talking to LLM APIs and remembering how to reach them. `/connect` saves provider credentials; `/model` uses those live connections to retrieve and select their available models.
 
 ## Layers
 
@@ -13,12 +13,12 @@ src/config.c         saved provider credentials and model selection (~/.clay), b
 src/cli/             typed process argument registry and clay startup options
 src/render/         drawing primitives, built on mm + term
 src/render/modals/  purpose-built composite interactive widgets, built on render
-src/commands/       command registry + app state machine
-src/main.c          demo driver: wires commands to the app and render engine
+src/commands/       command registry, handlers, and agent session state
+src/main.c          process bootstrap and input loop
 src/test_openai.c   standalone harness for the OpenAI provider (see "Backend")
 ```
 
-Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists connection data. `cli/` depends on `mm` and `term`. `render` depends on `mm` and `term`. `commands` depends on `render` and, as of `/connect`, on `config`. `main.c` is the integration point for the render/commands/config/provider stack; `test_openai.c` is a separate provider/http harness.
+Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists connection data. `cli/` depends on `mm` and `term`. `render` depends on `mm` and `term`. `commands` is the integration layer over render/config/providers. `main.c` only owns process startup and the input loop; `test_openai.c` is a separate provider/http harness.
 
 ### `src/mm/` — memory
 
@@ -45,7 +45,7 @@ A thin wrapper over libcurl's easy interface - the only place in the project tha
 
 ### `src/config.c` — saved provider credentials
 
-Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. `~/.clay/config.json` separately stores the selected `provider` and `model` (or JSON null when unset). Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `main.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
+Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. `~/.clay/config.json` separately stores the selected `provider` and `model` (or JSON null when unset). Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `commands/context.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
 
 ### `src/cli/` — process arguments
 
@@ -65,16 +65,18 @@ Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/
 
 Purpose-built interactive widgets that combine several `render/` primitives into one specific UI, when a need doesn't fit `select`/`choice`. Not meant to be generic — each file is its own thing.
 
-- `model_select.c` — one active provider control (left/right) and its fixed-width search input share the header row. A filterable, scrollable six-row model area sits below it, bracketed by stable blank-or-count rows for models above and below. Each provider supplies a lazy `fetch(ctx, out)` callback; the selector retains each tab for the current modal, while `main.c`'s connected-provider state retains fetched results for the life of the CLI.
+- `model_select.c` — one active provider control (left/right) and its fixed-width search input share the header row. A filterable, scrollable six-row model area sits below it, bracketed by stable blank-or-count rows for models above and below. Each provider supplies a lazy `fetch(ctx, out)` callback; the selector retains each tab for the current modal, while the command session retains fetched results for the life of the CLI.
 
-### `src/commands/` — registry and state machine
+### `src/commands/` — registry, handlers, and session state
 
 - `command.c` — parses one line of input into a command (`/name args...`, dispatched by name via `ClayMap`) or a plain message (`ClayInput`), and holds the registry of registered command handlers.
 - `app.c` — `ClayApp`: a small state machine (`IDLE` / `BUSY` / `PROMPTING` / `EXITING`) with a listener hook. Command handlers never call `render/` functions directly — they call `clay_app_say`, `clay_app_task_start`, `clay_app_select`, etc., which update `ClayApp`'s state *and then* delegate to the matching render function. This keeps "what's happening" (state) and "how it looks" (ANSI output) in sync by construction, and is the seam a future agent daemon would drive through instead of writing to the terminal directly.
+- `context.c` — owns the command session: saved/connected providers, model and reasoning selection, conversation history, token counters, and the below-prompt modules. `message.c` owns the normal-message OpenAI streaming/tool loop against that state.
+- `register.c` is the one registry wiring point. Every slash-command handler lives in its own file (`help.c`, `exit.c`, `connect.c`, `model.c`, `effort.c`, `demo.c`, and the remaining command-named files), so a command's UI and behavior are changed together without growing `main.c`.
 
 ### `src/main.c`
 
-The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select`, `/choice`, `/below`, `/model`, `/effort`, `/connect`, `/demo`, `/mm`), registers the below-prompt status modules (`status`, `model`, `tokens`), and runs the main read-parse-dispatch loop. It loads every saved provider connection into a session-owned client; fetching models on a tab starts a spinner task, then caches that provider's result until exit. It restores the selected model/provider from `~/.clay/config.json`, with `None` when no selection exists. `/effort` presents a horizontal reasoning selector; `Default` omits `reasoning_effort` from requests, while explicit levels are sent with each conversation and tool-loop request. The selected model row shows the effort in brackets beside the model. Normal messages form a selected-model conversation: a system message is created at startup, the shared below row shows a spinner and elapsed time while waiting and remains beneath streamed output, every successful user/assistant/tool turn is retained with its OpenAI roles, and assistant tokens are written as their SSE chunks arrive. The model can call `shell_exec(command, args)`: it runs in the current workspace, returns bounded combined stdout/stderr and an exit code, renders as a demo-style task plus indented output, then continues the tool loop for a final response. Final provider usage updates the below row with `↑ input · ↓ output`; changing provider or model resets that history and per-turn counter under the same system prompt. `/demo` runs the canned scan → plan → write → test render sequence.
+The process bootstrap. It starts the terminal/HTTP layers, builds the command session, registers the command handlers, and runs the read-parse-dispatch loop. Provider/model selection, conversation state, and command behavior live in `src/commands/` rather than here.
 
 `/connect [type]` is the command that reaches into the backend stack: with no argument it's a `clay_app_choice` picker over `PROVIDER_TYPES` (`openai`, `openrouter`, `custom`), each row's title getting a green checkmark appended when `clay_config_exists` finds a saved config; with an argument it skips straight to that type. Either way it prompts for a base URL (skipped - `type->default_base_url` is used - unless the type is `custom`) and an API key (`clay_prompt_secret`), then `clay_config_save`s the result and refreshes that session's client/cache. `/model` shows only connected providers as tabs, errors immediately when none are connected, and writes its selected provider/model to the global config. No `openrouter.c`/`openai_custom.c` exist - every entry in `PROVIDER_TYPES` is the same `providers/openai.c` client underneath, just a different `id`/default `base_url`.
 
@@ -90,4 +92,4 @@ The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select
 
 ## Build
 
-`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked except for libcurl - see CODESTYLE.md). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` creates the ignored `.playground/` directory and starts the native binary with `--cwd .playground`, so tool calls do not use the repository root. `make compress` packs the native build in place with UPX using `--best --lzma`. `make test-cli` exercises typed option parsing; `make test-openai` builds `bin/test_openai` from the same object tree minus `main.o`, plus `test_openai.o` - see "`src/providers/`" above.
+`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked except for libcurl - see CODESTYLE.md). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` creates the ignored `.playground/` directory and starts the native binary with `--cwd .playground`, so tool calls do not use the repository root. `make compress` packs the native build in place with UPX using `--best --lzma`; it unpacks an already-compressed build first so the target is repeatable. `make test-cli` exercises typed option parsing; `make test-openai` builds `bin/test_openai` from the same object tree minus `main.o`, plus `test_openai.o` - see "`src/providers/`" above.
