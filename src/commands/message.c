@@ -252,25 +252,35 @@ static void append_label_text(ClayStr *out, const char *text) {
     }
 }
 
-static void tool_label(ClayStr *out, const char *name, int completed, int success) {
-    if (strcmp(name, "shell_exec") == 0) {
-        clay_str_push(out, completed ? (success ? "Executed" : "Failed") : "Executing shell command");
-        return;
-    }
-    if (strcmp(name, "memory_save") == 0) {
-        clay_str_push(out, completed ? (success ? "Saved memory" : "Failed to save memory") : "Saving memory");
-        return;
-    }
-    if (strcmp(name, "memory_read") == 0) {
-        clay_str_push(out, completed ? (success ? "Read memory" : "Failed to read memory") : "Reading memory");
-        return;
-    }
-    if (strcmp(name, "remember") == 0) {
-        clay_str_push(out, completed ? (success ? "Updated notes" : "Failed to update notes") : "Updating notes");
+static void tool_label(ClayStr *out, const char *name, int completed, int success, const char *detail) {
+    const char *verb = NULL;
+    if (strcmp(name, "shell_exec") == 0) verb = completed ? (success ? "Executed" : "Failed") : "Executing shell command";
+    else if (strcmp(name, "memory_save") == 0) verb = completed ? (success ? "Saved memory" : "Failed to save memory") : "Saving memory";
+    else if (strcmp(name, "memory_read") == 0) verb = completed ? (success ? "Read memory" : "Failed to read memory") : "Reading memory";
+    else if (strcmp(name, "remember") == 0) verb = completed ? (success ? "Updated notes" : "Failed to update notes") : "Updating notes";
+    else if (strcmp(name, "read") == 0) verb = completed ? (success ? "Read" : "Failed to read") : "Reading";
+    else if (strcmp(name, "write") == 0) verb = completed ? (success ? "Wrote" : "Failed to write") : "Writing";
+    else if (strcmp(name, "edit") == 0) verb = completed ? (success ? "Edited" : "Failed to edit") : "Editing";
+    else if (strcmp(name, "glob") == 0) verb = completed ? (success ? "Found files" : "Glob failed") : "Globbing";
+    else if (strcmp(name, "grep") == 0) verb = completed ? (success ? "Searched" : "Search failed") : "Searching";
+    if (verb) {
+        clay_str_push(out, verb);
+        if (detail && *detail) {
+            clay_str_push(out, ": ");
+            append_label_text(out, detail);
+        }
         return;
     }
     clay_str_push(out, completed ? (success ? "Executed: " : "Failed: ") : "Executing: ");
     append_label_text(out, name);
+}
+
+/* Which argument/result field carries the detail worth showing next to a
+   tool's status label, if any. */
+static const char *tool_detail_key(const char *name) {
+    if (strcmp(name, "read") == 0 || strcmp(name, "write") == 0 || strcmp(name, "edit") == 0) return "path";
+    if (strcmp(name, "glob") == 0 || strcmp(name, "grep") == 0) return "pattern";
+    return NULL;
 }
 
 static int command_fits_inline(const char *command) {
@@ -321,14 +331,17 @@ static void print_tool_output(const ClayJson *result, int show_command) {
 }
 
 static void on_tool_call(const char *name, const char *arguments_json, void *userdata) {
-    (void)arguments_json;
     ClayConversationStream *stream = userdata;
     close_response_for_tool(stream);
     clay_str_clear(&stream->response);
     if (clay_term_is_interactive()) clay_term_raw_disable();
+    const char *detail_key = tool_detail_key(name);
+    ClayJson *args = detail_key && arguments_json ? clay_json_parse(arguments_json, NULL) : NULL;
+    const char *detail = args ? clay_json_string_value(clay_json_object_get(args, detail_key)) : NULL;
     ClayStr label;
     clay_str_init(&label);
-    tool_label(&label, name, 0, 0);
+    tool_label(&label, name, 0, 0, detail);
+    clay_json_free(args);
     stream->tool_task = clay_task_start("%s", label.data);
     clay_str_free(&label);
 }
@@ -339,13 +352,15 @@ static void on_tool_result(const char *name, const ClayJson *result, void *userd
     long exit_code = (long)clay_json_number_value(clay_json_object_get(result, "exit_code"));
     const char *command = clay_json_string_value(clay_json_object_get(result, "command"));
     int inline_command = ok && strcmp(name, "shell_exec") == 0 && *command && command_fits_inline(command);
+    const char *detail_key = tool_detail_key(name);
+    const char *detail = detail_key ? clay_json_string_value(clay_json_object_get(result, detail_key)) : NULL;
     if (stream->tool_task) {
         ClayStr label;
         clay_str_init(&label);
         if (inline_command) {
             clay_str_push(&label, "Executed $");
             append_label_text(&label, command);
-        } else tool_label(&label, name, 1, ok);
+        } else tool_label(&label, name, 1, ok, detail);
         if (ok) clay_task_success_with_label(stream->tool_task, label.data, "");
         else clay_task_fail_with_label(stream->tool_task, label.data, "exit %ld", exit_code);
         clay_str_free(&label);
@@ -474,6 +489,11 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     ClayJson *memory_save_schema_json = memory_save_schema();
     ClayJson *memory_read_schema_json = memory_read_schema();
     ClayJson *remember_schema_json = remember_schema();
+    ClayJson *read_schema_json = clay_fs_tool_read_schema();
+    ClayJson *write_schema_json = clay_fs_tool_write_schema();
+    ClayJson *edit_schema_json = clay_fs_tool_edit_schema();
+    ClayJson *glob_schema_json = clay_fs_tool_glob_schema();
+    ClayJson *grep_schema_json = clay_fs_tool_grep_schema();
     ClayTool tools[] = {
         {"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.",
          shell_schema, shell_exec_tool, commands},
@@ -483,6 +503,16 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
          memory_read_schema_json, memory_read_tool, commands},
         {"remember", "Replaces this chat's short-term scratchpad, shown alongside the conversation every turn.",
          remember_schema_json, remember_tool, commands},
+        {"read", "Reads a file from the workspace, with line numbers. Prefer this over shell_exec for reading files.",
+         read_schema_json, clay_fs_tool_read, commands},
+        {"write", "Creates or overwrites a file in the workspace with the given content.", write_schema_json,
+         clay_fs_tool_write, commands},
+        {"edit", "Replaces an exact, unique text match in a file. Prefer this over shell_exec/sed for edits.",
+         edit_schema_json, clay_fs_tool_edit, commands},
+        {"glob", "Lists files in the workspace whose path matches a wildcard pattern.", glob_schema_json,
+         clay_fs_tool_glob, commands},
+        {"grep", "Searches file contents in the workspace for a regular expression.", grep_schema_json,
+         clay_fs_tool_grep, commands},
     };
     if (clay_term_is_interactive()) clay_term_raw_enable();
     int rc = clay_openai_run(client, messages, tools, sizeof(tools) / sizeof(tools[0]), 8, &callbacks);
@@ -491,6 +521,11 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_json_free(memory_save_schema_json);
     clay_json_free(memory_read_schema_json);
     clay_json_free(remember_schema_json);
+    clay_json_free(read_schema_json);
+    clay_json_free(write_schema_json);
+    clay_json_free(edit_schema_json);
+    clay_json_free(glob_schema_json);
+    clay_json_free(grep_schema_json);
     clay_openai_destroy(client);
     struct timespec finished_at;
     clock_gettime(CLOCK_MONOTONIC, &finished_at);

@@ -497,6 +497,46 @@ int clay_term_list_dir(const char *path, ClayArray *names) {
     return 0;
 }
 
+int clay_term_list_entries(const char *path, ClayArray *names) {
+    clay_array_init(names, sizeof(char *));
+#ifdef _WIN32
+    ClayStr pattern;
+    clay_str_init(&pattern);
+    clay_str_printf(&pattern, "%s\\*", path);
+    WIN32_FIND_DATA data;
+    HANDLE handle = FindFirstFile(pattern.data, &data);
+    clay_str_free(&pattern);
+    if (handle == INVALID_HANDLE_VALUE) return -1;
+    do {
+        if (strcmp(data.cFileName, ".") == 0 || strcmp(data.cFileName, "..") == 0) continue;
+        char *name = strdup(data.cFileName);
+        clay_array_push_val(names, &name);
+    } while (FindNextFile(handle, &data));
+    FindClose(handle);
+#else
+    DIR *directory = opendir(path);
+    if (!directory) return -1;
+    struct dirent *entry;
+    while ((entry = readdir(directory))) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        char *name = strdup(entry->d_name);
+        clay_array_push_val(names, &name);
+    }
+    closedir(directory);
+#endif
+    return 0;
+}
+
+int clay_term_is_dir(const char *path) {
+#ifdef _WIN32
+    struct _stat info;
+    return _stat(path, &info) == 0 && (info.st_mode & _S_IFDIR) != 0;
+#else
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+#endif
+}
+
 long long clay_term_file_modified_at(const char *path) {
 #ifdef _WIN32
     struct _stat info;

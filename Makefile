@@ -56,6 +56,10 @@ SANDBOX_TEST_SRC    := tests/test_sandbox.c
 SANDBOX_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(SANDBOX_TEST_SRC))
 SANDBOX_TEST_TARGET := $(BIN_DIR)/test_sandbox
 
+FS_TOOLS_TEST_SRC    := tests/test_fs_tools.c
+FS_TOOLS_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(FS_TOOLS_TEST_SRC))
+FS_TOOLS_TEST_TARGET := $(BIN_DIR)/test_fs_tools
+
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
@@ -69,7 +73,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox run compress compress-win clean debug
+.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools run compress compress-win clean debug
 
 all: build
 
@@ -107,6 +111,11 @@ test-sandbox: $(SANDBOX_TEST_TARGET)
 
 $(SANDBOX_TEST_TARGET): $(LIB_OBJ) $(SANDBOX_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(SANDBOX_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-fs-tools: $(FS_TOOLS_TEST_TARGET)
+
+$(FS_TOOLS_TEST_TARGET): $(LIB_OBJ) $(FS_TOOLS_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(FS_TOOLS_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)

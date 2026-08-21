@@ -104,7 +104,9 @@ char *clay_term_cwd(void);
 /* Creates one directory level (not recursive). 0 on success or if it
    already exists, nonzero on failure. */
 int clay_term_mkdir(const char *path);
-int clay_term_list_dir(const char *path, ClayArray *names); /* char *, caller frees entries */
+int clay_term_list_dir(const char *path, ClayArray *names); /* char *, caller frees entries; dirs only */
+int clay_term_list_entries(const char *path, ClayArray *names); /* char *, caller frees entries; files and dirs */
+int clay_term_is_dir(const char *path);
 long long clay_term_file_modified_at(const char *path);
 int clay_term_random_bytes(unsigned char *bytes, size_t count);
 

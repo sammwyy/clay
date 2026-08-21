@@ -78,4 +78,17 @@ void clay_cmd_demo(const char *args, void *user_data);
 void clay_cmd_sandbox(const char *args, void *user_data);
 void clay_cmd_exec(const char *args, void *user_data);
 
+/* Dedicated filesystem tools (src/commands/fs_tools.c), each scoped to the
+   current workspace directory. userdata is a ClayCommands*. */
+ClayJson *clay_fs_tool_read(const ClayJson *arguments, void *userdata);
+ClayJson *clay_fs_tool_read_schema(void);
+ClayJson *clay_fs_tool_write(const ClayJson *arguments, void *userdata);
+ClayJson *clay_fs_tool_write_schema(void);
+ClayJson *clay_fs_tool_edit(const ClayJson *arguments, void *userdata);
+ClayJson *clay_fs_tool_edit_schema(void);
+ClayJson *clay_fs_tool_glob(const ClayJson *arguments, void *userdata);
+ClayJson *clay_fs_tool_glob_schema(void);
+ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata);
+ClayJson *clay_fs_tool_grep_schema(void);
+
 #endif /* CLAY_COMMANDS_CONTEXT_H */
