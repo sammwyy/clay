@@ -75,10 +75,6 @@ void clay_term_cursor_col(int col) {
     printf("\x1b[%dG", col + 1);
 }
 
-void clay_term_insert_line(void) {
-    fputs("\x1b[L", stdout);
-}
-
 void clay_term_row_enter(int row, int *established) {
     if (row < *established) {
         clay_term_cursor_down(1);

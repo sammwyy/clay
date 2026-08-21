@@ -339,10 +339,16 @@ void clay_below_render_status(void) {
     pthread_mutex_unlock(&g_lock);
 }
 
+/* '\n' scrolls correctly at the terminal's last row; insert-line silently drops content there instead. */
 void clay_below_status_insert_above(void) {
     pthread_mutex_lock(&g_lock);
     if (g_status_only) {
-        clay_term_insert_line();
+        fputc('\r', stdout);
+        clay_term_clear_line();
+        fputc('\n', stdout);
+        render_status_locked();
+        clay_term_cursor_up(1);
+        fputc('\r', stdout);
         fflush(stdout);
     }
     pthread_mutex_unlock(&g_lock);
@@ -352,8 +358,12 @@ void clay_below_status_push_down(void) {
     pthread_mutex_lock(&g_lock);
     if (g_status_only) {
         clay_term_cursor_down(1);
-        clay_term_insert_line();
-        clay_term_cursor_up(1);
+        fputc('\r', stdout);
+        clay_term_clear_line();
+        fputc('\n', stdout);
+        render_status_locked();
+        clay_term_cursor_up(2);
+        fputc('\r', stdout);
         fflush(stdout);
     }
     pthread_mutex_unlock(&g_lock);
@@ -388,11 +398,13 @@ void clay_below_status_prepare_prompt(void) {
     if (g_status_only) {
         clay_term_cursor_col(0);
         clay_term_cursor_down(1);
-        clay_term_insert_line();
-        clay_term_cursor_col(0);
-        clay_term_cursor_down(1);
-        clay_term_insert_line();
-        clay_term_cursor_col(0);
+        fputc('\r', stdout);
+        clay_term_clear_line();
+        fputc('\n', stdout); /* blank separator row */
+        fputc('\n', stdout); /* row 0 of the next prompt */
+        fputc('\n', stdout); /* row 1 of the next prompt, reserved up front */
+        clay_term_cursor_up(1);
+        fputc('\r', stdout);
         g_status_only = 0;
         g_last_line_count = 0;
         g_max_rows_established = 2;
