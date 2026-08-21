@@ -83,6 +83,91 @@ static void cmd_below(const char *args, void *user_data) {
     clay_sayc(CLAY_CYAN, "provider state cycled, tokens module %s", tokens_on ? "enabled" : "disabled");
 }
 
+static int fetch_anthropic(void *ctx, ClayModelItem *out, int max) {
+    (void)ctx;
+    static const ClayModelItem items[] = {
+        {"claude-opus-5", "most capable"},
+        {"claude-sonnet-5", "balanced"},
+        {"claude-haiku-4-5", "fastest"},
+        {"claude-opus-4-5", "previous flagship"},
+        {"claude-sonnet-4-5", "previous balanced"},
+        {"claude-haiku-4", "previous fast"},
+        {"claude-opus-4-1", "legacy"},
+        {"claude-sonnet-3-7", "legacy"},
+    };
+    int n = (int)(sizeof(items) / sizeof(items[0]));
+    if (n > max) n = max;
+    memcpy(out, items, (size_t)n * sizeof(ClayModelItem));
+    return n;
+}
+
+static int fetch_openai(void *ctx, ClayModelItem *out, int max) {
+    (void)ctx;
+    static const ClayModelItem items[] = {
+        {"gpt-5", "flagship"},
+        {"gpt-5-mini", "cheaper, faster"},
+        {"gpt-5-nano", "smallest"},
+        {"gpt-4.1", "previous gen"},
+        {"gpt-4.1-mini", "previous gen, cheaper"},
+        {"o3", "reasoning"},
+        {"o3-mini", "reasoning, cheaper"},
+        {"o1", "legacy reasoning"},
+    };
+    int n = (int)(sizeof(items) / sizeof(items[0]));
+    if (n > max) n = max;
+    memcpy(out, items, (size_t)n * sizeof(ClayModelItem));
+    return n;
+}
+
+static int fetch_google(void *ctx, ClayModelItem *out, int max) {
+    (void)ctx;
+    static const ClayModelItem items[] = {
+        {"gemini-2.5-pro", "most capable"},
+        {"gemini-2.5-flash", "fast"},
+        {"gemini-2.5-flash-lite", "cheapest"},
+        {"gemini-2.0-flash", "previous gen"},
+        {"gemini-1.5-pro", "legacy"},
+    };
+    int n = (int)(sizeof(items) / sizeof(items[0]));
+    if (n > max) n = max;
+    memcpy(out, items, (size_t)n * sizeof(ClayModelItem));
+    return n;
+}
+
+static void cmd_model(const char *args, void *user_data) {
+    (void)user_data;
+
+    if (args && *args) {
+        ClayStr buf;
+        clay_str_init(&buf);
+        clay_str_printf(&buf, "Model: %s", args);
+        clay_below_set_text("model", buf.data);
+        clay_str_free(&buf);
+        clay_sayc(CLAY_GREEN, "Model set to %s", args);
+        return;
+    }
+
+    ClayModelProvider providers[] = {
+        {"anthropic", fetch_anthropic, NULL},
+        {"openai", fetch_openai, NULL},
+        {"google", fetch_google, NULL},
+    };
+
+    ClayModelSelection sel = clay_model_select(providers, 3, 0);
+    if (!sel.ok) {
+        clay_sayc(CLAY_RED, "Model selection cancelled.");
+        return;
+    }
+
+    ClayStr buf;
+    clay_str_init(&buf);
+    clay_str_printf(&buf, "Model: %s (%s)", sel.model, sel.provider);
+    clay_below_set_text("model", buf.data);
+    clay_sayc(CLAY_GREEN, "Model set to %s via %s", sel.model, sel.provider);
+    clay_str_free(&buf);
+    clay_model_selection_free(&sel);
+}
+
 static void cmd_mm(const char *args, void *user_data) {
     (void)args;
     (void)user_data;
@@ -166,6 +251,7 @@ int main(int argc, char **argv) {
     clay_command_register(commands, "choice", "Demo a navigable choice prompt", cmd_choice, app);
     clay_command_register(commands, "mm", "Smoke-test the mm module", cmd_mm, app);
     clay_command_register(commands, "below", "Cycle the below-prompt status modules", cmd_below, app);
+    clay_command_register(commands, "model", "Pick a model/provider, or /model <id> directly", cmd_model, app);
 
     clay_below_add(0, "model");
     clay_below_set_text("model", "Model: claude-sonnet-5");

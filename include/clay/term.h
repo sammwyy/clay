@@ -60,4 +60,12 @@ void clay_term_raw_disable(void);
    CLAY_KEY_CHAR. */
 ClayKey clay_term_read_key(char *ch_out);
 
+/* Moves the cursor down one row into `row` (row 1, 2, ... counted from a
+   caller-tracked row 0). Uses cursor-down if the row already exists
+   (*established > row, never scrolls), or a real '\n' if it's new
+   territory (*established <= row, scrolls if needed; bumps
+   *established). Used to redraw multi-row live widgets without walking
+   them up the screen when pinned to the bottom of the terminal. */
+void clay_term_row_enter(int row, int *established);
+
 #endif /* CLAY_TERM_H */

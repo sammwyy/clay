@@ -9,6 +9,7 @@
 #include "clay/list.h"
 #include "clay/task.h"
 #include "clay/below.h"
+#include "clay/model_select.h"
 #include "clay/prompt.h"
 #include "clay/command.h"
 #include "clay/app.h"

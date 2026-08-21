@@ -52,20 +52,21 @@ void clay_str_push_char(ClayStr *s, char c) {
     s->data[s->len] = '\0';
 }
 
-void clay_str_printf(ClayStr *s, const char *fmt, ...) {
-    va_list args, args_copy;
-    va_start(args, fmt);
+void clay_str_vprintf(ClayStr *s, const char *fmt, va_list args) {
+    va_list args_copy;
     va_copy(args_copy, args);
     int needed = vsnprintf(NULL, 0, fmt, args_copy);
     va_end(args_copy);
-
-    if (needed < 0) {
-        va_end(args);
-        return;
-    }
+    if (needed < 0) return;
 
     str_reserve(s, (size_t)needed);
     vsnprintf(s->data + s->len, (size_t)needed + 1, fmt, args);
-    va_end(args);
     s->len += (size_t)needed;
+}
+
+void clay_str_printf(ClayStr *s, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    clay_str_vprintf(s, fmt, args);
+    va_end(args);
 }

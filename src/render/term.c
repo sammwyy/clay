@@ -42,6 +42,16 @@ void clay_term_cursor_col(int col) {
     printf("\x1b[%dG", col + 1);
 }
 
+void clay_term_row_enter(int row, int *established) {
+    if (row < *established) {
+        clay_term_cursor_down(1);
+    } else {
+        fputc('\n', stdout);
+        *established = row + 1;
+    }
+    fputc('\r', stdout);
+}
+
 void clay_term_sleep_ms(int ms) {
 #ifdef _WIN32
     Sleep((DWORD)ms);

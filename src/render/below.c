@@ -2,21 +2,20 @@
 
 #include "clay/array.h"
 #include "clay/color.h"
+#include "clay/str.h"
 #include "clay/term.h"
 
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#define CLAY_BELOW_ID_MAX 64
-#define CLAY_BELOW_TEXT_MAX 256
 #define CLAY_BELOW_MAX_MODULES 64
 #define CLAY_BELOW_SPINNER_FRAMES 10
-#define CLAY_BELOW_INPUT_MAX 2048
 
 typedef struct {
-    char id[CLAY_BELOW_ID_MAX];
-    char text[CLAY_BELOW_TEXT_MAX];
+    char *id;
+    ClayStr text;
     ClayBelowState state;
     int enabled;
     int index;
@@ -32,7 +31,9 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static ClayArray g_modules;
 static int g_modules_ready = 0;
 
-static char g_last_input[CLAY_BELOW_INPUT_MAX] = "";
+static ClayStr g_last_input;
+static int g_last_input_ready = 0;
+
 static int g_last_line_count = 0;
 static int g_max_rows_established = 1; /* rows below the prompt ever created via a real '\n' */
 static int g_spinner_frame = 0;
@@ -45,6 +46,13 @@ static void ensure_modules(void) {
     if (!g_modules_ready) {
         clay_array_init(&g_modules, sizeof(ClayBelowModule));
         g_modules_ready = 1;
+    }
+}
+
+static void ensure_last_input(void) {
+    if (!g_last_input_ready) {
+        clay_str_init(&g_last_input);
+        g_last_input_ready = 1;
     }
 }
 
@@ -106,7 +114,7 @@ static void print_module_inline(const ClayBelowModule *m) {
         default:
             break;
     }
-    printf("%s%s%s", clay_color(CLAY_GRAY), m->text, clay_color(CLAY_RESET));
+    printf("%s%s%s", clay_color(CLAY_GRAY), m->text.data, clay_color(CLAY_RESET));
 }
 
 /* Cursor rests at row 0 col 0 between calls. Rows that already exist use
@@ -115,10 +123,11 @@ static void print_module_inline(const ClayBelowModule *m) {
    walks the block up the screen. */
 static void render_locked(void) {
     ensure_modules();
+    ensure_last_input();
 
     fputc('\r', stdout);
     clay_term_clear_line();
-    printf("%s%s>%s %s", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET), g_last_input);
+    printf("%s%s>%s %s", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET), g_last_input.data);
 
     int order[CLAY_BELOW_MAX_MODULES];
     int count = sorted_enabled_indices(order);
@@ -127,13 +136,7 @@ static void render_locked(void) {
     int rows_to_visit = total_now > g_last_line_count ? total_now : g_last_line_count;
 
     for (int row = 1; row < rows_to_visit; row++) {
-        if (row < g_max_rows_established) {
-            clay_term_cursor_down(1);
-        } else {
-            fputc('\n', stdout);
-            g_max_rows_established = row + 1;
-        }
-        fputc('\r', stdout);
+        clay_term_row_enter(row, &g_max_rows_established);
         clay_term_clear_line();
 
         if (row == 1 && row < total_now) {
@@ -146,7 +149,7 @@ static void render_locked(void) {
     }
 
     if (rows_to_visit > 1) clay_term_cursor_up(rows_to_visit - 1);
-    clay_term_cursor_col(2 + (int)clay_utf8_width(g_last_input));
+    clay_term_cursor_col(2 + (int)clay_utf8_width(g_last_input.data));
 
     g_last_line_count = total_now;
     fflush(stdout);
@@ -183,9 +186,8 @@ void clay_below_add(int index, const char *id) {
         existing->index = index;
     } else {
         ClayBelowModule m;
-        strncpy(m.id, id, sizeof(m.id) - 1);
-        m.id[sizeof(m.id) - 1] = '\0';
-        m.text[0] = '\0';
+        m.id = strdup(id);
+        clay_str_init(&m.text);
         m.state = CLAY_BELOW_NONE;
         m.enabled = 1;
         m.index = index;
@@ -201,8 +203,8 @@ void clay_below_set_text(const char *id, const char *content) {
     ensure_modules();
     ClayBelowModule *m = find_module(id);
     if (m) {
-        strncpy(m->text, content, sizeof(m->text) - 1);
-        m->text[sizeof(m->text) - 1] = '\0';
+        clay_str_clear(&m->text);
+        clay_str_push(&m->text, content);
     }
     pthread_mutex_unlock(&g_lock);
 }
@@ -239,8 +241,9 @@ void clay_below_set_editing(int editing) {
 
 void clay_below_render(const char *input) {
     pthread_mutex_lock(&g_lock);
-    strncpy(g_last_input, input, sizeof(g_last_input) - 1);
-    g_last_input[sizeof(g_last_input) - 1] = '\0';
+    ensure_last_input();
+    clay_str_clear(&g_last_input);
+    clay_str_push(&g_last_input, input);
     render_locked();
     pthread_mutex_unlock(&g_lock);
 }
@@ -260,6 +263,7 @@ void clay_below_finish(void) {
     fflush(stdout);
     g_last_line_count = 0;
     g_max_rows_established = 1;
-    g_last_input[0] = '\0';
+    ensure_last_input();
+    clay_str_clear(&g_last_input);
     pthread_mutex_unlock(&g_lock);
 }

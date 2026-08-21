@@ -1,6 +1,7 @@
 #ifndef CLAY_STR_H
 #define CLAY_STR_H
 
+#include <stdarg.h>
 #include <stddef.h>
 
 /* Growable string buffer. data is always NUL-terminated and safe to use
@@ -18,5 +19,6 @@ void clay_str_push_char(ClayStr *s, char c);
 void clay_str_push(ClayStr *s, const char *text);
 void clay_str_push_n(ClayStr *s, const char *text, size_t len);
 void clay_str_printf(ClayStr *s, const char *fmt, ...);
+void clay_str_vprintf(ClayStr *s, const char *fmt, va_list args);
 
 #endif /* CLAY_STR_H */

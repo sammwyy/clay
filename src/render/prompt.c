@@ -256,9 +256,9 @@ static void print_choice_row(const ClayChoice *choices, int count, int allow_cus
     if (is_custom_row) {
         const char *label = "Type your own...";
         if (index == selected) {
-            printf("%s%s\xe2\x9d\xaf %s%s\n", clay_color(CLAY_ORANGE), clay_color(CLAY_BOLD), label, clay_color(CLAY_RESET));
+            printf("%s%s\xe2\x9d\xaf %s%s", clay_color(CLAY_ORANGE), clay_color(CLAY_BOLD), label, clay_color(CLAY_RESET));
         } else {
-            printf("  %s%s%s\n", clay_color(CLAY_DIM), label, clay_color(CLAY_RESET));
+            printf("  %s%s%s", clay_color(CLAY_DIM), label, clay_color(CLAY_RESET));
         }
         return;
     }
@@ -275,7 +275,6 @@ static void print_choice_row(const ClayChoice *choices, int count, int allow_cus
         for (int i = 0; i < pad; i++) fputc(' ', stdout);
         printf("  %s%s%s", clay_color(CLAY_GRAY), choice->desc, clay_color(CLAY_RESET));
     }
-    fputc('\n', stdout);
 }
 
 static int choice_fallback(const char *question, const ClayChoice *choices, int count,
@@ -326,11 +325,17 @@ int clay_prompt_choice(const char *question, const ClayChoice *choices, int coun
     int total_rows = count + (allow_custom ? 1 : 0);
     int selected = 0;
     int title_width = max_title_width(choices, count);
+    int established = 1;
 
     printf("%s%s%s\n", clay_color(CLAY_WHITE), question, clay_color(CLAY_RESET));
     clay_term_raw_enable();
     clay_term_hide_cursor();
-    for (int i = 0; i < total_rows; i++) print_choice_row(choices, count, allow_custom, i, selected, title_width);
+
+    print_choice_row(choices, count, allow_custom, 0, selected, title_width);
+    for (int i = 1; i < total_rows; i++) {
+        clay_term_row_enter(i, &established);
+        print_choice_row(choices, count, allow_custom, i, selected, title_width);
+    }
 
     int result = -1;
     int entering_custom = 0;
@@ -350,10 +355,17 @@ int clay_prompt_choice(const char *question, const ClayChoice *choices, int coun
         } else {
             continue;
         }
-        clay_term_cursor_up(total_rows);
-        for (int i = 0; i < total_rows; i++) print_choice_row(choices, count, allow_custom, i, selected, title_width);
+        clay_term_cursor_up(total_rows - 1);
+        fputc('\r', stdout);
+        clay_term_clear_line();
+        print_choice_row(choices, count, allow_custom, 0, selected, title_width);
+        for (int i = 1; i < total_rows; i++) {
+            clay_term_row_enter(i, &established);
+            print_choice_row(choices, count, allow_custom, i, selected, title_width);
+        }
     }
 
+    fputc('\n', stdout);
     clay_term_show_cursor();
     clay_term_raw_disable();
 

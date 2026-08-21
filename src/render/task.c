@@ -1,6 +1,7 @@
 #include "clay/task.h"
 
 #include "clay/color.h"
+#include "clay/str.h"
 #include "clay/term.h"
 
 #include <pthread.h>
@@ -17,7 +18,7 @@ static const char *SPINNER_FRAMES[CLAY_SPINNER_FRAME_COUNT] = {
 };
 
 struct ClayTask {
-    char label[256];
+    ClayStr label;
     struct timespec start;
     pthread_t thread;
     pthread_mutex_t lock;
@@ -48,7 +49,7 @@ static void *spinner_loop(void *arg) {
         pthread_mutex_unlock(&task->lock);
         if (!running) break;
 
-        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], task->label, NULL);
+        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], task->label.data, NULL);
         frame = (frame + 1) % CLAY_SPINNER_FRAME_COUNT;
         clay_term_sleep_ms(80);
     }
@@ -57,10 +58,11 @@ static void *spinner_loop(void *arg) {
 
 ClayTask *clay_task_start(const char *fmt, ...) {
     ClayTask *task = malloc(sizeof(ClayTask));
+    clay_str_init(&task->label);
 
     va_list args;
     va_start(args, fmt);
-    vsnprintf(task->label, sizeof(task->label), fmt, args);
+    clay_str_vprintf(&task->label, fmt, args);
     va_end(args);
 
     clock_gettime(CLOCK_MONOTONIC, &task->start);
@@ -78,17 +80,22 @@ static void finish(ClayTask *task, const char *icon_color, const char *icon, con
     pthread_mutex_unlock(&task->lock);
     pthread_join(task->thread, NULL);
 
-    char result[512];
-    vsnprintf(result, sizeof(result), fmt, args);
+    ClayStr result;
+    clay_str_init(&result);
+    clay_str_vprintf(&result, fmt, args);
 
-    char suffix[600];
-    snprintf(suffix, sizeof(suffix), "%s%s%s %s(%.1fs)%s", clay_color(icon_color), result, clay_color(CLAY_RESET),
-              clay_color(CLAY_GRAY), elapsed_seconds(&task->start), clay_color(CLAY_RESET));
+    ClayStr suffix;
+    clay_str_init(&suffix);
+    clay_str_printf(&suffix, "%s%s%s %s(%.1fs)%s", clay_color(icon_color), result.data, clay_color(CLAY_RESET),
+                     clay_color(CLAY_GRAY), elapsed_seconds(&task->start), clay_color(CLAY_RESET));
 
-    render_line(icon_color, icon, task->label, suffix);
+    render_line(icon_color, icon, task->label.data, suffix.data);
     fputc('\n', stdout);
     clay_term_show_cursor();
 
+    clay_str_free(&result);
+    clay_str_free(&suffix);
+    clay_str_free(&task->label);
     pthread_mutex_destroy(&task->lock);
     free(task);
 }
