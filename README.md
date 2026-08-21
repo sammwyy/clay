@@ -30,6 +30,7 @@ No giant framework to learn. No crowded dashboard. Just you, your project, and a
 | --- | --- |
 | **Your models, your choice** | Connect OpenAI, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider’s models without leaving the terminal. |
 | **A real terminal partner** | Clay can inspect files, run project commands, make changes, and explain what it found as it works. |
+| **Sandboxed by default** | On Linux, shell commands run in their own namespaced filesystem — `/workspace` is your project, `/scratch`/`/tmp` is conversation scratch space, your home is read-only. Opt out with `/sandbox`. |
 | **A focused interface** | Streaming output, visible status, reasoning controls, token counts, and instant cancellation stay out of the way of the prompt. |
 
 ## Get to your first task
@@ -65,6 +66,8 @@ make build
 
 **Your workspace is part of the conversation.** When the model needs evidence, it can use the terminal in the selected working directory instead of guessing.
 
+**Isolated by default, unleashed when you want.** On Linux, `shell_exec` runs inside its own user/mount/pid namespace: `/workspace` maps to your project, `/scratch` and `/tmp` are a per-conversation scratch dir, and your home is mounted read-only so `.bashrc` and your own binaries still work. `/sandbox` switches to Unleashed (no sandbox) or toggles whether paths outside the workspace are writable. Windows runs Unleashed only, for now.
+
 **Cancel without losing your place.** Press `Esc` or `Ctrl-C` while Clay is generating. The generation stops, the chat is preserved, and you are back at the prompt.
 
 ## Command center
@@ -74,6 +77,8 @@ make build
 | `/connect [openai\|openrouter\|custom]` | Connect a provider and enter its API key. |
 | `/model [id]` | Browse models by provider, or set an id directly. |
 | `/effort` | Set the model reasoning effort when supported. |
+| `/sandbox` | Switch between Sandbox and Unleashed execution, and set access outside the workspace. |
+| `/exec <command>` | Run a shell command through the sandbox directly, without going through the model. |
 | `/new` | Start fresh. Your next message creates a new chat. |
 | `/clear` | Alias for `/new`. |
 | `/resume` | Return to any saved conversation. |
@@ -95,8 +100,8 @@ make build
 - [ ] Reusable skills
 - [ ] Smoother use of multiple providers in one conversation
 - [ ] Memory across chats
-- [ ] A sandbox for more isolated tool execution
-- [ ] A scratchpad for planning and working context
+- [ ] A Windows sandbox (Unleashed only today)
+- [ ] A built-in shell with real intent detection (`rm`, `mv`, `cp`, ...), not just a namespaced `bash`
 - [ ] Image support
 - [ ] Audio support
 
