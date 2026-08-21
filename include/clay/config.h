@@ -19,4 +19,12 @@ int clay_config_save(const ClayProviderConfig *config);
 
 void clay_config_free(ClayProviderConfig *config);
 
+/* Loads the selected provider/model from ~/.clay/config.json. Missing or
+   malformed values become NULL. The returned strings are malloc'd. */
+int clay_config_selection_load(char **provider_out, char **model_out);
+
+/* Saves the selected provider/model to ~/.clay/config.json. NULL values
+   are written as JSON null. 0 on success. */
+int clay_config_selection_save(const char *provider, const char *model);
+
 #endif /* CLAY_CONFIG_H */

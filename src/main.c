@@ -1,4 +1,6 @@
 #include "clay/clay.h"
+#include "clay/http.h"
+#include "clay/providers/openai.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,91 +85,6 @@ static void cmd_below(const char *args, void *user_data) {
     clay_sayc(CLAY_CYAN, "provider state cycled, tokens module %s", tokens_on ? "enabled" : "disabled");
 }
 
-static int fetch_anthropic(void *ctx, ClayModelItem *out, int max) {
-    (void)ctx;
-    static const ClayModelItem items[] = {
-        {"claude-opus-5", "most capable"},
-        {"claude-sonnet-5", "balanced"},
-        {"claude-haiku-4-5", "fastest"},
-        {"claude-opus-4-5", "previous flagship"},
-        {"claude-sonnet-4-5", "previous balanced"},
-        {"claude-haiku-4", "previous fast"},
-        {"claude-opus-4-1", "legacy"},
-        {"claude-sonnet-3-7", "legacy"},
-    };
-    int n = (int)(sizeof(items) / sizeof(items[0]));
-    if (n > max) n = max;
-    memcpy(out, items, (size_t)n * sizeof(ClayModelItem));
-    return n;
-}
-
-static int fetch_openai(void *ctx, ClayModelItem *out, int max) {
-    (void)ctx;
-    static const ClayModelItem items[] = {
-        {"gpt-5", "flagship"},
-        {"gpt-5-mini", "cheaper, faster"},
-        {"gpt-5-nano", "smallest"},
-        {"gpt-4.1", "previous gen"},
-        {"gpt-4.1-mini", "previous gen, cheaper"},
-        {"o3", "reasoning"},
-        {"o3-mini", "reasoning, cheaper"},
-        {"o1", "legacy reasoning"},
-    };
-    int n = (int)(sizeof(items) / sizeof(items[0]));
-    if (n > max) n = max;
-    memcpy(out, items, (size_t)n * sizeof(ClayModelItem));
-    return n;
-}
-
-static int fetch_google(void *ctx, ClayModelItem *out, int max) {
-    (void)ctx;
-    static const ClayModelItem items[] = {
-        {"gemini-2.5-pro", "most capable"},
-        {"gemini-2.5-flash", "fast"},
-        {"gemini-2.5-flash-lite", "cheapest"},
-        {"gemini-2.0-flash", "previous gen"},
-        {"gemini-1.5-pro", "legacy"},
-    };
-    int n = (int)(sizeof(items) / sizeof(items[0]));
-    if (n > max) n = max;
-    memcpy(out, items, (size_t)n * sizeof(ClayModelItem));
-    return n;
-}
-
-static void cmd_model(const char *args, void *user_data) {
-    (void)user_data;
-
-    if (args && *args) {
-        ClayStr buf;
-        clay_str_init(&buf);
-        clay_str_printf(&buf, "Model: %s", args);
-        clay_below_set_text("model", buf.data);
-        clay_str_free(&buf);
-        clay_sayc(CLAY_GREEN, "Model set to %s", args);
-        return;
-    }
-
-    ClayModelProvider providers[] = {
-        {"anthropic", fetch_anthropic, NULL},
-        {"openai", fetch_openai, NULL},
-        {"google", fetch_google, NULL},
-    };
-
-    ClayModelSelection sel = clay_model_select(providers, 3, 0);
-    if (!sel.ok) {
-        clay_sayc(CLAY_RED, "Model selection cancelled.");
-        return;
-    }
-
-    ClayStr buf;
-    clay_str_init(&buf);
-    clay_str_printf(&buf, "Model: %s (%s)", sel.model, sel.provider);
-    clay_below_set_text("model", buf.data);
-    clay_sayc(CLAY_GREEN, "Model set to %s via %s", sel.model, sel.provider);
-    clay_str_free(&buf);
-    clay_model_selection_free(&sel);
-}
-
 typedef struct {
     const char *id;
     const char *label;
@@ -180,6 +97,126 @@ static const ClayProviderType PROVIDER_TYPES[] = {
     {"custom", "OpenAI Custom", NULL},
 };
 #define PROVIDER_TYPE_COUNT (sizeof(PROVIDER_TYPES) / sizeof(PROVIDER_TYPES[0]))
+
+typedef struct {
+    const ClayProviderType *type;
+    ClayProviderConfig *config;
+    ClayOpenAI *client;
+    ClayArray models; /* char * */
+    int models_fetched;
+    int models_rc;
+} ClayConnectedProvider;
+
+static ClayArray g_connected_providers;
+static int g_connected_providers_ready = 0;
+static char *g_selected_provider = NULL;
+static char *g_selected_model = NULL;
+
+static void provider_models_free(ClayConnectedProvider *provider) {
+    for (size_t i = 0; i < provider->models.count; i++) {
+        free(*(char **)clay_array_get(&provider->models, i));
+    }
+    clay_array_free(&provider->models);
+}
+
+static void connected_provider_free(ClayConnectedProvider *provider) {
+    clay_openai_destroy(provider->client);
+    clay_config_free(provider->config);
+    provider_models_free(provider);
+}
+
+static ClayConnectedProvider *find_connected_provider(const char *id) {
+    for (size_t i = 0; i < g_connected_providers.count; i++) {
+        ClayConnectedProvider *provider = clay_array_get(&g_connected_providers, i);
+        if (strcmp(provider->type->id, id) == 0) return provider;
+    }
+    return NULL;
+}
+
+static void connected_provider_load(const ClayProviderType *type) {
+    ClayProviderConfig *config = clay_config_load(type->id);
+    if (!config) return;
+
+    ClayConnectedProvider *existing = find_connected_provider(type->id);
+    if (existing) {
+        clay_openai_destroy(existing->client);
+        clay_config_free(existing->config);
+        provider_models_free(existing);
+        existing->config = config;
+        existing->client = clay_openai_create(config->base_url, config->apikey, NULL);
+        clay_array_init(&existing->models, sizeof(char *));
+        existing->models_fetched = 0;
+        existing->models_rc = 0;
+        return;
+    }
+
+    ClayConnectedProvider provider;
+    provider.type = type;
+    provider.config = config;
+    provider.client = clay_openai_create(config->base_url, config->apikey, NULL);
+    clay_array_init(&provider.models, sizeof(char *));
+    provider.models_fetched = 0;
+    provider.models_rc = 0;
+    clay_array_push_val(&g_connected_providers, &provider);
+}
+
+static void connected_providers_init(void) {
+    if (g_connected_providers_ready) return;
+    clay_array_init(&g_connected_providers, sizeof(ClayConnectedProvider));
+    g_connected_providers_ready = 1;
+    for (size_t i = 0; i < PROVIDER_TYPE_COUNT; i++) connected_provider_load(&PROVIDER_TYPES[i]);
+}
+
+static void connected_providers_free(void) {
+    if (!g_connected_providers_ready) return;
+    for (size_t i = 0; i < g_connected_providers.count; i++) {
+        connected_provider_free(clay_array_get(&g_connected_providers, i));
+    }
+    clay_array_free(&g_connected_providers);
+    g_connected_providers_ready = 0;
+}
+
+static void update_selected_below(void) {
+    ClayStr text;
+    clay_str_init(&text);
+    clay_str_printf(&text, "Model: %s", g_selected_model ? g_selected_model : "None");
+    clay_below_set_text("model", text.data);
+    clay_str_clear(&text);
+    clay_str_printf(&text, "Provider: %s", g_selected_provider ? g_selected_provider : "None");
+    clay_below_set_text("provider", text.data);
+    clay_str_free(&text);
+}
+
+static int select_model(const char *provider, const char *model) {
+    char *provider_copy = strdup(provider);
+    char *model_copy = strdup(model);
+    free(g_selected_provider);
+    free(g_selected_model);
+    g_selected_provider = provider_copy;
+    g_selected_model = model_copy;
+    update_selected_below();
+    return clay_config_selection_save(g_selected_provider, g_selected_model);
+}
+
+static int fetch_connected_models(void *ctx, ClayArray *out) {
+    ClayConnectedProvider *provider = ctx;
+    if (!provider->models_fetched) {
+        ClayTask *task = clay_task_start("Retrieving %s models", provider->type->label);
+        provider->models_rc = clay_openai_list_models(provider->client, &provider->models);
+        provider->models_fetched = 1;
+        if (provider->models_rc == 0) {
+            clay_task_success(task, "%zu models available", provider->models.count);
+        } else {
+            clay_task_fail(task, "Could not retrieve models");
+        }
+    }
+
+    for (size_t i = 0; i < provider->models.count; i++) {
+        ClayModelItem item = {*(char **)clay_array_get(&provider->models, i), NULL};
+        clay_array_push_val(out, &item);
+    }
+    return provider->models_rc;
+}
 
 static const ClayProviderType *find_provider_type(const char *id) {
     for (size_t i = 0; i < PROVIDER_TYPE_COUNT; i++) {
@@ -214,6 +251,8 @@ static void connect_provider_type(ClayApp *app, const ClayProviderType *type) {
     ClayProviderConfig config = {strdup(type->id), apikey, base_url};
     int ok = clay_config_save(&config) == 0;
     clay_sayc(ok ? CLAY_GREEN : CLAY_RED, ok ? "Connected %s." : "Failed to save config for %s.", type->label);
+
+    if (ok) connected_provider_load(type);
 
     free(config.id);
     free(apikey);
@@ -253,6 +292,52 @@ static void cmd_connect(const char *args, void *user_data) {
         return;
     }
     connect_provider_type(app, &PROVIDER_TYPES[index]);
+}
+
+static void cmd_model(const char *args, void *user_data) {
+    (void)user_data;
+    connected_providers_init();
+
+    if (g_connected_providers.count == 0) {
+        clay_sayc(CLAY_RED, "No provider connected. Connect one with /connect first.");
+        return;
+    }
+
+    if (args && *args) {
+        if (!g_selected_provider || !find_connected_provider(g_selected_provider)) {
+            clay_sayc(CLAY_RED, "Select a provider with /model before setting a model directly.");
+            return;
+        }
+        int saved = select_model(g_selected_provider, args) == 0;
+        clay_sayc(saved ? CLAY_GREEN : CLAY_RED,
+                  saved ? "Model set to %s via %s." : "Model set, but failed to save config.",
+                  args, g_selected_provider);
+        return;
+    }
+
+    ClayModelProvider providers[g_connected_providers.count];
+    int default_provider = 0;
+    for (size_t i = 0; i < g_connected_providers.count; i++) {
+        ClayConnectedProvider *provider = clay_array_get(&g_connected_providers, i);
+        providers[i].id = provider->type->id;
+        providers[i].label = provider->type->label;
+        providers[i].fetch = fetch_connected_models;
+        providers[i].ctx = provider;
+        if (g_selected_provider && strcmp(g_selected_provider, provider->type->id) == 0) {
+            default_provider = (int)i;
+        }
+    }
+
+    ClayModelSelection sel = clay_model_select(providers, (int)g_connected_providers.count, default_provider);
+    if (!sel.ok) {
+        clay_sayc(CLAY_RED, "Model selection cancelled.");
+        return;
+    }
+
+    int saved = select_model(sel.provider, sel.model) == 0;
+    clay_sayc(saved ? CLAY_GREEN : CLAY_RED,
+              saved ? "Model set to %s via %s." : "Model set, but failed to save config.", sel.model, sel.provider);
+    clay_model_selection_free(&sel);
 }
 
 static void cmd_mm(const char *args, void *user_data) {
@@ -327,7 +412,14 @@ int main(int argc, char **argv) {
     }
 
     clay_term_init();
+    if (clay_http_init() != 0) {
+        fprintf(stderr, "Failed to initialize HTTP.\n");
+        return 1;
+    }
     clay_banner("clay", CLAY_VERSION, "your AI code agent");
+
+    connected_providers_init();
+    clay_config_selection_load(&g_selected_provider, &g_selected_model);
 
     ClayApp *app = clay_app_create();
     ClayCommandRegistry *commands = clay_app_commands(app);
@@ -338,18 +430,17 @@ int main(int argc, char **argv) {
     clay_command_register(commands, "choice", "Demo a navigable choice prompt", cmd_choice, app);
     clay_command_register(commands, "mm", "Smoke-test the mm module", cmd_mm, app);
     clay_command_register(commands, "below", "Cycle the below-prompt status modules", cmd_below, app);
-    clay_command_register(commands, "model", "Pick a model/provider, or /model <id> directly", cmd_model, app);
+    clay_command_register(commands, "model", "Pick a model from a connected provider", cmd_model, app);
     clay_command_register(commands, "connect", "Connect a provider, or /connect <id> directly", cmd_connect, app);
 
     clay_below_add(0, "model");
-    clay_below_set_text("model", "Model: claude-sonnet-5");
 
     clay_below_add(1, "tokens");
     clay_below_set_text("tokens", "Tokens: 0 in / 0 out");
 
     clay_below_add(2, "provider");
-    clay_below_set_text("provider", "Provider: anthropic");
     clay_below_set_state("provider", CLAY_BELOW_IDLE);
+    update_selected_below();
 
     while (g_running) {
         char *line = clay_prompt_line();
@@ -376,6 +467,10 @@ int main(int argc, char **argv) {
     }
 
     clay_app_destroy(app);
+    connected_providers_free();
+    free(g_selected_provider);
+    free(g_selected_model);
+    clay_http_cleanup();
     printf("%sGoodbye.%s\n", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
     return 0;
 }

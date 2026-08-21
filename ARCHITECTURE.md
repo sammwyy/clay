@@ -1,6 +1,6 @@
 # Architecture
 
-clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. It's the render/UI layer plus a demo driver in `main.c`, and a separate backend layer (`json.c`, `http.c`, `providers/`, `config.c`) for talking to LLM APIs and remembering how to reach them. The two are only partly wired together: `main.c`'s `/connect` command uses `config.c` to save/list provider credentials, but `providers/openai.c` itself is still only exercised standalone via `test_openai.c` (see "Backend" below), not through `ClayApp`.
+clay is a minimalist C render engine and CLI toolkit for building a Claude Code-style terminal agent. It's the render/UI layer plus a demo driver in `main.c`, and a separate backend layer (`json.c`, `http.c`, `providers/`, `config.c`) for talking to LLM APIs and remembering how to reach them. `/connect` saves provider credentials; `/model` uses those live connections to retrieve and select their available models.
 
 ## Layers
 
@@ -9,7 +9,7 @@ src/mm/            growable primitives: arena, str, array, map
 src/json.c          minimal JSON value tree: parse, build, stringify
 src/http.c          HTTP client, built on mm + libcurl
 src/providers/      LLM provider clients, built on http + json (openai.c, ...)
-src/config.c         saved provider credentials (~/.clay/providers/*.json), built on mm + json + term
+src/config.c         saved provider credentials and model selection (~/.clay), built on mm + json + term
 src/render/         drawing primitives, built on mm + term
 src/render/modals/  purpose-built composite interactive widgets, built on render
 src/commands/       command registry + app state machine
@@ -17,7 +17,7 @@ src/main.c          demo driver: wires commands to the app and render engine
 src/test_openai.c   standalone harness for the OpenAI provider (see "Backend")
 ```
 
-Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists credentials, it doesn't use them. `render` depends on `mm` and `term`. `commands` depends on `render` and, as of `/connect`, on `config`. `main.c` is the only file that knows about the render/commands/config stack as a whole; `test_openai.c` is the only file that knows about the `providers`/`http` stack as a whole - neither currently includes the other.
+Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists connection and selection data. `render` depends on `mm` and `term`. `commands` depends on `render` and, as of `/connect`, on `config`. `main.c` is the integration point for the render/commands/config/provider stack; `test_openai.c` is a separate provider/http harness.
 
 ### `src/mm/` — memory
 
@@ -38,13 +38,13 @@ A thin wrapper over libcurl's easy interface - the only place in the project tha
 
 ### `src/providers/` — LLM provider clients
 
-- `openai.c` — talks to any OpenAI-compatible `/chat/completions` endpoint: streaming responses (SSE, parsed line-by-line as chunks arrive in `on_http_chunk`, since a chunk boundary can land mid-line), JSON tool calls (accumulated across streamed deltas by their `index`, since the API sends id/name/argument-fragments as separate events), and the tool-call loop (`clay_openai_run` appends the assistant's tool-call message and each tool's result to `messages`, then resends the conversation, up to `max_rounds`, until the model answers with plain content and no further tool calls).
+- `openai.c` — talks to any OpenAI-compatible endpoint: `GET /models` returns every model id for the connected account, while `/chat/completions` handles streaming responses (SSE, parsed line-by-line as chunks arrive in `on_http_chunk`, since a chunk boundary can land mid-line), JSON tool calls (accumulated across streamed deltas by their `index`, since the API sends id/name/argument-fragments as separate events), and the tool-call loop (`clay_openai_run` appends the assistant's tool-call message and each tool's result to `messages`, then resends the conversation, up to `max_rounds`, until the model answers with plain content and no further tool calls).
 
-Not wired into `ClayApp`/the render layer yet - `src/test_openai.c` is a standalone binary (`bin/test_openai`, the Makefile's `test-openai` target) that exercises `providers/openai.c` directly against a real endpoint: streaming tokens to stdout, one demo tool (`get_weather`) to exercise the tool loop, and `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` read from the environment so a token never ends up in argv or committed code. It's excluded from the main `clay` binary (both define `main`).
+`src/test_openai.c` is a standalone binary (`bin/test_openai`, the Makefile's `test-openai` target) that exercises streaming and tool calls against a real endpoint. It reads `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` from the environment so a token never ends up in argv or committed code. It's excluded from the main `clay` binary (both define `main`).
 
 ### `src/config.c` — saved provider credentials
 
-Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `main.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
+Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. `~/.clay/config.json` separately stores the selected `provider` and `model` (or JSON null when unset). Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `main.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
 
 ### `src/render/` — drawing primitives
 
@@ -60,7 +60,7 @@ Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/
 
 Purpose-built interactive widgets that combine several `render/` primitives into one specific UI, when a need doesn't fit `select`/`choice`. Not meant to be generic — each file is its own thing.
 
-- `model_select.c` — tabs (provider, left/right) over a filterable, scrollable list (model, up/down, max 6 visible with "N more above/below" hints). Each provider supplies a `fetch(ctx, out, max)` callback so its model list is queried lazily, only when its tab becomes active.
+- `model_select.c` — one active provider control (left/right) and its fixed-width search input share the header row. A filterable, scrollable six-row model area sits below it, bracketed by stable blank-or-count rows for models above and below. Each provider supplies a lazy `fetch(ctx, out)` callback; the selector retains each tab for the current modal, while `main.c`'s connected-provider state retains fetched results for the life of the CLI.
 
 ### `src/commands/` — registry and state machine
 
@@ -69,9 +69,9 @@ Purpose-built interactive widgets that combine several `render/` primitives into
 
 ### `src/main.c`
 
-The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select`, `/choice`, `/below`, `/model`, `/connect`, `/mm`), registers the below-prompt status modules (`model`, `tokens`, `provider`), and runs the main read-parse-dispatch loop. `run_demo_turn` is a canned sequence (scan → plan → write → test) that exercises the render engine end to end; it doesn't inspect the actual message text yet, since there's no agent behind it.
+The demo/test driver. Registers commands (`/help`, `/exit`, `/confirm`, `/select`, `/choice`, `/below`, `/model`, `/connect`, `/mm`), registers the below-prompt status modules (`model`, `tokens`, `provider`), and runs the main read-parse-dispatch loop. It loads every saved provider connection into a session-owned client; fetching models on a tab starts a spinner task, then caches that provider's result until exit. It restores the selected model/provider from `~/.clay/config.json`, with `Model: None` and `Provider: None` when no selection exists. `run_demo_turn` is a canned sequence (scan → plan → write → test) that exercises the render engine end to end; it doesn't inspect the actual message text yet, since there's no agent behind it.
 
-`/connect [type]` is the one command that reaches into the backend stack: with no argument it's a `clay_app_choice` picker over `PROVIDER_TYPES` (`openai`, `openrouter`, `custom`), each row's title getting a green checkmark appended when `clay_config_exists` finds a saved config; with an argument it skips straight to that type. Either way it prompts for a base URL (skipped - `type->default_base_url` is used - unless the type is `custom`) and an API key (`clay_prompt_secret`), then `clay_config_save`s the result. No `openrouter.c`/`openai_custom.c` exist - every entry in `PROVIDER_TYPES` is the same `providers/openai.c` client underneath, just a different `id`/default `base_url`.
+`/connect [type]` is the command that reaches into the backend stack: with no argument it's a `clay_app_choice` picker over `PROVIDER_TYPES` (`openai`, `openrouter`, `custom`), each row's title getting a green checkmark appended when `clay_config_exists` finds a saved config; with an argument it skips straight to that type. Either way it prompts for a base URL (skipped - `type->default_base_url` is used - unless the type is `custom`) and an API key (`clay_prompt_secret`), then `clay_config_save`s the result and refreshes that session's client/cache. `/model` shows only connected providers as tabs, errors immediately when none are connected, and writes its selected provider/model to the global config. No `openrouter.c`/`openai_custom.c` exist - every entry in `PROVIDER_TYPES` is the same `providers/openai.c` client underneath, just a different `id`/default `base_url`.
 
 ## Key design decisions
 

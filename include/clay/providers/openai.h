@@ -1,6 +1,7 @@
 #ifndef CLAY_PROVIDERS_OPENAI_H
 #define CLAY_PROVIDERS_OPENAI_H
 
+#include "clay/array.h"
 #include "clay/json.h"
 
 #include <stddef.h>
@@ -11,6 +12,11 @@ typedef struct ClayOpenAI ClayOpenAI;
    "/chat/completions" is appended to it. */
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const char *model);
 void clay_openai_destroy(ClayOpenAI *client);
+
+/* Retrieves every id returned by the provider's OpenAI-compatible
+   `GET /models` endpoint. `models` must be a ClayArray of `char *`;
+   this appends malloc'd ids which the caller owns. 0 on success. */
+int clay_openai_list_models(ClayOpenAI *client, ClayArray *models);
 
 /* Builds a `{"role": role, "content": content}` chat message. */
 ClayJson *clay_openai_message(const char *role, const char *content);

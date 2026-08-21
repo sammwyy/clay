@@ -1,30 +1,36 @@
 #ifndef CLAY_MODEL_SELECT_H
 #define CLAY_MODEL_SELECT_H
 
+#include "clay/array.h"
+
 typedef struct {
     const char *id;
     const char *desc; /* optional, NULL to omit */
 } ClayModelItem;
 
-/* Fills up to `max` items into `out`, returns how many were written. */
-typedef int (*ClayModelFetch)(void *ctx, ClayModelItem *out, int max);
+/* Appends every available model into `out` (a ClayArray of ClayModelItem).
+   Model item strings are borrowed for the duration of clay_model_select.
+   Returns 0 on success. */
+typedef int (*ClayModelFetch)(void *ctx, ClayArray *out);
 
 typedef struct {
+    const char *id;    /* stable provider id returned in ClayModelSelection */
     const char *label; /* provider tab name */
     ClayModelFetch fetch;
     void *ctx;
 } ClayModelProvider;
 
 typedef struct {
-    char *provider; /* malloc'd, NULL unless ok */
+    char *provider; /* provider id, malloc'd, NULL unless ok */
     char *model;    /* malloc'd, NULL unless ok */
     int ok;         /* 0 if the user cancelled */
 } ClayModelSelection;
 
-/* Left/right switch the provider tab, a typed filter narrows a
-   scrollable list (up/down, max 6 visible with "N more above/below"
-   hints) of that provider's models, Enter confirms. Clears itself from
-   the screen before returning either way. */
+/* Left/right switch the active provider, shown beside a typed search
+   input. The models below are a fixed six-row scrollable area bracketed
+   by blank-or-count rows for models above and below; Enter confirms.
+   Each provider is fetched lazily and retained while the selector is
+   open. Clears itself from the screen before returning. */
 ClayModelSelection clay_model_select(const ClayModelProvider *providers, int provider_count, int default_provider);
 
 /* Frees provider/model and resets the struct to a cancelled state. */

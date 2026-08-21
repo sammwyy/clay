@@ -17,7 +17,7 @@ ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const 
     ClayOpenAI *client = malloc(sizeof(ClayOpenAI));
     client->base_url = strdup(base_url);
     client->api_key = strdup(api_key);
-    client->model = strdup(model);
+    client->model = strdup(model ? model : "");
     return client;
 }
 
@@ -27,6 +27,57 @@ void clay_openai_destroy(ClayOpenAI *client) {
     free(client->api_key);
     free(client->model);
     free(client);
+}
+
+int clay_openai_list_models(ClayOpenAI *client, ClayArray *models) {
+    ClayStr url;
+    clay_str_init(&url);
+    clay_str_printf(&url, "%s/models", client->base_url);
+
+    ClayStr auth;
+    clay_str_init(&auth);
+    clay_str_printf(&auth, "Bearer %s", client->api_key);
+
+    ClayHttpHeader headers[] = {
+        {"Authorization", auth.data},
+    };
+    ClayHttpRequest req = {0};
+    req.method = "GET";
+    req.url = url.data;
+    req.headers = headers;
+    req.header_count = sizeof(headers) / sizeof(headers[0]);
+    req.timeout_seconds = 30;
+
+    ClayHttpResponse resp;
+    int rc = clay_http_request(&req, &resp);
+    clay_str_free(&url);
+    clay_str_free(&auth);
+    if (rc != 0 || resp.status < 200 || resp.status >= 300) {
+        clay_http_response_free(&resp);
+        return -1;
+    }
+
+    ClayJson *root = clay_json_parse(resp.body, NULL);
+    clay_http_response_free(&resp);
+    if (!root) return -1;
+
+    ClayJson *data = clay_json_object_get(root, "data");
+    if (clay_json_type(data) != CLAY_JSON_ARRAY) {
+        clay_json_free(root);
+        return -1;
+    }
+
+    size_t count = clay_json_array_count(data);
+    for (size_t i = 0; i < count; i++) {
+        ClayJson *entry = clay_json_array_get(data, i);
+        ClayJson *id = clay_json_object_get(entry, "id");
+        if (clay_json_type(id) != CLAY_JSON_STRING) continue;
+        char *copy = strdup(clay_json_string_value(id));
+        clay_array_push_val(models, &copy);
+    }
+
+    clay_json_free(root);
+    return 0;
 }
 
 ClayJson *clay_openai_message(const char *role, const char *content) {

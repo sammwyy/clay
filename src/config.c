@@ -30,6 +30,17 @@ static char *providers_dir(void) {
     return path.data;
 }
 
+static char *selection_path(void) {
+    char *dir = config_dir();
+    if (!dir) return NULL;
+
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/config.json", dir);
+    free(dir);
+    return path.data;
+}
+
 static char *provider_path(const char *id) {
     char *dir = providers_dir();
     if (!dir) return NULL;
@@ -135,4 +146,71 @@ void clay_config_free(ClayProviderConfig *config) {
     free(config->apikey);
     free(config->base_url);
     free(config);
+}
+
+int clay_config_selection_load(char **provider_out, char **model_out) {
+    *provider_out = NULL;
+    *model_out = NULL;
+
+    char *path = selection_path();
+    if (!path) return -1;
+    FILE *f = fopen(path, "r");
+    free(path);
+    if (!f) return 0;
+
+    char *text = read_whole_file(f);
+    fclose(f);
+    ClayJson *root = clay_json_parse(text, NULL);
+    free(text);
+    if (!root || clay_json_type(root) != CLAY_JSON_OBJECT) {
+        clay_json_free(root);
+        return -1;
+    }
+
+    ClayJson *provider = clay_json_object_get(root, "provider");
+    ClayJson *model = clay_json_object_get(root, "model");
+    if (clay_json_type(provider) == CLAY_JSON_STRING) {
+        *provider_out = strdup(clay_json_string_value(provider));
+    }
+    if (clay_json_type(model) == CLAY_JSON_STRING) {
+        *model_out = strdup(clay_json_string_value(model));
+    }
+    clay_json_free(root);
+    return 0;
+}
+
+int clay_config_selection_save(const char *provider, const char *model) {
+    char *dir = config_dir();
+    if (!dir || clay_term_mkdir(dir) != 0) {
+        free(dir);
+        return -1;
+    }
+
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/config.json", dir);
+    free(dir);
+
+    ClayJson *root = clay_json_object();
+    clay_json_object_set(root, "provider", provider ? clay_json_string(provider) : clay_json_null());
+    clay_json_object_set(root, "model", model ? clay_json_string(model) : clay_json_null());
+
+    ClayStr body;
+    clay_str_init(&body);
+    clay_json_stringify(root, &body);
+    clay_json_free(root);
+
+    FILE *f = fopen(path.data, "w");
+    if (!f) {
+        clay_str_free(&path);
+        clay_str_free(&body);
+        return -1;
+    }
+    fwrite(body.data, 1, body.len, f);
+    fclose(f);
+    clay_term_restrict_file(path.data);
+
+    clay_str_free(&path);
+    clay_str_free(&body);
+    return 0;
 }
