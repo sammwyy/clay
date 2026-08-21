@@ -76,6 +76,10 @@ PROJECT_INSTRUCTIONS_TEST_SRC    := tests/test_project_instructions.c
 PROJECT_INSTRUCTIONS_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(PROJECT_INSTRUCTIONS_TEST_SRC))
 PROJECT_INSTRUCTIONS_TEST_TARGET := $(BIN_DIR)/test_project_instructions
 
+TODOWRITE_TEST_SRC    := tests/test_todowrite.c
+TODOWRITE_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(TODOWRITE_TEST_SRC))
+TODOWRITE_TEST_TARGET := $(BIN_DIR)/test_todowrite
+
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
@@ -89,7 +93,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions run compress compress-win clean debug
+.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite run compress compress-win clean debug
 
 all: build
 
@@ -152,6 +156,11 @@ test-project-instructions: $(PROJECT_INSTRUCTIONS_TEST_TARGET)
 
 $(PROJECT_INSTRUCTIONS_TEST_TARGET): $(LIB_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-todowrite: $(TODOWRITE_TEST_TARGET)
+
+$(TODOWRITE_TEST_TARGET): $(LIB_OBJ) $(TODOWRITE_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(TODOWRITE_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)

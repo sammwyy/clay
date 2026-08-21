@@ -26,6 +26,11 @@ typedef struct {
     const char *description;
 } ClayReasoningEffort;
 
+typedef struct {
+    char *content;
+    char *status; /* "pending", "in_progress", or "completed" */
+} ClayTodoItem;
+
 /* Approval categories, independent of the sandbox (namespace) axis: whether
    a tool call needs the user's OK before it runs at all. */
 typedef enum {
@@ -64,6 +69,7 @@ struct ClayCommands {
     int auto_approve[CLAY_PERMISSION_CATEGORY_COUNT];
     ClayArray remembered_patterns[CLAY_PERMISSION_CATEGORY_COUNT]; /* char*, approved for this session only */
     ClayCommandsMode mode;
+    ClayArray todos; /* ClayTodoItem, the current plan - session-only, not persisted */
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands, const char *id);
@@ -82,6 +88,9 @@ char *clay_commands_load_project_instructions(void);
    content older than the last few turns to a short preview, in place on
    commands->conversation. Returns how many results it collapsed. */
 int clay_commands_maybe_compact(ClayCommands *commands);
+/* Frees every item's content/status and empties commands->todos in place
+   (keeps the array itself, so it's ready for more clay_array_push_val). */
+void clay_commands_clear_todos(ClayCommands *commands);
 void clay_commands_new_chat(ClayCommands *commands);
 const ClayReasoningEffort *clay_commands_reasoning_effort(const ClayCommands *commands);
 size_t clay_commands_reasoning_effort_count(void);
@@ -139,5 +148,10 @@ ClayJson *clay_fs_tool_glob(const ClayJson *arguments, void *userdata);
 ClayJson *clay_fs_tool_glob_schema(void);
 ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata);
 ClayJson *clay_fs_tool_grep_schema(void);
+
+/* Plan/checklist tool (src/commands/message.c). Replaces commands->todos
+   wholesale on each call. userdata is a ClayCommands*. */
+ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata);
+ClayJson *todowrite_schema(void);
 
 #endif /* CLAY_COMMANDS_CONTEXT_H */

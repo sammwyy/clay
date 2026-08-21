@@ -23,6 +23,7 @@
 #define CLAY_ICON_CHECK   "\xe2\x9c\x93" /* ✓ */
 #define CLAY_ICON_CROSS   "\xe2\x9c\x97" /* ✗ */
 #define CLAY_ICON_DOT     "\xc2\xb7"     /* · */
+#define CLAY_ICON_ARROW   "\xe2\x86\x92" /* → */
 #define CLAY_ICON_SLEEP   "\xf0\x9f\x92\xa4" /* 💤 */
 
 #endif /* CLAY_COLOR_H */

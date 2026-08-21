@@ -19,7 +19,10 @@
     "chat: call memory_save after completing significant work - a decision, a bug fix, a preference the user "       \
     "stated - so later sessions have it; the index of existing entries is below, and memory_read loads one by "      \
     "its slug. Short-term memory (remember) is a scratchpad for this chat only, replayed every turn even if "        \
-    "earlier messages are later dropped - use it to pin details you'll still need many turns from now."
+    "earlier messages are later dropped - use it to pin details you'll still need many turns from now.\n\n"          \
+    "For any task with multiple steps, call todowrite with the full plan before starting, and again whenever a "     \
+    "step's status changes - it's shown to the user as a checklist. Keep exactly one task in_progress at a time; "   \
+    "mark it completed before moving to the next. Skip it for a single quick action."
 
 /* Sliding window: reused as-is (and its clock reset) while a chat-less
    session starts within this long of the cache's last use, since the
@@ -387,6 +390,15 @@ int clay_commands_maybe_compact(ClayCommands *commands) {
     return collapsed;
 }
 
+void clay_commands_clear_todos(ClayCommands *commands) {
+    for (size_t i = 0; i < commands->todos.count; i++) {
+        ClayTodoItem *item = clay_array_get(&commands->todos, i);
+        free(item->content);
+        free(item->status);
+    }
+    clay_array_clear(&commands->todos);
+}
+
 void clay_commands_new_chat(ClayCommands *commands) {
     clay_chat_destroy(commands->chat);
     commands->chat = NULL;
@@ -396,6 +408,7 @@ void clay_commands_new_chat(ClayCommands *commands) {
     clay_below_stop_elapsed("status");
     clay_below_set_enabled("status", 0);
     clay_commands_set_tokens_below(commands, 0, 0);
+    clay_commands_clear_todos(commands);
 }
 
 int clay_commands_select_model(ClayCommands *commands, const char *provider, const char *model) {
@@ -480,6 +493,7 @@ ClayCommands *clay_commands_create(ClayApp *app) {
         commands->auto_approve[i] = clay_config_auto_approve(clay_permissions_category_name((ClayPermissionCategory)i));
         clay_array_init(&commands->remembered_patterns[i], sizeof(char *));
     }
+    clay_array_init(&commands->todos, sizeof(ClayTodoItem));
     clay_commands_reset_conversation(commands);
     clay_config_selection_save(commands->selected_provider, commands->selected_model);
     clay_below_add(0, "status");
@@ -509,6 +523,8 @@ void clay_commands_destroy(ClayCommands *commands) {
         for (size_t j = 0; j < remembered->count; j++) free(*(char **)clay_array_get(remembered, j));
         clay_array_free(remembered);
     }
+    clay_commands_clear_todos(commands);
+    clay_array_free(&commands->todos);
     free(commands);
 }
 

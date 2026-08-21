@@ -286,6 +286,105 @@ static ClayJson *remember_schema(void) {
     return schema;
 }
 
+static int valid_todo_status(const char *status) {
+    return strcmp(status, "pending") == 0 || strcmp(status, "in_progress") == 0 || strcmp(status, "completed") == 0;
+}
+
+ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata) {
+    ClayCommands *commands = userdata;
+    const ClayJson *todos = clay_json_object_get(arguments, "todos");
+    ClayJson *result = clay_json_object();
+    if (clay_json_type(todos) != CLAY_JSON_ARRAY) {
+        clay_json_object_set(result, "ok", clay_json_bool(0));
+        clay_json_object_set(result, "error", clay_json_string("todos must be an array"));
+        return result;
+    }
+
+    ClayArray items;
+    clay_array_init(&items, sizeof(ClayTodoItem));
+    for (size_t i = 0; i < clay_json_array_count(todos); i++) {
+        ClayJson *entry = clay_json_array_get(todos, i);
+        const char *content = clay_json_string_value(clay_json_object_get(entry, "content"));
+        const char *status = clay_json_string_value(clay_json_object_get(entry, "status"));
+        if (!content || !*content || !status || !valid_todo_status(status)) {
+            for (size_t j = 0; j < items.count; j++) {
+                ClayTodoItem *item = clay_array_get(&items, j);
+                free(item->content);
+                free(item->status);
+            }
+            clay_array_free(&items);
+            clay_json_object_set(result, "ok", clay_json_bool(0));
+            clay_json_object_set(
+                result, "error",
+                clay_json_string("each todo needs non-empty content and status pending/in_progress/completed"));
+            return result;
+        }
+        ClayTodoItem item = {strdup(content), strdup(status)};
+        clay_array_push_val(&items, &item);
+    }
+
+    clay_commands_clear_todos(commands);
+    clay_array_free(&commands->todos);
+    commands->todos = items;
+
+    ClayStr output;
+    clay_str_init(&output);
+    for (size_t i = 0; i < commands->todos.count; i++) {
+        ClayTodoItem *item = clay_array_get(&commands->todos, i);
+        const char *box = strcmp(item->status, "completed") == 0   ? CLAY_ICON_CHECK
+                          : strcmp(item->status, "in_progress") == 0 ? CLAY_ICON_ARROW
+                                                                     : CLAY_ICON_DOT;
+        clay_str_printf(&output, "[%s] %s\n", box, item->content);
+    }
+    clay_json_object_set(result, "ok", clay_json_bool(1));
+    clay_json_object_set(result, "output", clay_json_string(output.data));
+    clay_json_object_set(result, "output_truncated", clay_json_bool(0));
+    clay_str_free(&output);
+    return result;
+}
+
+ClayJson *todowrite_schema(void) {
+    ClayJson *content = clay_json_object();
+    clay_json_object_set(content, "type", clay_json_string("string"));
+    clay_json_object_set(content, "description", clay_json_string("One task, in imperative form."));
+    ClayJson *status = clay_json_object();
+    clay_json_object_set(status, "type", clay_json_string("string"));
+    ClayJson *status_enum = clay_json_array();
+    clay_json_array_push(status_enum, clay_json_string("pending"));
+    clay_json_array_push(status_enum, clay_json_string("in_progress"));
+    clay_json_array_push(status_enum, clay_json_string("completed"));
+    clay_json_object_set(status, "enum", status_enum);
+    ClayJson *item_properties = clay_json_object();
+    clay_json_object_set(item_properties, "content", content);
+    clay_json_object_set(item_properties, "status", status);
+    ClayJson *item_required = clay_json_array();
+    clay_json_array_push(item_required, clay_json_string("content"));
+    clay_json_array_push(item_required, clay_json_string("status"));
+    ClayJson *item_schema = clay_json_object();
+    clay_json_object_set(item_schema, "type", clay_json_string("object"));
+    clay_json_object_set(item_schema, "properties", item_properties);
+    clay_json_object_set(item_schema, "required", item_required);
+    clay_json_object_set(item_schema, "additionalProperties", clay_json_bool(0));
+
+    ClayJson *todos = clay_json_object();
+    clay_json_object_set(todos, "type", clay_json_string("array"));
+    clay_json_object_set(todos, "items", item_schema);
+    clay_json_object_set(
+        todos, "description",
+        clay_json_string("The full plan, replacing whatever was there before - resend every task, not just the "
+                         "one that changed. Exactly one task should be in_progress at a time."));
+    ClayJson *properties = clay_json_object();
+    clay_json_object_set(properties, "todos", todos);
+    ClayJson *required = clay_json_array();
+    clay_json_array_push(required, clay_json_string("todos"));
+    ClayJson *schema = clay_json_object();
+    clay_json_object_set(schema, "type", clay_json_string("object"));
+    clay_json_object_set(schema, "properties", properties);
+    clay_json_object_set(schema, "required", required);
+    clay_json_object_set(schema, "additionalProperties", clay_json_bool(0));
+    return schema;
+}
+
 static ClayJson *shell_exec_schema(void) {
     ClayJson *command = clay_json_object();
     clay_json_object_set(command, "type", clay_json_string("string"));
@@ -369,6 +468,7 @@ static void tool_label(ClayStr *out, const char *name, int completed, int succes
     else if (strcmp(name, "edit") == 0) verb = completed ? (success ? "Edited" : "Failed to edit") : "Editing";
     else if (strcmp(name, "glob") == 0) verb = completed ? (success ? "Found files" : "Glob failed") : "Globbing";
     else if (strcmp(name, "grep") == 0) verb = completed ? (success ? "Searched" : "Search failed") : "Searching";
+    else if (strcmp(name, "todowrite") == 0) verb = completed ? (success ? "Updated plan" : "Failed to update plan") : "Updating plan";
     if (verb) {
         clay_str_push(out, verb);
         if (detail && *detail) {
@@ -605,6 +705,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     ClayJson *edit_schema_json = clay_fs_tool_edit_schema();
     ClayJson *glob_schema_json = clay_fs_tool_glob_schema();
     ClayJson *grep_schema_json = clay_fs_tool_grep_schema();
+    ClayJson *todowrite_schema_json = todowrite_schema();
     ClayTool tools[] = {
         {"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.",
          shell_schema, shell_exec_tool, commands},
@@ -624,6 +725,8 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
          glob_tool_gated, commands},
         {"grep", "Searches file contents in the workspace for a regular expression.", grep_schema_json,
          grep_tool_gated, commands},
+        {"todowrite", "Writes the full task plan, shown to the user as a checklist. Use for any multi-step task.",
+         todowrite_schema_json, todowrite_tool, commands},
     };
     if (clay_term_is_interactive()) clay_term_raw_enable();
     int rc = clay_openai_run(client, messages, tools, sizeof(tools) / sizeof(tools[0]), 8, &callbacks);
@@ -637,6 +740,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_json_free(edit_schema_json);
     clay_json_free(glob_schema_json);
     clay_json_free(grep_schema_json);
+    clay_json_free(todowrite_schema_json);
     clay_openai_destroy(client);
     struct timespec finished_at;
     clock_gettime(CLOCK_MONOTONIC, &finished_at);
