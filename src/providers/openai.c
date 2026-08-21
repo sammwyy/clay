@@ -148,6 +148,13 @@ static void process_sse_data(const char *json_text, ClayStreamState *st) {
     ClayJson *root = clay_json_parse(json_text, NULL);
     if (!root) return;
 
+    ClayJson *usage = clay_json_object_get(root, "usage");
+    if (clay_json_type(usage) == CLAY_JSON_OBJECT && st->callbacks && st->callbacks->on_usage) {
+        long input_tokens = (long)clay_json_number_value(clay_json_object_get(usage, "prompt_tokens"));
+        long output_tokens = (long)clay_json_number_value(clay_json_object_get(usage, "completion_tokens"));
+        st->callbacks->on_usage(input_tokens, output_tokens, st->callbacks->userdata);
+    }
+
     ClayJson *choice0 = clay_json_array_get(clay_json_object_get(root, "choices"), 0);
     ClayJson *delta = clay_json_object_get(choice0, "delta");
 
@@ -214,6 +221,10 @@ static ClayStr build_request_body(ClayOpenAI *client, const ClayJson *messages, 
     clay_json_object_set(root, "model", clay_json_string(client->model));
     clay_json_object_set(root, "messages", clay_json_clone(messages));
     clay_json_object_set(root, "stream", clay_json_bool(1));
+
+    ClayJson *stream_options = clay_json_object();
+    clay_json_object_set(stream_options, "include_usage", clay_json_bool(1));
+    clay_json_object_set(root, "stream_options", stream_options);
 
     if (tool_count > 0) {
         ClayJson *tools_json = clay_json_array();

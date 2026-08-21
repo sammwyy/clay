@@ -16,6 +16,12 @@ void clay_say(const char *fmt, ...);
 /* Same as clay_say, but the message itself is drawn in `color`. */
 void clay_sayc(const char *color, const char *fmt, ...);
 
+/* Begins, incrementally writes, and ends one streamed assistant reply.
+   The writer flushes each chunk so text appears as the provider sends it. */
+void clay_response_begin(void);
+void clay_response_write(const char *text);
+void clay_response_end(void);
+
 /* Prints "◆ clay  <message>" meant to head a list of steps that follow. */
 void clay_list_header(const char *fmt, ...);
 

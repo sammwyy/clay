@@ -39,6 +39,7 @@ static int g_last_line_count = 0;
 static int g_max_rows_established = 1; /* rows below the prompt ever created via a real '\n' */
 static int g_spinner_frame = 0;
 static int g_editing = 0;
+static int g_status_only = 0;
 
 static pthread_t g_animator;
 static int g_animator_started = 0;
@@ -162,6 +163,25 @@ static void render_locked(void) {
     fflush(stdout);
 }
 
+static void render_status_locked(void) {
+    ensure_modules();
+
+    fputc('\r', stdout);
+    clay_term_clear_line();
+    fputs("  ", stdout);
+
+    int order[CLAY_BELOW_MAX_MODULES];
+    int count = sorted_enabled_indices(order);
+    for (int k = 0; k < count; k++) {
+        if (k > 0) printf(" %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT, clay_color(CLAY_RESET));
+        print_module_inline(clay_array_get(&g_modules, (size_t)order[k]));
+    }
+
+    fputc('\r', stdout);
+    g_last_line_count = 1;
+    fflush(stdout);
+}
+
 static void *animator_loop(void *arg) {
     (void)arg;
     for (;;) {
@@ -169,7 +189,8 @@ static void *animator_loop(void *arg) {
         pthread_mutex_lock(&g_lock);
         if (g_editing && has_loading_module()) {
             g_spinner_frame = (g_spinner_frame + 1) % CLAY_BELOW_SPINNER_FRAMES;
-            render_locked();
+            if (g_status_only) render_status_locked();
+            else render_locked();
         }
         pthread_mutex_unlock(&g_lock);
     }
@@ -252,12 +273,29 @@ void clay_below_render(const char *input, size_t cursor) {
     clay_str_clear(&g_last_input);
     clay_str_push(&g_last_input, input);
     g_last_cursor = cursor;
+    g_status_only = 0;
     render_locked();
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_render_status(void) {
+    pthread_mutex_lock(&g_lock);
+    g_status_only = 1;
+    render_status_locked();
     pthread_mutex_unlock(&g_lock);
 }
 
 void clay_below_finish(void) {
     pthread_mutex_lock(&g_lock);
+    if (g_status_only) {
+        fputc('\r', stdout);
+        clay_term_clear_line();
+        fflush(stdout);
+        g_status_only = 0;
+        g_last_line_count = 0;
+        pthread_mutex_unlock(&g_lock);
+        return;
+    }
     /* Prompt row stays as history; modules row is ephemeral, erase it. */
     if (g_last_line_count > 1) {
         for (int i = 1; i < g_last_line_count; i++) {

@@ -5,10 +5,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CLAY_VERSION "0.0.0"
+#define CLAY_SYSTEM_PROMPT "You are clay, a helpful AI coding assistant. Be concise, accurate, and practical. " \
+                           "Explain code changes clearly and ask for clarification when the request is ambiguous."
 
 static int g_running = 1;
+static ClayJson *g_conversation = NULL;
+static long g_input_tokens = 0;
+static long g_output_tokens = 0;
+
+static void conversation_reset(void);
+static void update_tokens_below(void);
 
 static void cmd_exit(const char *args, void *user_data) {
     (void)args;
@@ -187,15 +196,37 @@ static void update_selected_below(void) {
     clay_str_free(&text);
 }
 
+static void update_tokens_below(void) {
+    ClayStr text;
+    clay_str_init(&text);
+    clay_str_printf(&text, "Tokens: %ld in / %ld out", g_input_tokens, g_output_tokens);
+    clay_below_set_text("tokens", text.data);
+    clay_str_free(&text);
+}
+
 static int select_model(const char *provider, const char *model) {
+    int changed = !g_selected_provider || !g_selected_model || strcmp(g_selected_provider, provider) != 0 ||
+                  strcmp(g_selected_model, model) != 0;
     char *provider_copy = strdup(provider);
     char *model_copy = strdup(model);
     free(g_selected_provider);
     free(g_selected_model);
     g_selected_provider = provider_copy;
     g_selected_model = model_copy;
+    if (changed) {
+        conversation_reset();
+        g_input_tokens = 0;
+        g_output_tokens = 0;
+        update_tokens_below();
+    }
     update_selected_below();
     return clay_config_selection_save(g_selected_provider, g_selected_model);
+}
+
+static void conversation_reset(void) {
+    clay_json_free(g_conversation);
+    g_conversation = clay_json_array();
+    clay_json_array_push(g_conversation, clay_openai_message("system", CLAY_SYSTEM_PROMPT));
 }
 
 static int fetch_connected_models(void *ctx, ClayArray *out) {
@@ -340,6 +371,121 @@ static void cmd_model(const char *args, void *user_data) {
     clay_model_selection_free(&sel);
 }
 
+typedef struct {
+    int status_visible;
+    int started;
+    long error_status;
+    long input_tokens;
+    long output_tokens;
+    int has_usage;
+} ClayConversationStream;
+
+static void hide_conversation_status(ClayConversationStream *stream) {
+    if (!stream->status_visible) return;
+    clay_below_set_editing(0);
+    clay_below_finish();
+    stream->status_visible = 0;
+}
+
+static void set_conversation_status(double seconds, int success) {
+    ClayStr text;
+    clay_str_init(&text);
+    clay_str_printf(&text, success ? "Idle · Last turn: %.1fs" : "Idle · Last request failed: %.1fs", seconds);
+    clay_below_set_text("status", text.data);
+    clay_below_set_state("status", CLAY_BELOW_IDLE);
+    clay_str_free(&text);
+}
+
+static void on_conversation_token(const char *text, void *userdata) {
+    ClayConversationStream *stream = userdata;
+    if (!stream->started) {
+        hide_conversation_status(stream);
+        clay_response_begin();
+        stream->started = 1;
+    }
+    clay_response_write(text);
+}
+
+static void on_conversation_error(long status, const char *body, void *userdata) {
+    (void)body;
+    ClayConversationStream *stream = userdata;
+    stream->error_status = status;
+}
+
+static void on_conversation_usage(long input_tokens, long output_tokens, void *userdata) {
+    ClayConversationStream *stream = userdata;
+    stream->input_tokens = input_tokens;
+    stream->output_tokens = output_tokens;
+    stream->has_usage = 1;
+}
+
+static void run_conversation(ClayApp *app, const char *input) {
+    if (!g_selected_provider || !g_selected_model) {
+        clay_sayc(CLAY_RED, "Select a provider and model with /model before sending a message.");
+        return;
+    }
+
+    ClayConnectedProvider *provider = find_connected_provider(g_selected_provider);
+    if (!provider) {
+        clay_sayc(CLAY_RED, "Selected provider %s is not connected.", g_selected_provider);
+        return;
+    }
+    if (!g_conversation) conversation_reset();
+
+    ClayJson *messages = clay_json_clone(g_conversation);
+    clay_json_array_push(messages, clay_openai_message("user", input));
+
+    ClayOpenAI *client = clay_openai_create(provider->config->base_url, provider->config->apikey, g_selected_model);
+    ClayConversationStream stream = {0};
+    ClayOpenAICallbacks callbacks = {0};
+    callbacks.on_token = on_conversation_token;
+    callbacks.on_usage = on_conversation_usage;
+    callbacks.on_error = on_conversation_error;
+    callbacks.userdata = &stream;
+
+    struct timespec started_at;
+    clock_gettime(CLOCK_MONOTONIC, &started_at);
+    clay_below_set_text("status", "Thinking...");
+    clay_below_set_state("status", CLAY_BELOW_LOADING);
+    if (clay_term_is_interactive()) {
+        clay_below_set_editing(1);
+        clay_below_render_status();
+        stream.status_visible = 1;
+    }
+    clay_app_set_state(app, CLAY_APP_BUSY);
+    int rc = clay_openai_run(client, messages, NULL, 0, 1, &callbacks);
+    clay_openai_destroy(client);
+
+    struct timespec finished_at;
+    clock_gettime(CLOCK_MONOTONIC, &finished_at);
+    double seconds = (double)(finished_at.tv_sec - started_at.tv_sec) +
+                     (double)(finished_at.tv_nsec - started_at.tv_nsec) / 1e9;
+
+    if (stream.started) clay_response_end();
+    hide_conversation_status(&stream);
+    if (rc == 0) {
+        clay_json_free(g_conversation);
+        g_conversation = messages;
+        clay_below_set_state("provider", CLAY_BELOW_FINISHED);
+        set_conversation_status(seconds, 1);
+        if (stream.has_usage) {
+            g_input_tokens = stream.input_tokens;
+            g_output_tokens = stream.output_tokens;
+            update_tokens_below();
+        }
+    } else {
+        clay_json_free(messages);
+        clay_below_set_state("provider", CLAY_BELOW_IDLE);
+        set_conversation_status(seconds, 0);
+        if (stream.error_status > 0) {
+            clay_sayc(CLAY_RED, "Provider request failed (HTTP %ld).", stream.error_status);
+        } else {
+            clay_sayc(CLAY_RED, "Provider request failed.");
+        }
+    }
+    clay_app_set_state(app, CLAY_APP_IDLE);
+}
+
 static void cmd_mm(const char *args, void *user_data) {
     (void)args;
     (void)user_data;
@@ -404,6 +550,11 @@ static void run_demo_turn(ClayApp *app) {
                  clay_color(CLAY_CYAN), clay_color(CLAY_GRAY), clay_color(CLAY_CYAN), clay_color(CLAY_GRAY));
 }
 
+static void cmd_demo(const char *args, void *user_data) {
+    (void)args;
+    run_demo_turn(user_data);
+}
+
 int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--no-color") == 0) {
@@ -420,6 +571,7 @@ int main(int argc, char **argv) {
 
     connected_providers_init();
     clay_config_selection_load(&g_selected_provider, &g_selected_model);
+    conversation_reset();
 
     ClayApp *app = clay_app_create();
     ClayCommandRegistry *commands = clay_app_commands(app);
@@ -432,13 +584,18 @@ int main(int argc, char **argv) {
     clay_command_register(commands, "below", "Cycle the below-prompt status modules", cmd_below, app);
     clay_command_register(commands, "model", "Pick a model from a connected provider", cmd_model, app);
     clay_command_register(commands, "connect", "Connect a provider, or /connect <id> directly", cmd_connect, app);
+    clay_command_register(commands, "demo", "Run the render demo sequence", cmd_demo, app);
 
-    clay_below_add(0, "model");
+    clay_below_add(0, "status");
+    clay_below_set_text("status", "Idle");
+    clay_below_set_state("status", CLAY_BELOW_IDLE);
 
-    clay_below_add(1, "tokens");
-    clay_below_set_text("tokens", "Tokens: 0 in / 0 out");
+    clay_below_add(1, "model");
 
-    clay_below_add(2, "provider");
+    clay_below_add(2, "tokens");
+    update_tokens_below();
+
+    clay_below_add(3, "provider");
     clay_below_set_state("provider", CLAY_BELOW_IDLE);
     update_selected_below();
 
@@ -458,7 +615,7 @@ int main(int argc, char **argv) {
             }
             break;
         case CLAY_INPUT_MESSAGE:
-            run_demo_turn(app);
+            run_conversation(app, input.raw);
             break;
         }
 
@@ -468,6 +625,7 @@ int main(int argc, char **argv) {
 
     clay_app_destroy(app);
     connected_providers_free();
+    clay_json_free(g_conversation);
     free(g_selected_provider);
     free(g_selected_model);
     clay_http_cleanup();

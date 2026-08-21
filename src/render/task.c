@@ -33,8 +33,8 @@ static double elapsed_seconds(const struct timespec *start) {
 
 static void render_line(const char *icon_color, const char *icon, const char *label, const char *suffix) {
     clay_term_clear_line();
-    printf("%s%s clay%s  %s%s%s\xe2\x80\xa6 %s%s%s", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, clay_color(CLAY_RESET),
-           clay_color(CLAY_GRAY), label, clay_color(CLAY_RESET), clay_color(icon_color), icon, clay_color(CLAY_RESET));
+    printf("%s%s clay%s  %s%s%s %s%s%s\xe2\x80\xa6", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, clay_color(CLAY_RESET),
+           clay_color(icon_color), icon, clay_color(CLAY_RESET), clay_color(CLAY_GRAY), label, clay_color(CLAY_RESET));
     if (suffix) printf(" %s", suffix);
     fflush(stdout);
 }

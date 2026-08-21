@@ -39,14 +39,16 @@ typedef struct {
     void (*on_token)(const char *text, void *userdata);
     void (*on_tool_call)(const char *name, const char *arguments_json, void *userdata);
     void (*on_tool_result)(const char *name, const ClayJson *result, void *userdata);
+    void (*on_usage)(long input_tokens, long output_tokens, void *userdata);
     void (*on_error)(long status, const char *body, void *userdata);
     void *userdata;
 } ClayOpenAICallbacks;
 
-/* Streams the model's reply to `messages` (OpenAI wire format), running
-   any requested tool calls and resending until it answers with plain
-   content or `max_rounds` is hit. Appends the assistant reply and any
-   tool results to `messages` in place. 0 on success. */
+/* Streams the model's reply to `messages` (OpenAI wire format), requesting
+   final token usage when the compatible endpoint supports it. Runs any
+   requested tool calls and resends until it answers with plain content or
+   `max_rounds` is hit. Appends the assistant reply and any tool results to
+   `messages` in place. 0 on success. */
 int clay_openai_run(ClayOpenAI *client, ClayJson *messages, const ClayTool *tools, size_t tool_count,
                      int max_rounds, const ClayOpenAICallbacks *callbacks);
 

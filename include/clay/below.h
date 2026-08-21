@@ -31,6 +31,10 @@ void clay_below_set_editing(int editing);
    towards the column). Thread-safe. */
 void clay_below_render(const char *input, size_t cursor);
 
+/* Renders only the enabled modules on the current row, without a prompt.
+   Used for live status between a submitted prompt and streamed output. */
+void clay_below_render_status(void);
+
 /* Erases the modules row and moves the cursor to a fresh line below it.
    The prompt line itself stays on screen as history. */
 void clay_below_finish(void);

@@ -44,6 +44,23 @@ void clay_sayc(const char *color, const char *fmt, ...) {
     fputc('\n', stdout);
 }
 
+void clay_response_begin(void) {
+    print_prefix();
+    fputs(clay_color(CLAY_WHITE), stdout);
+    fflush(stdout);
+}
+
+void clay_response_write(const char *text) {
+    fputs(text, stdout);
+    fflush(stdout);
+}
+
+void clay_response_end(void) {
+    fputs(clay_color(CLAY_RESET), stdout);
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
 void clay_list_header(const char *fmt, ...) {
     print_prefix();
     fputs(clay_color(CLAY_GRAY), stdout);
