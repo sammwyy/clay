@@ -135,8 +135,8 @@ static char *system_prompt_cache_path(void) {
     return path.data;
 }
 
-/* 0 with text_out/last_used_out set on a hit, -1 on a miss. */
-static int load_system_prompt_cache(char **text_out, long long *last_used_out) {
+/* 0 with text_out/last_used_out/cwd_out set on a hit, -1 on a miss. */
+static int load_system_prompt_cache(char **text_out, long long *last_used_out, char **cwd_out) {
     char *path = system_prompt_cache_path();
     if (!path) return -1;
     FILE *file = fopen(path, "r");
@@ -156,11 +156,13 @@ static int load_system_prompt_cache(char **text_out, long long *last_used_out) {
     }
     *text_out = strdup(text);
     *last_used_out = (long long)clay_json_number_value(clay_json_object_get(root, "last_used_at"));
+    const char *cwd = clay_json_string_value(clay_json_object_get(root, "cwd"));
+    *cwd_out = strdup(cwd ? cwd : "");
     clay_json_free(root);
     return 0;
 }
 
-static void save_system_prompt_cache(const char *text, long long last_used_at) {
+static void save_system_prompt_cache(const char *text, long long last_used_at, const char *cwd) {
     char *home = clay_term_home_dir();
     if (!home) return;
     ClayStr dir;
@@ -171,6 +173,7 @@ static void save_system_prompt_cache(const char *text, long long last_used_at) {
     ClayJson *root = clay_json_object();
     clay_json_object_set(root, "text", clay_json_string(text));
     clay_json_object_set(root, "last_used_at", clay_json_number((double)last_used_at));
+    clay_json_object_set(root, "cwd", clay_json_string(cwd));
     ClayStr path;
     clay_str_init(&path);
     clay_str_printf(&path, "%s/system_prompt.json", dir.data);
@@ -188,6 +191,79 @@ static void save_system_prompt_cache(const char *text, long long last_used_at) {
     clay_str_free(&body);
 }
 
+#define CLAY_PROJECT_INSTRUCTIONS_MAX_DEPTH 32
+
+static char *read_file_if_exists(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return NULL;
+    ClayStr text;
+    clay_str_init(&text);
+    int ch;
+    while ((ch = fgetc(file)) != EOF) clay_str_push_char(&text, (char)ch);
+    fclose(file);
+    return text.data;
+}
+
+/* AGENTS.md takes priority over CLAY.md at the same level - only one is
+   read per directory. */
+static char *read_level_instructions(const char *dir) {
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/AGENTS.md", dir);
+    char *content = read_file_if_exists(path.data);
+    if (!content) {
+        clay_str_clear(&path);
+        clay_str_printf(&path, "%s/CLAY.md", dir);
+        content = read_file_if_exists(path.data);
+    }
+    clay_str_free(&path);
+    return content;
+}
+
+/* Walks up from the cwd to the repo root (a directory holding .git),
+   reading AGENTS.md/CLAY.md at each level - same mechanism as Codex CLI.
+   Concatenated root-first, so more specific instructions near the cwd
+   follow more general ones. Malloc'd; NULL if none found. */
+char *clay_commands_load_project_instructions(void) {
+    char *dir = clay_term_cwd();
+    if (!dir) return NULL;
+
+    ClayArray levels;
+    clay_array_init(&levels, sizeof(char *));
+    for (int depth = 0; depth < CLAY_PROJECT_INSTRUCTIONS_MAX_DEPTH; depth++) {
+        char *content = read_level_instructions(dir);
+        if (content) clay_array_push_val(&levels, &content);
+
+        ClayStr git_path;
+        clay_str_init(&git_path);
+        clay_str_printf(&git_path, "%s/.git", dir);
+        int at_repo_root = clay_term_is_dir(git_path.data);
+        clay_str_free(&git_path);
+        if (at_repo_root || strcmp(dir, "/") == 0) break;
+
+        char *slash = strrchr(dir, '/');
+        if (!slash) break;
+        if (slash == dir) slash[1] = '\0'; /* "/foo" -> "/" */
+        else *slash = '\0';
+    }
+    free(dir);
+
+    if (levels.count == 0) {
+        clay_array_free(&levels);
+        return NULL;
+    }
+    ClayStr combined;
+    clay_str_init(&combined);
+    for (size_t i = levels.count; i-- > 0;) {
+        char *content = *(char **)clay_array_get(&levels, i);
+        if (combined.len > 0) clay_str_push(&combined, "\n\n");
+        clay_str_push(&combined, content);
+        free(content);
+    }
+    clay_array_free(&levels);
+    return combined.data;
+}
+
 static char *build_fresh_system_prompt(void) {
     ClayStr text;
     clay_str_init(&text);
@@ -203,6 +279,12 @@ static char *build_fresh_system_prompt(void) {
     if (*index) clay_str_printf(&text, "\n\nLong-term memory index:\n%s", index);
     free(index);
 
+    char *project_instructions = clay_commands_load_project_instructions();
+    if (project_instructions) {
+        clay_str_printf(&text, "\n\nProject instructions (AGENTS.md/CLAY.md):\n%s", project_instructions);
+        free(project_instructions);
+    }
+
     return text.data;
 }
 
@@ -213,15 +295,22 @@ static char *build_fresh_system_prompt(void) {
    never calls this once commands->chat exists. */
 static char *clay_commands_build_system_prompt(void) {
     char *cached_text = NULL;
+    char *cached_cwd = NULL;
     long long last_used = 0;
     long long now = clay_time_now();
-    if (load_system_prompt_cache(&cached_text, &last_used) == 0 && now - last_used < CLAY_SYSTEM_PROMPT_TTL_SECONDS) {
-        save_system_prompt_cache(cached_text, now);
+    char *cwd = clay_term_cwd();
+    int hit = load_system_prompt_cache(&cached_text, &last_used, &cached_cwd) == 0 &&
+              now - last_used < CLAY_SYSTEM_PROMPT_TTL_SECONDS && cwd && strcmp(cached_cwd, cwd) == 0;
+    free(cached_cwd);
+    if (hit) {
+        save_system_prompt_cache(cached_text, now, cwd);
+        free(cwd);
         return cached_text;
     }
     free(cached_text);
     char *fresh = build_fresh_system_prompt();
-    save_system_prompt_cache(fresh, now);
+    save_system_prompt_cache(fresh, now, cwd ? cwd : "");
+    free(cwd);
     return fresh;
 }
 

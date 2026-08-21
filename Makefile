@@ -72,6 +72,10 @@ CONTEXT_COMPACT_TEST_SRC    := tests/test_context_compact.c
 CONTEXT_COMPACT_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(CONTEXT_COMPACT_TEST_SRC))
 CONTEXT_COMPACT_TEST_TARGET := $(BIN_DIR)/test_context_compact
 
+PROJECT_INSTRUCTIONS_TEST_SRC    := tests/test_project_instructions.c
+PROJECT_INSTRUCTIONS_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(PROJECT_INSTRUCTIONS_TEST_SRC))
+PROJECT_INSTRUCTIONS_TEST_TARGET := $(BIN_DIR)/test_project_instructions
+
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
@@ -85,7 +89,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact run compress compress-win clean debug
+.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions run compress compress-win clean debug
 
 all: build
 
@@ -143,6 +147,11 @@ test-context-compact: $(CONTEXT_COMPACT_TEST_TARGET)
 
 $(CONTEXT_COMPACT_TEST_TARGET): $(LIB_OBJ) $(CONTEXT_COMPACT_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CONTEXT_COMPACT_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-project-instructions: $(PROJECT_INSTRUCTIONS_TEST_TARGET)
+
+$(PROJECT_INSTRUCTIONS_TEST_TARGET): $(LIB_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)

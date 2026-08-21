@@ -74,6 +74,9 @@ int clay_commands_select_model(ClayCommands *commands, const char *provider, con
 void clay_commands_update_selected_below(ClayCommands *commands);
 void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens, long output_tokens);
 void clay_commands_reset_conversation(ClayCommands *commands);
+/* Walks up from the cwd to the repo root, concatenating AGENTS.md/CLAY.md
+   at each level (root-first). Malloc'd; NULL if none found. */
+char *clay_commands_load_project_instructions(void);
 /* Deterministic context compaction (no LLM call): once the last request's
    input tokens crossed ~90% of the context budget, collapses tool-result
    content older than the last few turns to a short preview, in place on
