@@ -2,6 +2,7 @@
 #define CLAY_TERM_H
 
 #include "clay/str.h"
+#include "clay/array.h"
 
 #include <stddef.h>
 
@@ -97,6 +98,9 @@ char *clay_term_home_dir(void);
 /* Creates one directory level (not recursive). 0 on success or if it
    already exists, nonzero on failure. */
 int clay_term_mkdir(const char *path);
+int clay_term_list_dir(const char *path, ClayArray *names); /* char *, caller frees entries */
+long long clay_term_file_modified_at(const char *path);
+int clay_term_random_bytes(unsigned char *bytes, size_t count);
 
 /* Restricts `path` to owner-only access (POSIX chmod 0600); no-op on
    Windows. For files holding secrets. */

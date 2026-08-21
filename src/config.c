@@ -194,6 +194,7 @@ int clay_config_selection_save(const char *provider, const char *model) {
     ClayJson *root = clay_json_object();
     clay_json_object_set(root, "provider", provider ? clay_json_string(provider) : clay_json_null());
     clay_json_object_set(root, "model", model ? clay_json_string(model) : clay_json_null());
+    clay_json_object_set(root, "history_preview_count", clay_json_number(clay_config_history_preview_count()));
 
     ClayStr body;
     clay_str_init(&body);
@@ -213,4 +214,20 @@ int clay_config_selection_save(const char *provider, const char *model) {
     clay_str_free(&path);
     clay_str_free(&body);
     return 0;
+}
+
+int clay_config_history_preview_count(void) {
+    char *path = selection_path();
+    if (!path) return 4;
+    FILE *file = fopen(path, "r");
+    free(path);
+    if (!file) return 4;
+    char *text = read_whole_file(file);
+    fclose(file);
+    ClayJson *root = clay_json_parse(text, NULL);
+    free(text);
+    ClayJson *value = clay_json_object_get(root, "history_preview_count");
+    int count = clay_json_type(value) == CLAY_JSON_NUMBER ? (int)clay_json_number_value(value) : 4;
+    clay_json_free(root);
+    return count >= 0 ? count : 4;
 }

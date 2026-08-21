@@ -110,6 +110,23 @@ void clay_commands_reset_conversation(ClayCommands *commands) {
     clay_json_free(commands->conversation);
     commands->conversation = clay_json_array();
     clay_json_array_push(commands->conversation, clay_openai_message("system", CLAY_SYSTEM_PROMPT));
+    if (!commands->chat) return;
+    ClayJson *history = clay_chat_openai_messages(commands->chat);
+    for (size_t i = 0; i < clay_json_array_count(history); i++) {
+        clay_json_array_push(commands->conversation, clay_json_clone(clay_json_array_get(history, i)));
+    }
+    clay_json_free(history);
+}
+
+void clay_commands_new_chat(ClayCommands *commands) {
+    clay_chat_destroy(commands->chat);
+    commands->chat = NULL;
+    clay_commands_reset_conversation(commands);
+    commands->input_tokens = 0;
+    commands->output_tokens = 0;
+    clay_below_stop_elapsed("status");
+    clay_below_set_enabled("status", 0);
+    clay_commands_set_tokens_below(commands, 0, 0);
 }
 
 int clay_commands_select_model(ClayCommands *commands, const char *provider, const char *model) {
@@ -122,6 +139,8 @@ int clay_commands_select_model(ClayCommands *commands, const char *provider, con
     commands->selected_provider = provider_copy;
     commands->selected_model = model_copy;
     if (changed) {
+        clay_chat_destroy(commands->chat);
+        commands->chat = NULL;
         clay_commands_reset_conversation(commands);
         commands->input_tokens = 0;
         commands->output_tokens = 0;
@@ -159,6 +178,18 @@ const ClayReasoningEffort *clay_commands_reasoning_efforts(void) {
     return REASONING_EFFORTS;
 }
 
+void clay_commands_print_history(ClayCommands *commands, size_t count) {
+    ClayJson *messages = clay_chat_recent_messages(commands->chat, count);
+    for (size_t i = 0; i < clay_json_array_count(messages); i++) {
+        ClayJson *message = clay_json_array_get(messages, i);
+        const char *role = clay_json_string_value(clay_json_object_get(message, "role"));
+        const char *content = clay_json_string_value(clay_json_object_get(message, "content"));
+        clay_sayc(strcmp(role, "user") == 0 ? CLAY_CYAN : CLAY_GRAY,
+                  "%s: %s", strcmp(role, "user") == 0 ? "You" : "Clay", content);
+    }
+    clay_json_free(messages);
+}
+
 ClayCommands *clay_commands_create(ClayApp *app) {
     ClayCommands *commands = calloc(1, sizeof(ClayCommands));
     commands->app = app;
@@ -169,6 +200,7 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     for (size_t i = 0; i < count; i++) clay_commands_load_provider(commands, &types[i]);
     clay_config_selection_load(&commands->selected_provider, &commands->selected_model);
     clay_commands_reset_conversation(commands);
+    clay_config_selection_save(commands->selected_provider, commands->selected_model);
     clay_below_add(0, "status");
     clay_below_set_enabled("status", 0);
     clay_below_add(1, "model");
@@ -185,6 +217,7 @@ void clay_commands_destroy(ClayCommands *commands) {
     for (size_t i = 0; i < commands->providers.count; i++) provider_free(clay_array_get(&commands->providers, i));
     clay_array_free(&commands->providers);
     clay_json_free(commands->conversation);
+    clay_chat_destroy(commands->chat);
     free(commands->selected_provider);
     free(commands->selected_model);
     free(commands);

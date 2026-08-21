@@ -17,6 +17,7 @@ typedef struct {
     long output_tokens;
     int has_usage;
     ClayTask *tool_task;
+    ClayStr response;
 } ClayConversationStream;
 
 static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
@@ -181,6 +182,7 @@ static void on_tool_call(const char *name, const char *arguments_json, void *use
     (void)arguments_json;
     ClayConversationStream *stream = userdata;
     close_response_for_tool(stream);
+    clay_str_clear(&stream->response);
     if (clay_term_is_interactive()) clay_term_raw_disable();
     ClayStr label;
     clay_str_init(&label);
@@ -215,6 +217,7 @@ static void on_tool_result(const char *name, const ClayJson *result, void *userd
 static void on_token(const char *text, void *userdata) {
     if (!text || !*text) return;
     ClayConversationStream *stream = userdata;
+    clay_str_push(&stream->response, text);
     if (!stream->response_active) {
         if (stream->status_visible) {
             clay_below_set_editing(0);
@@ -270,7 +273,7 @@ static void on_usage(long input_tokens, long output_tokens, void *userdata) {
 
 static int should_abort(void *userdata) {
     (void)userdata;
-    return clay_term_take_escape();
+    return clay_term_take_escape() || clay_term_take_interrupt();
 }
 
 int clay_commands_run_message(ClayCommands *commands, const char *input) {
@@ -283,11 +286,25 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         clay_sayc(CLAY_RED, "Selected provider %s is not connected.", commands->selected_provider);
         return 0;
     }
+    if (!commands->chat) {
+        commands->chat = clay_chat_create();
+        if (!commands->chat) {
+            clay_sayc(CLAY_RED, "Could not create a chat journal.");
+            return 0;
+        }
+        clay_commands_reset_conversation(commands);
+    }
+    if (clay_chat_begin_turn(commands->chat, input) != 0) {
+        clay_sayc(CLAY_RED, "Could not save the chat journal.");
+        return 0;
+    }
+    size_t turn_start = clay_json_array_count(commands->conversation);
     ClayJson *messages = clay_json_clone(commands->conversation);
     clay_json_array_push(messages, clay_openai_message("user", input));
     ClayOpenAI *client = clay_openai_create(provider->config->base_url, provider->config->apikey, commands->selected_model);
     clay_openai_set_reasoning_effort(client, clay_commands_reasoning_effort(commands)->id);
     ClayConversationStream stream = {0};
+    clay_str_init(&stream.response);
     ClayOpenAICallbacks callbacks = {0};
     callbacks.on_token = on_token;
     callbacks.on_tool_call = on_tool_call;
@@ -314,6 +331,8 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     int had_response = stream.response_active;
     if (had_response) clay_response_end();
     if (rc == 1) {
+        if (stream.response.len > 0) clay_json_array_push(messages, clay_openai_message("assistant", stream.response.data));
+        clay_chat_finish_turn(commands->chat, messages, turn_start, "aborted");
         clay_json_free(messages);
         if (had_response && stream.status_visible) {
             clay_below_status_finish_output();
@@ -322,10 +341,12 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
             hide_status(&stream);
         }
         clay_sayc(CLAY_YELLOW, "Operation aborted by user.");
+        clay_str_free(&stream.response);
         clay_app_set_state(commands->app, CLAY_APP_IDLE);
         return 0;
     }
     if (rc == 0) {
+        clay_chat_finish_turn(commands->chat, messages, turn_start, "completed");
         clay_json_free(commands->conversation);
         commands->conversation = messages;
         set_status(seconds, 1);
@@ -337,12 +358,16 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
             clay_commands_set_tokens_below(commands, stream.input_tokens, stream.output_tokens);
         }
     } else {
+        if (stream.response.len > 0) clay_json_array_push(messages, clay_openai_message("assistant", stream.response.data));
+        clay_chat_finish_turn(commands->chat, messages, turn_start,
+                              stream.error_status > 0 ? "provider_error" : "network_error");
         clay_json_free(messages);
         set_status(seconds, 0);
     }
     if (stream.started && stream.status_visible) {
         clay_below_status_refresh_below();
         clay_below_status_prepare_prompt();
+        clay_str_free(&stream.response);
         clay_app_set_state(commands->app, CLAY_APP_IDLE);
         return 1;
     }
@@ -351,6 +376,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         if (stream.error_status > 0) clay_sayc(CLAY_RED, "Provider request failed (HTTP %ld).", stream.error_status);
         else clay_sayc(CLAY_RED, "Provider request failed.");
     }
+    clay_str_free(&stream.response);
     clay_app_set_state(commands->app, CLAY_APP_IDLE);
     return 0;
 }

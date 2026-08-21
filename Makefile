@@ -23,7 +23,7 @@ BIN_DIR   := bin
 TARGET    := $(BIN_DIR)/clay
 
 # Test files have their own main() and are excluded from the main binary.
-SRC      := $(filter-out src/test_openai.c src/test_cli.c,$(shell find src -name '*.c'))
+SRC      := $(filter-out src/test_openai.c src/test_cli.c src/test_chat.c src/test_uuid.c,$(shell find src -name '*.c'))
 OBJ      := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 DEP      := $(OBJ:.o=.d)
 
@@ -36,6 +36,14 @@ LIB_OBJ     := $(filter-out $(BUILD_DIR)/main.o,$(OBJ))
 CLI_TEST_SRC    := src/test_cli.c
 CLI_TEST_OBJ    := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(CLI_TEST_SRC))
 CLI_TEST_TARGET := $(BIN_DIR)/test_cli
+
+CHAT_TEST_SRC    := src/test_chat.c
+CHAT_TEST_OBJ    := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(CHAT_TEST_SRC))
+CHAT_TEST_TARGET := $(BIN_DIR)/test_chat
+
+UUID_TEST_SRC    := src/test_uuid.c
+UUID_TEST_OBJ    := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(UUID_TEST_SRC))
+UUID_TEST_TARGET := $(BIN_DIR)/test_uuid
 
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
@@ -50,7 +58,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli run compress clean debug
+.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid run compress clean debug
 
 all: build
 
@@ -68,6 +76,16 @@ test-cli: $(CLI_TEST_TARGET)
 
 $(CLI_TEST_TARGET): $(LIB_OBJ) $(CLI_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CLI_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-chat: $(CHAT_TEST_TARGET)
+
+$(CHAT_TEST_TARGET): $(LIB_OBJ) $(CHAT_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(CHAT_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-uuid: $(UUID_TEST_TARGET)
+
+$(UUID_TEST_TARGET): $(LIB_OBJ) $(UUID_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(UUID_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)

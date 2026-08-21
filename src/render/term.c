@@ -10,9 +10,11 @@
 #include <conio.h>
 #include <direct.h>
 #include <io.h>
+#include <sys/stat.h>
 #include <windows.h>
 #define CLAY_PATH_MAX MAX_PATH
 #else
+#include <dirent.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -373,7 +375,9 @@ ClayKey clay_term_read_key_timeout(char *ch_out, int timeout_ms) {
 
 int clay_term_take_escape(void) {
     if (!clay_term_input_pending()) return 0;
-    return clay_term_read_key(NULL) == CLAY_KEY_ESCAPE;
+    ClayKey key = clay_term_read_key(NULL);
+    if (key == CLAY_KEY_INTERRUPT) g_interrupted = 1;
+    return key == CLAY_KEY_ESCAPE;
 }
 
 int clay_term_input_pending(void) {
@@ -402,6 +406,83 @@ int clay_term_mkdir(const char *path) {
     return _mkdir(path) == 0 || errno == EEXIST ? 0 : -1;
 #else
     return mkdir(path, 0700) == 0 || errno == EEXIST ? 0 : -1;
+#endif
+}
+
+int clay_term_list_dir(const char *path, ClayArray *names) {
+    clay_array_init(names, sizeof(char *));
+#ifdef _WIN32
+    ClayStr pattern;
+    clay_str_init(&pattern);
+    clay_str_printf(&pattern, "%s\\*", path);
+    WIN32_FIND_DATA data;
+    HANDLE handle = FindFirstFile(pattern.data, &data);
+    clay_str_free(&pattern);
+    if (handle == INVALID_HANDLE_VALUE) return -1;
+    do {
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && strcmp(data.cFileName, ".") != 0 &&
+            strcmp(data.cFileName, "..") != 0) {
+            char *name = strdup(data.cFileName);
+            clay_array_push_val(names, &name);
+        }
+    } while (FindNextFile(handle, &data));
+    FindClose(handle);
+#else
+    DIR *directory = opendir(path);
+    if (!directory) return -1;
+    struct dirent *entry;
+    while ((entry = readdir(directory))) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        ClayStr child;
+        clay_str_init(&child);
+        clay_str_printf(&child, "%s/%s", path, entry->d_name);
+        struct stat info;
+        int is_dir = stat(child.data, &info) == 0 && S_ISDIR(info.st_mode);
+        clay_str_free(&child);
+        if (is_dir) {
+            char *name = strdup(entry->d_name);
+            clay_array_push_val(names, &name);
+        }
+    }
+    closedir(directory);
+#endif
+    return 0;
+}
+
+long long clay_term_file_modified_at(const char *path) {
+#ifdef _WIN32
+    struct _stat info;
+    return _stat(path, &info) == 0 ? (long long)info.st_mtime : 0;
+#else
+    struct stat info;
+    return stat(path, &info) == 0 ? (long long)info.st_mtime : 0;
+#endif
+}
+
+int clay_term_random_bytes(unsigned char *bytes, size_t count) {
+    if (!bytes && count > 0) return -1;
+    if (count == 0) return 0;
+#ifdef _WIN32
+    size_t index = 0;
+    while (index < count) {
+        unsigned int value;
+        if (rand_s(&value) != 0) return -1;
+        for (size_t offset = 0; offset < sizeof(value) && index < count; offset++, index++) {
+            bytes[index] = (unsigned char)(value >> (offset * 8));
+        }
+    }
+    return 0;
+#else
+    FILE *file = fopen("/dev/urandom", "rb");
+    if (!file) return -1;
+    size_t read_count = 0;
+    while (read_count < count) {
+        size_t read_now = fread(bytes + read_count, 1, count - read_count, file);
+        if (read_now == 0) break;
+        read_count += read_now;
+    }
+    int closed = fclose(file) == 0;
+    return read_count == count && closed ? 0 : -1;
 #endif
 }
 

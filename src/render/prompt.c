@@ -287,8 +287,17 @@ static char *interactive_prompt_line(void) {
         if (key == CLAY_KEY_ENTER) {
             break;
         } else if (key == CLAY_KEY_INTERRUPT) {
-            interrupted = 1;
-            break;
+            clay_term_take_interrupt();
+            if (buf.len == 0) {
+                interrupted = 1;
+                break;
+            }
+            clay_str_clear(&buf);
+            paste_blocks_free(&blocks);
+            cursor = 0;
+            history_pos = -1;
+            clear_armed = 0;
+            clay_below_set_enabled("hint", 0);
         } else if (key == CLAY_KEY_EOF) {
             got_eof = 1;
             break;

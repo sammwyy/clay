@@ -10,6 +10,8 @@ src/json.c          minimal JSON value tree: parse, build, stringify
 src/http.c          HTTP client, built on mm + libcurl
 src/providers/      LLM provider clients, built on http + json (openai.c, ...)
 src/config.c         saved provider credentials and model selection (~/.clay), built on mm + json + term
+src/chat.c           versioned JSON chat journals, built on mm + json + term
+src/time.c           wall-clock and relative-time formatting
 src/cli/             typed process argument registry and clay startup options
 src/render/         drawing primitives, built on mm + term
 src/render/modals/  purpose-built composite interactive widgets, built on render
@@ -18,7 +20,7 @@ src/main.c          process bootstrap and input loop
 src/test_openai.c   standalone harness for the OpenAI provider (see "Backend")
 ```
 
-Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` depends on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - it only persists connection data. `cli/` depends on `mm` and `term`. `render` depends on `mm` and `term`. `commands` is the integration layer over render/config/providers. `main.c` only owns process startup and the input loop; `test_openai.c` is a separate provider/http harness.
+Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` and `chat` depend on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - they only persist local data. `cli/` depends on `mm` and `term`. `render` depends on `mm` and `term`. `commands` is the integration layer over render/config/chat/providers. `main.c` only owns process startup and the input loop; `test_openai.c` is a separate provider/http harness.
 
 ### `src/mm/` — memory
 
@@ -45,7 +47,11 @@ A thin wrapper over libcurl's easy interface - the only place in the project tha
 
 ### `src/config.c` — saved provider credentials
 
-Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. `~/.clay/config.json` separately stores the selected `provider` and `model` (or JSON null when unset). Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `commands/context.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
+Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/providers/<id>.json`, restricted to the owner (`clay_term_restrict_file`, POSIX 0600) since it holds a plaintext API key. `~/.clay/config.json` separately stores the selected `provider`, `model`, and `history_preview_count` (default 4). It never stores an active chat id. Doesn't know about provider *types* (openai vs. openrouter vs. a custom endpoint) - that mapping lives in `commands/context.c`'s `PROVIDER_TYPES` table, since they're all the same OpenAI-compatible wire format and only differ by default `base_url`. `id` doubles as both the config filename and the provider type it was connected as.
+
+### `src/chat.c` — chat journals
+
+Each chat lives at `~/.clay/chats/<uuid-v4>/chat.json`. A CLI starts without an active chat and creates one only when its first message is sent; `/new` (or `/clear`) discards the active chat from the session without deleting its journal, so the following message creates the next chat; `/resume` lists saved chats by id and relative update time, then explicitly loads one. IDs are UUID v4 values from the operating system's secure random source, so processes can create journals independently without coordinating counters. The journal is a versioned, provider-neutral JSON document with turns in `pending`, `completed`, `aborted`, `network_error`, or `provider_error` states. Its message records use `role`, `text`, `calls`, and `call_id` rather than the OpenAI wire shape. Before a request, `clay_chat_openai_messages` converts completed records into the provider-compatible array; the current system prompt is added by the command session and is never persisted in the chat. A turn is saved as `pending` before its request, then rewritten with the final response/tool records and state, preserving interrupted work for future retry/continue flows. `/resume` prints the configured number of recent messages, while `/history [n]` prints them on demand.
 
 ### `src/cli/` — process arguments
 
@@ -71,7 +77,7 @@ Purpose-built interactive widgets that combine several `render/` primitives into
 
 - `command.c` — parses one line of input into a command (`/name args...`, dispatched by name via `ClayMap`) or a plain message (`ClayInput`), and holds the registry of registered command handlers.
 - `app.c` — `ClayApp`: a small state machine (`IDLE` / `BUSY` / `PROMPTING` / `EXITING`) with a listener hook. Command handlers never call `render/` functions directly — they call `clay_app_say`, `clay_app_task_start`, `clay_app_select`, etc., which update `ClayApp`'s state *and then* delegate to the matching render function. This keeps "what's happening" (state) and "how it looks" (ANSI output) in sync by construction, and is the seam a future agent daemon would drive through instead of writing to the terminal directly.
-- `context.c` — owns the command session: saved/connected providers, model and reasoning selection, conversation history, token counters, and the below-prompt modules. `message.c` owns the normal-message OpenAI streaming/tool loop against that state, including Escape-driven request cancellation.
+- `context.c` — owns the command session: saved/connected providers, model and reasoning selection, the active chat journal, token counters, and the below-prompt modules. `message.c` owns the normal-message OpenAI streaming/tool loop against that state, including Escape-driven request cancellation.
 - `register.c` is the one registry wiring point. Every slash-command handler lives in its own file (`help.c`, `exit.c`, `connect.c`, `model.c`, `effort.c`, `demo.c`, and the remaining command-named files), so a command's UI and behavior are changed together without growing `main.c`.
 
 ### `src/main.c`
@@ -92,4 +98,4 @@ The process bootstrap. It starts the terminal/HTTP layers, builds the command se
 
 ## Build
 
-`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked except for libcurl - see CODESTYLE.md). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` creates the ignored `.playground/` directory and starts the native binary with `--cwd .playground`, so tool calls do not use the repository root. `make compress` packs the native build in place with UPX using `--best --lzma`; it unpacks an already-compressed build first so the target is repeatable. `make test-cli` exercises typed option parsing; `make test-openai` builds `bin/test_openai` from the same object tree minus `main.o`, plus `test_openai.o` - see "`src/providers/`" above.
+`Makefile` builds natively (`make build`, objects in `build/`, binary in `bin/clay`) and cross-compiles for Windows via mingw-w64 (`make build-win`, `build-win/`, `bin-win/clay.exe`, statically linked except for libcurl - see CODESTYLE.md). Both share the same `src/` tree; only `term.c` branches on `_WIN32`. `make run` creates the ignored `.playground/` directory and starts the native binary with `--cwd .playground`, so tool calls do not use the repository root. `make compress` packs the native build in place with UPX using `--best --lzma`; it unpacks an already-compressed build first so the target is repeatable. `make test-cli` exercises typed option parsing, `make test-chat` verifies journal persistence/reconstruction, `make test-uuid` verifies UUID v4 shape and uniqueness, and `make test-openai` builds `bin/test_openai` from the same object tree minus `main.o`, plus `test_openai.o` - see "`src/providers/`" above.

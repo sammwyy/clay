@@ -2,8 +2,11 @@
 #define CLAY_H
 
 #include "clay/mm.h"
+#include "clay/time.h"
+#include "clay/uuid.h"
 #include "clay/color.h"
 #include "clay/config.h"
+#include "clay/chat.h"
 #include "clay/cli.h"
 #include "clay/term.h"
 #include "clay/render.h"

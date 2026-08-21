@@ -27,4 +27,7 @@ int clay_config_selection_load(char **provider_out, char **model_out);
    are written as JSON null. 0 on success. */
 int clay_config_selection_save(const char *provider, const char *model);
 
+/* Number of previous messages shown after /resume. Defaults to 4. */
+int clay_config_history_preview_count(void);
+
 #endif /* CLAY_CONFIG_H */
