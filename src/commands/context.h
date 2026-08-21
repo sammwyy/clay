@@ -74,6 +74,11 @@ int clay_commands_select_model(ClayCommands *commands, const char *provider, con
 void clay_commands_update_selected_below(ClayCommands *commands);
 void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens, long output_tokens);
 void clay_commands_reset_conversation(ClayCommands *commands);
+/* Deterministic context compaction (no LLM call): once the last request's
+   input tokens crossed ~90% of the context budget, collapses tool-result
+   content older than the last few turns to a short preview, in place on
+   commands->conversation. Returns how many results it collapsed. */
+int clay_commands_maybe_compact(ClayCommands *commands);
 void clay_commands_new_chat(ClayCommands *commands);
 const ClayReasoningEffort *clay_commands_reasoning_effort(const ClayCommands *commands);
 size_t clay_commands_reasoning_effort_count(void);

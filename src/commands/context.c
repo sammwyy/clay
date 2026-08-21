@@ -240,6 +240,64 @@ void clay_commands_reset_conversation(ClayCommands *commands) {
     clay_json_free(history);
 }
 
+/* No per-model context window lookup exists yet, so this is a conservative
+   fixed budget rather than something read off the selected model. */
+#define CLAY_CONTEXT_TOKEN_BUDGET 128000
+#define CLAY_CONTEXT_COMPACT_RATIO 0.9
+#define CLAY_CONTEXT_KEEP_TURNS 6
+#define CLAY_CONTEXT_TOOL_PREVIEW 200
+#define CLAY_CONTEXT_COLLAPSED_MARKER "[collapsed - "
+
+static int is_user_message(const ClayJson *message) {
+    return strcmp(clay_json_string_value(clay_json_object_get(message, "role")), "user") == 0;
+}
+
+static int collapse_tool_content(ClayJson *message) {
+    const char *text = clay_json_string_value(clay_json_object_get(message, "content"));
+    if (!text) return 0;
+    size_t len = strlen(text);
+    if (len <= CLAY_CONTEXT_TOOL_PREVIEW || strncmp(text, CLAY_CONTEXT_COLLAPSED_MARKER,
+                                                    strlen(CLAY_CONTEXT_COLLAPSED_MARKER)) == 0) {
+        return 0;
+    }
+    ClayStr summary;
+    clay_str_init(&summary);
+    clay_str_printf(&summary, "%s%zu bytes, showing the first %d]\n%.*s...", CLAY_CONTEXT_COLLAPSED_MARKER, len,
+                    CLAY_CONTEXT_TOOL_PREVIEW, CLAY_CONTEXT_TOOL_PREVIEW, text);
+    clay_json_object_set(message, "content", clay_json_string(summary.data));
+    clay_str_free(&summary);
+    return 1;
+}
+
+int clay_commands_maybe_compact(ClayCommands *commands) {
+    if (commands->input_tokens < (long)(CLAY_CONTEXT_TOKEN_BUDGET * CLAY_CONTEXT_COMPACT_RATIO)) return 0;
+    size_t count = clay_json_array_count(commands->conversation);
+    if (count < 2) return 0;
+
+    /* Everything at index < cutoff is older than the last CLAY_CONTEXT_KEEP_TURNS
+       user turns and is eligible for collapsing; index 0 (system prompt) never is. */
+    size_t cutoff = 1;
+    int turns_seen = 0;
+    for (size_t i = count; i-- > 1;) {
+        if (is_user_message(clay_json_array_get(commands->conversation, i))) {
+            turns_seen++;
+            if (turns_seen == CLAY_CONTEXT_KEEP_TURNS) {
+                cutoff = i;
+                break;
+            }
+        }
+    }
+
+    int collapsed = 0;
+    for (size_t i = 1; i < cutoff; i++) {
+        ClayJson *message = clay_json_array_get(commands->conversation, i);
+        if (strcmp(clay_json_string_value(clay_json_object_get(message, "role")), "tool") == 0) {
+            collapsed += collapse_tool_content(message);
+        }
+    }
+    return collapsed;
+}
+
 void clay_commands_new_chat(ClayCommands *commands) {
     clay_chat_destroy(commands->chat);
     commands->chat = NULL;

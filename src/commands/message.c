@@ -546,6 +546,11 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         clay_sayc(CLAY_RED, "Could not save the chat journal.");
         return 0;
     }
+    int collapsed = clay_commands_maybe_compact(commands);
+    if (collapsed > 0) {
+        clay_sayc(CLAY_GRAY, "Compacted %d old tool result%s to stay within the context budget.", collapsed,
+                 collapsed == 1 ? "" : "s");
+    }
     size_t history_end = clay_json_array_count(commands->conversation);
     ClayJson *messages = clay_json_clone(commands->conversation);
     const char *notes = clay_chat_notes(commands->chat);
