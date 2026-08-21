@@ -24,7 +24,9 @@
     "step's status changes - it's shown to the user as a checklist. Keep exactly one task in_progress at a time; "   \
     "mark it completed before moving to the next. Skip it for a single quick action.\n\n"                            \
     "Tools named mcp__<server>__<tool> come from MCP servers the user configured with /mcp - use them like any "     \
-    "other tool."
+    "other tool.\n\n"                                                                                                \
+    "If the user set up /autotest, a write/edit result carrying auto_test_failed means the configured command "     \
+    "failed after that change - read auto_test_output and fix it before moving on."
 
 /* Sliding window: reused as-is (and its clock reset) while a chat-less
    session starts within this long of the cache's last use, since the
@@ -498,6 +500,8 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     clay_array_init(&commands->todos, sizeof(ClayTodoItem));
     clay_array_init(&commands->mcp_servers, sizeof(ClayMcpServer *));
     clay_array_init(&commands->mcp_bindings, sizeof(ClayMcpToolBinding));
+    commands->auto_test_command = clay_config_auto_test_command();
+    commands->auto_test_choice = CLAY_AUTO_TEST_UNASKED;
     clay_commands_reset_conversation(commands);
     clay_config_selection_save(commands->selected_provider, commands->selected_model);
     clay_below_add(0, "status");
@@ -539,6 +543,7 @@ void clay_commands_destroy(ClayCommands *commands) {
         clay_mcp_disconnect(*(ClayMcpServer **)clay_array_get(&commands->mcp_servers, i));
     }
     clay_array_free(&commands->mcp_servers);
+    free(commands->auto_test_command);
     free(commands);
 }
 

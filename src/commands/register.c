@@ -30,5 +30,8 @@ void clay_commands_register(ClayCommands *commands) {
                           clay_cmd_plan, commands);
     clay_command_register(registry, "mcp", "List/add/remove MCP servers (/mcp add <name> <command> [args...])",
                           clay_cmd_mcp, commands);
+    clay_command_register(registry, "autotest",
+                          "Set the command to run after edits (/autotest <command>, /autotest clear)",
+                          clay_cmd_autotest, commands);
     clay_command_register(registry, "demo_all", "Run the complete render demo sequence", clay_cmd_demo, commands);
 }

@@ -35,6 +35,55 @@ static void checkpoint_before(ClayCommands *commands, const char *label) {
     free(workspace_dir);
 }
 
+/* Runs the user-configured auto-test command after a successful write/edit,
+   confirmed once per session (not once per edit). Reuses shell_exec's own
+   sandboxed execution - no new mechanism. Adds auto_test_* fields to
+   `result` only when the command fails, so a passing edit's tool result
+   stays as small as before. */
+static void run_auto_test(ClayCommands *commands, ClayJson *result) {
+    if (!commands->auto_test_command || !*commands->auto_test_command) return;
+    if (!clay_json_bool_value(clay_json_object_get(result, "ok"))) return;
+
+    if (commands->auto_test_choice == CLAY_AUTO_TEST_UNASKED) {
+        ClayStr question;
+        clay_str_init(&question);
+        clay_str_printf(&question, "Run the configured auto-test command after edits this session? $ %s",
+                        commands->auto_test_command);
+        int allow = clay_app_confirm(commands->app, question.data, 1);
+        clay_str_free(&question);
+        commands->auto_test_choice = allow ? CLAY_AUTO_TEST_ALLOWED : CLAY_AUTO_TEST_DENIED;
+    }
+    if (commands->auto_test_choice != CLAY_AUTO_TEST_ALLOWED) return;
+
+    ClayTask *task = clay_app_task_start(commands->app, "$ %s", commands->auto_test_command);
+    ClayStr output;
+    clay_str_init(&output);
+    int exit_code = -1;
+    int truncated = 0;
+    char *workspace_dir = clay_term_cwd();
+    char *scratch_dir = clay_chat_scratch_dir(commands->chat);
+    ClaySandboxConfig sandbox = {
+        .mode = commands->sandbox_mode,
+        .access = commands->sandbox_access,
+        .workspace_dir = workspace_dir,
+        .scratch_dir = scratch_dir,
+    };
+    int rc = clay_sandbox_exec(&sandbox, commands->auto_test_command, &output, CLAY_SHELL_OUTPUT_LIMIT, &exit_code,
+                               &truncated);
+    free(workspace_dir);
+    free(scratch_dir);
+
+    if (rc == 0 && exit_code == 0) {
+        clay_app_task_success(commands->app, task, "passed");
+    } else {
+        clay_app_task_fail(commands->app, task, "exit %d", exit_code);
+        clay_json_object_set(result, "auto_test_failed", clay_json_bool(1));
+        clay_json_object_set(result, "auto_test_command", clay_json_string(commands->auto_test_command));
+        clay_json_object_set(result, "auto_test_output", clay_json_string(output.data));
+    }
+    clay_str_free(&output);
+}
+
 static ClayJson *denied_result(void) {
     ClayJson *result = clay_json_object();
     clay_json_object_set(result, "ok", clay_json_bool(0));
@@ -84,7 +133,9 @@ static ClayJson *write_tool_checkpointed(const ClayJson *arguments, void *userda
     clay_str_printf(&label, "write: %s", path && *path ? path : "?");
     checkpoint_before(userdata, label.data);
     clay_str_free(&label);
-    return clay_fs_tool_write(arguments, userdata);
+    ClayJson *result = clay_fs_tool_write(arguments, userdata);
+    run_auto_test(userdata, result);
+    return result;
 }
 
 static ClayJson *edit_tool_checkpointed(const ClayJson *arguments, void *userdata) {
@@ -96,7 +147,9 @@ static ClayJson *edit_tool_checkpointed(const ClayJson *arguments, void *userdat
     clay_str_printf(&label, "edit: %s", path && *path ? path : "?");
     checkpoint_before(userdata, label.data);
     clay_str_free(&label);
-    return clay_fs_tool_edit(arguments, userdata);
+    ClayJson *result = clay_fs_tool_edit(arguments, userdata);
+    run_auto_test(userdata, result);
+    return result;
 }
 
 static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {

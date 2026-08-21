@@ -49,6 +49,14 @@ typedef enum {
     CLAY_MODE_PLAN,
 } ClayCommandsMode;
 
+/* Whether the user has agreed to let the configured auto-test command run
+   after edits, asked once per session (not once per edit). */
+typedef enum {
+    CLAY_AUTO_TEST_UNASKED,
+    CLAY_AUTO_TEST_ALLOWED,
+    CLAY_AUTO_TEST_DENIED,
+} ClayAutoTestChoice;
+
 struct ClayCommands {
     ClayApp *app;
     int running;
@@ -73,6 +81,8 @@ struct ClayCommands {
     ClayArray mcp_servers;   /* ClayMcpServer*, connected for the life of the session */
     ClayArray mcp_bindings;  /* ClayMcpToolBinding, one per discovered MCP tool */
     int mcp_connect_attempted;
+    char *auto_test_command; /* "" if unset */
+    ClayAutoTestChoice auto_test_choice;
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands, const char *id);
@@ -99,6 +109,7 @@ void clay_commands_clear_todos(ClayCommands *commands);
    a server that fails to connect is skipped with a warning, not fatal. */
 void clay_commands_connect_mcp_servers(ClayCommands *commands);
 void clay_cmd_mcp(const char *args, void *user_data);
+void clay_cmd_autotest(const char *args, void *user_data);
 void clay_commands_new_chat(ClayCommands *commands);
 const ClayReasoningEffort *clay_commands_reasoning_effort(const ClayCommands *commands);
 size_t clay_commands_reasoning_effort_count(void);

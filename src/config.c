@@ -287,3 +287,14 @@ int clay_config_set_auto_approve(const char *category, int value) {
     clay_str_free(&key);
     return save_selection_root(root);
 }
+
+char *clay_config_auto_test_command(void) {
+    ClayJson *root = load_selection_root();
+    char *command = string_field(root, "auto_test_command", "");
+    clay_json_free(root);
+    return command;
+}
+
+int clay_config_set_auto_test_command(const char *command) {
+    return set_string_field("auto_test_command", command);
+}

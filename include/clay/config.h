@@ -45,4 +45,10 @@ int clay_config_set_sandbox_access(const char *access);
 int clay_config_auto_approve(const char *category);
 int clay_config_set_auto_approve(const char *category, int value);
 
+/* Shell command run after a successful write/edit (e.g. "make test",
+   "npm run lint"), with output reported back to the model on failure.
+   Malloc'd; "" if unset. */
+char *clay_config_auto_test_command(void);
+int clay_config_set_auto_test_command(const char *command);
+
 #endif /* CLAY_CONFIG_H */
