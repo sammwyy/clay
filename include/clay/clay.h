@@ -1,0 +1,16 @@
+#ifndef CLAY_H
+#define CLAY_H
+
+#include "clay/mm.h"
+#include "clay/color.h"
+#include "clay/term.h"
+#include "clay/render.h"
+#include "clay/box.h"
+#include "clay/list.h"
+#include "clay/task.h"
+#include "clay/below.h"
+#include "clay/prompt.h"
+#include "clay/command.h"
+#include "clay/app.h"
+
+#endif /* CLAY_H */

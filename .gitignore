@@ -1,0 +1,7 @@
+/build/
+/bin/
+/build-win/
+/bin-win/
+*.o
+*.d
+*.exe

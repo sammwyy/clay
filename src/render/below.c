@@ -1,0 +1,265 @@
+#include "clay/below.h"
+
+#include "clay/array.h"
+#include "clay/color.h"
+#include "clay/term.h"
+
+#include <pthread.h>
+#include <stdio.h>
+#include <string.h>
+
+#define CLAY_BELOW_ID_MAX 64
+#define CLAY_BELOW_TEXT_MAX 256
+#define CLAY_BELOW_MAX_MODULES 64
+#define CLAY_BELOW_SPINNER_FRAMES 10
+#define CLAY_BELOW_INPUT_MAX 2048
+
+typedef struct {
+    char id[CLAY_BELOW_ID_MAX];
+    char text[CLAY_BELOW_TEXT_MAX];
+    ClayBelowState state;
+    int enabled;
+    int index;
+} ClayBelowModule;
+
+static const char *SPINNER_FRAMES[CLAY_BELOW_SPINNER_FRAMES] = {
+    "\xe2\xa0\x8b", "\xe2\xa0\x99", "\xe2\xa0\xb9", "\xe2\xa0\xb8", "\xe2\xa0\xbc",
+    "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f"
+};
+
+static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static ClayArray g_modules;
+static int g_modules_ready = 0;
+
+static char g_last_input[CLAY_BELOW_INPUT_MAX] = "";
+static int g_last_line_count = 0;
+static int g_max_rows_established = 1; /* rows below the prompt ever created via a real '\n' */
+static int g_spinner_frame = 0;
+static int g_editing = 0;
+
+static pthread_t g_animator;
+static int g_animator_started = 0;
+
+static void ensure_modules(void) {
+    if (!g_modules_ready) {
+        clay_array_init(&g_modules, sizeof(ClayBelowModule));
+        g_modules_ready = 1;
+    }
+}
+
+static ClayBelowModule *find_module(const char *id) {
+    for (size_t i = 0; i < g_modules.count; i++) {
+        ClayBelowModule *m = clay_array_get(&g_modules, i);
+        if (strcmp(m->id, id) == 0) return m;
+    }
+    return NULL;
+}
+
+static int has_loading_module(void) {
+    for (size_t i = 0; i < g_modules.count; i++) {
+        ClayBelowModule *m = clay_array_get(&g_modules, i);
+        if (m->enabled && m->state == CLAY_BELOW_LOADING) return 1;
+    }
+    return 0;
+}
+
+/* Sorted, enabled-only view: fills `order` with indices into g_modules,
+   ascending by .index, stable on ties. Small N, plain insertion sort. */
+static int sorted_enabled_indices(int *order) {
+    int count = 0;
+    size_t n = g_modules.count;
+    if (n > CLAY_BELOW_MAX_MODULES) n = CLAY_BELOW_MAX_MODULES;
+
+    for (size_t i = 0; i < n; i++) {
+        ClayBelowModule *m = clay_array_get(&g_modules, i);
+        if (m->enabled) order[count++] = (int)i;
+    }
+
+    for (int i = 1; i < count; i++) {
+        int key = order[i];
+        ClayBelowModule *km = clay_array_get(&g_modules, (size_t)key);
+        int j = i - 1;
+        while (j >= 0) {
+            ClayBelowModule *jm = clay_array_get(&g_modules, (size_t)order[j]);
+            if (jm->index <= km->index) break;
+            order[j + 1] = order[j];
+            j--;
+        }
+        order[j + 1] = key;
+    }
+    return count;
+}
+
+static void print_module_inline(const ClayBelowModule *m) {
+    switch (m->state) {
+        case CLAY_BELOW_LOADING:
+            printf("%s%s%s ", clay_color(CLAY_YELLOW), SPINNER_FRAMES[g_spinner_frame], clay_color(CLAY_RESET));
+            break;
+        case CLAY_BELOW_FINISHED:
+            printf("%s%s%s ", clay_color(CLAY_GREEN), CLAY_ICON_CHECK, clay_color(CLAY_RESET));
+            break;
+        case CLAY_BELOW_IDLE:
+            printf("%s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_SLEEP, clay_color(CLAY_RESET));
+            break;
+        case CLAY_BELOW_NONE:
+        default:
+            break;
+    }
+    printf("%s%s%s", clay_color(CLAY_GRAY), m->text, clay_color(CLAY_RESET));
+}
+
+/* Cursor rests at row 0 col 0 between calls. Rows that already exist use
+   cursor-down (never scrolls); new rows use a real '\n' (scrolls if row 0
+   is at the bottom). Using '\n' on an existing row double-scrolls and
+   walks the block up the screen. */
+static void render_locked(void) {
+    ensure_modules();
+
+    fputc('\r', stdout);
+    clay_term_clear_line();
+    printf("%s%s>%s %s", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET), g_last_input);
+
+    int order[CLAY_BELOW_MAX_MODULES];
+    int count = sorted_enabled_indices(order);
+    int total_now = count > 0 ? 2 : 1;
+
+    int rows_to_visit = total_now > g_last_line_count ? total_now : g_last_line_count;
+
+    for (int row = 1; row < rows_to_visit; row++) {
+        if (row < g_max_rows_established) {
+            clay_term_cursor_down(1);
+        } else {
+            fputc('\n', stdout);
+            g_max_rows_established = row + 1;
+        }
+        fputc('\r', stdout);
+        clay_term_clear_line();
+
+        if (row == 1 && row < total_now) {
+            fputs("  ", stdout);
+            for (int k = 0; k < count; k++) {
+                if (k > 0) printf(" %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT, clay_color(CLAY_RESET));
+                print_module_inline(clay_array_get(&g_modules, (size_t)order[k]));
+            }
+        }
+    }
+
+    if (rows_to_visit > 1) clay_term_cursor_up(rows_to_visit - 1);
+    clay_term_cursor_col(2 + (int)clay_utf8_width(g_last_input));
+
+    g_last_line_count = total_now;
+    fflush(stdout);
+}
+
+static void *animator_loop(void *arg) {
+    (void)arg;
+    for (;;) {
+        clay_term_sleep_ms(80);
+        pthread_mutex_lock(&g_lock);
+        if (g_editing && has_loading_module()) {
+            g_spinner_frame = (g_spinner_frame + 1) % CLAY_BELOW_SPINNER_FRAMES;
+            render_locked();
+        }
+        pthread_mutex_unlock(&g_lock);
+    }
+    return NULL;
+}
+
+static void ensure_animator(void) {
+    if (!g_animator_started) {
+        g_animator_started = 1;
+        pthread_create(&g_animator, NULL, animator_loop, NULL);
+        pthread_detach(g_animator);
+    }
+}
+
+void clay_below_add(int index, const char *id) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+
+    ClayBelowModule *existing = find_module(id);
+    if (existing) {
+        existing->index = index;
+    } else {
+        ClayBelowModule m;
+        strncpy(m.id, id, sizeof(m.id) - 1);
+        m.id[sizeof(m.id) - 1] = '\0';
+        m.text[0] = '\0';
+        m.state = CLAY_BELOW_NONE;
+        m.enabled = 1;
+        m.index = index;
+        clay_array_push_val(&g_modules, &m);
+    }
+
+    ensure_animator();
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_set_text(const char *id, const char *content) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) {
+        strncpy(m->text, content, sizeof(m->text) - 1);
+        m->text[sizeof(m->text) - 1] = '\0';
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_set_state(const char *id, ClayBelowState state) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) m->state = state;
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_set_enabled(const char *id, int enabled) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) m->enabled = enabled;
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_reorder(const char *id, int index) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) m->index = index;
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_set_editing(int editing) {
+    pthread_mutex_lock(&g_lock);
+    g_editing = editing;
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_render(const char *input) {
+    pthread_mutex_lock(&g_lock);
+    strncpy(g_last_input, input, sizeof(g_last_input) - 1);
+    g_last_input[sizeof(g_last_input) - 1] = '\0';
+    render_locked();
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_finish(void) {
+    pthread_mutex_lock(&g_lock);
+    /* Prompt row stays as history; modules row is ephemeral, erase it. */
+    if (g_last_line_count > 1) {
+        for (int i = 1; i < g_last_line_count; i++) {
+            clay_term_cursor_down(1);
+            fputc('\r', stdout);
+            clay_term_clear_line();
+        }
+    } else {
+        fputc('\n', stdout);
+    }
+    fflush(stdout);
+    g_last_line_count = 0;
+    g_max_rows_established = 1;
+    g_last_input[0] = '\0';
+    pthread_mutex_unlock(&g_lock);
+}

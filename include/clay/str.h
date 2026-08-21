@@ -1,0 +1,22 @@
+#ifndef CLAY_STR_H
+#define CLAY_STR_H
+
+#include <stddef.h>
+
+/* Growable string buffer. data is always NUL-terminated and safe to use
+   as a plain C string. */
+typedef struct {
+    char *data;
+    size_t len;
+    size_t cap;
+} ClayStr;
+
+void clay_str_init(ClayStr *s);
+void clay_str_free(ClayStr *s);
+void clay_str_clear(ClayStr *s);
+void clay_str_push_char(ClayStr *s, char c);
+void clay_str_push(ClayStr *s, const char *text);
+void clay_str_push_n(ClayStr *s, const char *text, size_t len);
+void clay_str_printf(ClayStr *s, const char *fmt, ...);
+
+#endif /* CLAY_STR_H */
