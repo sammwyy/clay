@@ -22,27 +22,27 @@ BUILD_DIR := build
 BIN_DIR   := bin
 TARGET    := $(BIN_DIR)/clay
 
-# Test files have their own main() and are excluded from the main binary.
-SRC      := $(filter-out src/test_openai.c src/test_cli.c src/test_chat.c src/test_uuid.c,$(shell find src -name '*.c'))
+# Test files live in tests/ and have their own main().
+SRC      := $(shell find src -name '*.c')
 OBJ      := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))
 DEP      := $(OBJ:.o=.d)
 
-TEST_SRC    := src/test_openai.c
-TEST_OBJ    := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(TEST_SRC))
+TEST_SRC    := tests/test_openai.c
+TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(TEST_SRC))
 TEST_TARGET := $(BIN_DIR)/test_openai
 # Everything test_openai.c needs except clay's own main().
 LIB_OBJ     := $(filter-out $(BUILD_DIR)/main.o,$(OBJ))
 
-CLI_TEST_SRC    := src/test_cli.c
-CLI_TEST_OBJ    := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(CLI_TEST_SRC))
+CLI_TEST_SRC    := tests/test_cli.c
+CLI_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(CLI_TEST_SRC))
 CLI_TEST_TARGET := $(BIN_DIR)/test_cli
 
-CHAT_TEST_SRC    := src/test_chat.c
-CHAT_TEST_OBJ    := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(CHAT_TEST_SRC))
+CHAT_TEST_SRC    := tests/test_chat.c
+CHAT_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(CHAT_TEST_SRC))
 CHAT_TEST_TARGET := $(BIN_DIR)/test_chat
 
-UUID_TEST_SRC    := src/test_uuid.c
-UUID_TEST_OBJ    := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(UUID_TEST_SRC))
+UUID_TEST_SRC    := tests/test_uuid.c
+UUID_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(UUID_TEST_SRC))
 UUID_TEST_TARGET := $(BIN_DIR)/test_uuid
 
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
@@ -88,6 +88,10 @@ $(UUID_TEST_TARGET): $(LIB_OBJ) $(UUID_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(UUID_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/tests/%.o: tests/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 

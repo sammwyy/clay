@@ -17,10 +17,10 @@ src/render/         drawing primitives, built on mm + term
 src/render/modals/  purpose-built composite interactive widgets, built on render
 src/commands/       command registry, handlers, and agent session state
 src/main.c          process bootstrap and input loop
-src/test_openai.c   standalone harness for the OpenAI provider (see "Backend")
+tests/test_*.c      standalone test harnesses
 ```
 
-Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` and `chat` depend on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - they only persist local data. `cli/` depends on `mm` and `term`. `render` depends on `mm` and `term`. `commands` is the integration layer over render/config/chat/providers. `main.c` only owns process startup and the input loop; `test_openai.c` is a separate provider/http harness.
+Each layer only depends on the layers listed above it. `mm` depends on nothing else in the project. `json` depends only on `mm`. `http` depends on `mm` and libcurl, not on `json` - it's a generic transport, agnostic of what's riding on it. `providers/` depends on `mm`, `json`, and `http`. `config` and `chat` depend on `mm`, `json`, and `term` (for the home directory and file permissions - see below), not on `http`/`providers` - they only persist local data. `cli/` depends on `mm` and `term`. `render` depends on `mm` and `term`. `commands` is the integration layer over render/config/chat/providers. `main.c` only owns process startup and the input loop; `tests/test_openai.c` is a separate provider/http harness.
 
 ### `src/mm/` — memory
 
@@ -43,7 +43,7 @@ A thin wrapper over libcurl's easy interface - the only place in the project tha
 
 - `openai.c` — talks to any OpenAI-compatible endpoint: `GET /models` returns every model id for the connected account, while `/chat/completions` handles streaming responses (SSE, parsed line-by-line as chunks arrive in `on_http_chunk`, since a chunk boundary can land mid-line), final input/output token usage when supplied by the provider, JSON tool calls (accumulated across streamed deltas by their `index`, since the API sends id/name/argument-fragments as separate events), and the tool-call loop (`clay_openai_run` appends the assistant's tool-call message and each tool's result to `messages`, then resends the conversation, up to `max_rounds`, until the model answers with plain content and no further tool calls).
 
-`src/test_openai.c` is a standalone binary (`bin/test_openai`, the Makefile's `test-openai` target) that exercises streaming and tool calls against a real endpoint. It reads `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` from the environment so a token never ends up in argv or committed code. It's excluded from the main `clay` binary (both define `main`).
+`tests/test_openai.c` is a standalone binary (`bin/test_openai`, the Makefile's `test-openai` target) that exercises streaming and tool calls against a real endpoint. It reads `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` from the environment so a token never ends up in argv or committed code. Test sources are outside the production source tree and are never linked into the main `clay` binary.
 
 ### `src/config.c` — saved provider credentials
 
