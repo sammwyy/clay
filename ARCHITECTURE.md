@@ -35,7 +35,7 @@ An opaque `ClayJson` value tree (null/bool/number/string/array/object), built on
 
 ### `src/http.c` — HTTP client
 
-A thin wrapper over libcurl's easy interface - the only place in the project that links a third-party library, and only dynamically (`-lcurl`, never bundled/static; see CODESTYLE.md). `clay_http_request` runs synchronously on the calling thread; a streaming response is read via a caller-supplied `on_chunk` callback (raw bytes, not line-buffered) instead of being accumulated whole, since a chat completion can stay open for a while. Callers needing whole lines (SSE) do their own buffering - see `providers/openai.c`.
+A thin wrapper over libcurl's easy interface - the only place in the project that links a third-party library, and only dynamically (`-lcurl`, never bundled/static; see CODESTYLE.md). `clay_http_request` runs synchronously on the calling thread; a streaming response is read via a caller-supplied `on_chunk` callback (raw bytes, not line-buffered) instead of being accumulated whole, since a chat completion can stay open for a while. Its optional progress callback can abort an in-flight transfer. Callers needing whole lines (SSE) do their own buffering - see `providers/openai.c`.
 
 ### `src/providers/` — LLM provider clients
 
@@ -53,7 +53,7 @@ Persists a `ClayProviderConfig {id, apikey, base_url}` per provider as `~/.clay/
 
 ### `src/render/` — drawing primitives
 
-- `term.c` — the only platform-aware file. Cursor movement, raw mode, key reading (`ClayKey`), color enable/disable (`clay_color`, `NO_COLOR` handling), UTF-8-aware width, OSC 8 hyperlinks, `clay_term_row_enter` (the shared safe-redraw primitive, see CODESTYLE.md), bounded shell execution with dynamically collected output, and the small OS-specific primitives other layers need (`clay_term_home_dir`, `clay_term_mkdir`, `clay_term_restrict_file`) rather than letting them spread their own `#ifdef _WIN32`.
+- `term.c` — the only platform-aware file. Cursor movement, raw mode, key reading (`ClayKey`, including timed Escape parsing), color enable/disable (`clay_color`, `NO_COLOR` handling), UTF-8-aware width, OSC 8 hyperlinks, `clay_term_row_enter` (the shared safe-redraw primitive, see CODESTYLE.md), bounded shell execution with dynamically collected output, and the small OS-specific primitives other layers need (`clay_term_home_dir`, `clay_term_mkdir`, `clay_term_restrict_file`) rather than letting them spread their own `#ifdef _WIN32`.
 - `box.c` — bordered boxes with per-line text/border colors.
 - `banner.c` — the startup banner, built on `box.c`.
 - `list.c` — the `◆ clay` response prefix (`clay_say`/`clay_sayc`), incremental streamed assistant replies (`clay_response_begin`/`write`/`end`), plan/list rendering (`clay_list_step`), bullets.
@@ -71,7 +71,7 @@ Purpose-built interactive widgets that combine several `render/` primitives into
 
 - `command.c` — parses one line of input into a command (`/name args...`, dispatched by name via `ClayMap`) or a plain message (`ClayInput`), and holds the registry of registered command handlers.
 - `app.c` — `ClayApp`: a small state machine (`IDLE` / `BUSY` / `PROMPTING` / `EXITING`) with a listener hook. Command handlers never call `render/` functions directly — they call `clay_app_say`, `clay_app_task_start`, `clay_app_select`, etc., which update `ClayApp`'s state *and then* delegate to the matching render function. This keeps "what's happening" (state) and "how it looks" (ANSI output) in sync by construction, and is the seam a future agent daemon would drive through instead of writing to the terminal directly.
-- `context.c` — owns the command session: saved/connected providers, model and reasoning selection, conversation history, token counters, and the below-prompt modules. `message.c` owns the normal-message OpenAI streaming/tool loop against that state.
+- `context.c` — owns the command session: saved/connected providers, model and reasoning selection, conversation history, token counters, and the below-prompt modules. `message.c` owns the normal-message OpenAI streaming/tool loop against that state, including Escape-driven request cancellation.
 - `register.c` is the one registry wiring point. Every slash-command handler lives in its own file (`help.c`, `exit.c`, `connect.c`, `model.c`, `effort.c`, `demo.c`, and the remaining command-named files), so a command's UI and behavior are changed together without growing `main.c`.
 
 ### `src/main.c`

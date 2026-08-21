@@ -386,10 +386,13 @@ void clay_below_status_refresh_below(void) {
 void clay_below_status_prepare_prompt(void) {
     pthread_mutex_lock(&g_lock);
     if (g_status_only) {
+        clay_term_cursor_col(0);
         clay_term_cursor_down(1);
         clay_term_insert_line();
+        clay_term_cursor_col(0);
         clay_term_cursor_down(1);
         clay_term_insert_line();
+        clay_term_cursor_col(0);
         g_status_only = 0;
         g_last_line_count = 0;
         g_max_rows_established = 2;

@@ -110,6 +110,7 @@ typedef struct {
     ClayStr content;
     ClayArray tool_calls; /* ClayToolCallAccum */
     const ClayOpenAICallbacks *callbacks;
+    int cancelled;
 } ClayStreamState;
 
 static void stream_state_init(ClayStreamState *st, const ClayOpenAICallbacks *callbacks) {
@@ -118,6 +119,7 @@ static void stream_state_init(ClayStreamState *st, const ClayOpenAICallbacks *ca
     clay_str_init(&st->content);
     clay_array_init(&st->tool_calls, sizeof(ClayToolCallAccum));
     st->callbacks = callbacks;
+    st->cancelled = 0;
 }
 
 static void stream_state_free(ClayStreamState *st) {
@@ -221,6 +223,13 @@ static int on_http_chunk(const char *data, size_t len, void *userdata) {
     }
 
     return 0;
+}
+
+static int should_abort_stream(void *userdata) {
+    ClayStreamState *st = userdata;
+    if (!st->callbacks || !st->callbacks->should_abort) return 0;
+    st->cancelled = st->callbacks->should_abort(st->callbacks->userdata);
+    return st->cancelled;
 }
 
 static ClayStr build_request_body(ClayOpenAI *client, const ClayJson *messages, const ClayTool *tools,
@@ -356,6 +365,8 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages, const ClayTool *tool
         req.body_len = body.len;
         req.on_chunk = on_http_chunk;
         req.userdata = &st;
+        req.should_abort = should_abort_stream;
+        req.abort_userdata = &st;
 
         ClayHttpResponse resp;
         int rc = clay_http_request(&req, &resp);
@@ -364,6 +375,11 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages, const ClayTool *tool
         clay_str_free(&auth);
         clay_str_free(&body);
 
+        if (st.cancelled) {
+            clay_http_response_free(&resp);
+            stream_state_free(&st);
+            return 1;
+        }
         if (rc != 0 || resp.status < 200 || resp.status >= 300) {
             if (callbacks && callbacks->on_error) callbacks->on_error(resp.status, st.raw.data, callbacks->userdata);
             clay_http_response_free(&resp);

@@ -252,6 +252,7 @@ static char *interactive_prompt_line(void) {
     int history_pos = -1; /* -1 = editing a fresh line, not browsing history */
     int got_eof = 0;
     int interrupted = 0;
+    int clear_armed = 0;
 
     int pending_valid = 0; /* a key already read while scanning a burst, not yet handled */
     ClayKey pending_key = CLAY_KEY_CHAR;
@@ -269,7 +270,18 @@ static char *interactive_prompt_line(void) {
             ch = pending_ch;
             pending_valid = 0;
         } else {
-            key = clay_term_read_key(&ch);
+            key = clear_armed ? clay_term_read_key_timeout(&ch, 1000) : clay_term_read_key(&ch);
+        }
+
+        if (key == CLAY_KEY_NONE) {
+            clear_armed = 0;
+            clay_below_set_enabled("hint", 0);
+            clay_below_render(buf.data, cursor);
+            continue;
+        }
+        if (clear_armed && key != CLAY_KEY_ESCAPE) {
+            clear_armed = 0;
+            clay_below_set_enabled("hint", 0);
         }
 
         if (key == CLAY_KEY_ENTER) {
@@ -277,9 +289,23 @@ static char *interactive_prompt_line(void) {
         } else if (key == CLAY_KEY_INTERRUPT) {
             interrupted = 1;
             break;
-        } else if (key == CLAY_KEY_INTERRUPT || key == CLAY_KEY_EOF) {
+        } else if (key == CLAY_KEY_EOF) {
             got_eof = 1;
             break;
+        } else if (key == CLAY_KEY_ESCAPE) {
+            if (buf.len == 0) continue;
+            if (clear_armed) {
+                clay_str_clear(&buf);
+                paste_blocks_free(&blocks);
+                cursor = 0;
+                history_pos = -1;
+                clear_armed = 0;
+                clay_below_set_enabled("hint", 0);
+            } else {
+                clear_armed = 1;
+                clay_below_set_text("hint", "Press ESC again to clear input");
+                clay_below_set_enabled("hint", 1);
+            }
         } else if (key == CLAY_KEY_BACKSPACE) {
             prompt_backspace(&buf, &blocks, &cursor);
             history_pos = -1;
@@ -342,6 +368,7 @@ static char *interactive_prompt_line(void) {
         clay_below_render(buf.data, cursor);
     }
 
+    clay_below_set_enabled("hint", 0);
     clay_below_set_editing(0);
     clay_below_finish();
     clay_term_raw_disable();

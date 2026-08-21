@@ -12,6 +12,7 @@ typedef struct {
    boundary - callers needing whole lines buffer it themselves (see
    providers/openai.c). Return non-zero to abort the transfer. */
 typedef int (*ClayHttpChunkFn)(const char *data, size_t len, void *userdata);
+typedef int (*ClayHttpAbortFn)(void *userdata);
 
 typedef struct {
     const char *method; /* "GET", "POST", ... */
@@ -22,6 +23,8 @@ typedef struct {
     size_t body_len;
     ClayHttpChunkFn on_chunk; /* NULL to buffer the whole response into ClayHttpResponse instead */
     void *userdata;
+    ClayHttpAbortFn should_abort;
+    void *abort_userdata;
     int timeout_seconds; /* 0 = no timeout; streaming responses can run long */
 } ClayHttpRequest;
 

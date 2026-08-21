@@ -49,6 +49,7 @@ void clay_term_hyperlink(const char *url, const char *text);
 void clay_term_hyperlink_file(const char *path);
 
 typedef enum {
+    CLAY_KEY_NONE,
     CLAY_KEY_CHAR,
     CLAY_KEY_ENTER,
     CLAY_KEY_BACKSPACE,
@@ -72,6 +73,8 @@ int clay_term_take_interrupt(void);
 /* Reads one key in raw mode; *ch_out (if set) receives the char for
    CLAY_KEY_CHAR. */
 ClayKey clay_term_read_key(char *ch_out);
+ClayKey clay_term_read_key_timeout(char *ch_out, int timeout_ms);
+int clay_term_take_escape(void);
 
 /* True if another byte is already sitting in stdin's input buffer, i.e.
    a follow-up read won't block. A paste lands in that buffer all at

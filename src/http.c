@@ -12,6 +12,16 @@ typedef struct {
     void *userdata;
 } ClayHttpWriteCtx;
 
+static int progress_cb(void *userdata, curl_off_t total_download, curl_off_t downloaded,
+                       curl_off_t total_upload, curl_off_t uploaded) {
+    (void)total_download;
+    (void)downloaded;
+    (void)total_upload;
+    (void)uploaded;
+    const ClayHttpRequest *req = userdata;
+    return req->should_abort && req->should_abort(req->abort_userdata);
+}
+
 static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
     ClayHttpWriteCtx *ctx = userdata;
     size_t len = size * nmemb;
@@ -61,6 +71,11 @@ int clay_http_request(const ClayHttpRequest *req, ClayHttpResponse *response) {
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    if (req->should_abort) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_cb);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, req);
+    }
     if (req->timeout_seconds > 0) {
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)req->timeout_seconds);
     }

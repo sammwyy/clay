@@ -173,6 +173,8 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     clay_below_set_enabled("status", 0);
     clay_below_add(1, "model");
     clay_below_add(2, "tokens");
+    clay_below_add(3, "hint");
+    clay_below_set_enabled("hint", 0);
     clay_commands_set_tokens_below(commands, 0, 0);
     clay_commands_update_selected_below(commands);
     return commands;

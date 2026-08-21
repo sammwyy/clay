@@ -181,6 +181,7 @@ static void on_tool_call(const char *name, const char *arguments_json, void *use
     (void)arguments_json;
     ClayConversationStream *stream = userdata;
     close_response_for_tool(stream);
+    if (clay_term_is_interactive()) clay_term_raw_disable();
     ClayStr label;
     clay_str_init(&label);
     tool_label(&label, name, 0, 0);
@@ -207,6 +208,7 @@ static void on_tool_result(const char *name, const ClayJson *result, void *userd
         stream->tool_task = NULL;
     } else clay_sayc(ok ? CLAY_GREEN : CLAY_RED, "%s: %s", ok ? "Executed" : "Failed", name);
     print_tool_output(result, !inline_command);
+    if (clay_term_is_interactive()) clay_term_raw_enable();
     show_thinking(stream);
 }
 
@@ -266,6 +268,11 @@ static void on_usage(long input_tokens, long output_tokens, void *userdata) {
     stream->has_usage = 1;
 }
 
+static int should_abort(void *userdata) {
+    (void)userdata;
+    return clay_term_take_escape();
+}
+
 int clay_commands_run_message(ClayCommands *commands, const char *input) {
     if (!commands->selected_provider || !commands->selected_model) {
         clay_sayc(CLAY_RED, "Select a provider and model with /model before sending a message.");
@@ -281,7 +288,14 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     ClayOpenAI *client = clay_openai_create(provider->config->base_url, provider->config->apikey, commands->selected_model);
     clay_openai_set_reasoning_effort(client, clay_commands_reasoning_effort(commands)->id);
     ClayConversationStream stream = {0};
-    ClayOpenAICallbacks callbacks = {on_token, on_tool_call, on_tool_result, on_usage, on_error, &stream};
+    ClayOpenAICallbacks callbacks = {0};
+    callbacks.on_token = on_token;
+    callbacks.on_tool_call = on_tool_call;
+    callbacks.on_tool_result = on_tool_result;
+    callbacks.on_usage = on_usage;
+    callbacks.on_error = on_error;
+    callbacks.should_abort = should_abort;
+    callbacks.userdata = &stream;
     commands->messages_sent++;
     struct timespec started_at;
     clock_gettime(CLOCK_MONOTONIC, &started_at);
@@ -289,13 +303,28 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_app_set_state(commands->app, CLAY_APP_BUSY);
     ClayJson *schema = shell_exec_schema();
     ClayTool tools[] = {{"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.", schema, shell_exec_tool, NULL}};
+    if (clay_term_is_interactive()) clay_term_raw_enable();
     int rc = clay_openai_run(client, messages, tools, 1, 8, &callbacks);
+    if (clay_term_is_interactive()) clay_term_raw_disable();
     clay_json_free(schema);
     clay_openai_destroy(client);
     struct timespec finished_at;
     clock_gettime(CLOCK_MONOTONIC, &finished_at);
     double seconds = (double)(finished_at.tv_sec - started_at.tv_sec) + (double)(finished_at.tv_nsec - started_at.tv_nsec) / 1e9;
-    if (stream.response_active) clay_response_end();
+    int had_response = stream.response_active;
+    if (had_response) clay_response_end();
+    if (rc == 1) {
+        clay_json_free(messages);
+        if (had_response && stream.status_visible) {
+            clay_below_status_finish_output();
+            stream.status_visible = 0;
+        } else {
+            hide_status(&stream);
+        }
+        clay_sayc(CLAY_YELLOW, "Operation aborted by user.");
+        clay_app_set_state(commands->app, CLAY_APP_IDLE);
+        return 0;
+    }
     if (rc == 0) {
         clay_json_free(commands->conversation);
         commands->conversation = messages;

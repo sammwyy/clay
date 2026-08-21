@@ -23,6 +23,7 @@
 #endif
 
 static volatile sig_atomic_t g_interrupted = 0;
+static int g_pending_escape = 0;
 
 #ifndef _WIN32
 static void handle_sigint(int signal_number) {
@@ -281,6 +282,10 @@ int clay_term_take_interrupt(void) {
 }
 
 ClayKey clay_term_read_key(char *ch_out) {
+    if (g_pending_escape) {
+        g_pending_escape = 0;
+        return CLAY_KEY_ESCAPE;
+    }
 #ifdef _WIN32
     int c = _getch();
     if (c == EOF) return CLAY_KEY_EOF;
@@ -311,8 +316,23 @@ ClayKey clay_term_read_key(char *ch_out) {
 
     if (c == 0x1b) {
         unsigned char seq[2];
-        if (read(STDIN_FILENO, &seq[0], 1) <= 0) return CLAY_KEY_ESCAPE;
-        if (read(STDIN_FILENO, &seq[1], 1) <= 0) return CLAY_KEY_ESCAPE;
+        fd_set fds;
+        struct timeval timeout = {0, 20000};
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &timeout) <= 0 || read(STDIN_FILENO, &seq[0], 1) <= 0) {
+            return CLAY_KEY_ESCAPE;
+        }
+        if (seq[0] == 0x1b) {
+            g_pending_escape = 1;
+            return CLAY_KEY_ESCAPE;
+        }
+        timeout.tv_usec = 20000;
+        FD_ZERO(&fds);
+        FD_SET(STDIN_FILENO, &fds);
+        if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &timeout) <= 0 || read(STDIN_FILENO, &seq[1], 1) <= 0) {
+            return CLAY_KEY_ESCAPE;
+        }
         if (seq[0] == '[') {
             switch (seq[1]) {
                 case 'A': return CLAY_KEY_UP;
@@ -327,6 +347,33 @@ ClayKey clay_term_read_key(char *ch_out) {
     if (ch_out) *ch_out = (char)c;
     return CLAY_KEY_CHAR;
 #endif
+}
+
+ClayKey clay_term_read_key_timeout(char *ch_out, int timeout_ms) {
+    if (g_pending_escape) return clay_term_read_key(ch_out);
+#ifdef _WIN32
+    int elapsed = 0;
+    while (!_kbhit()) {
+        if (elapsed >= timeout_ms) return CLAY_KEY_NONE;
+        Sleep(10);
+        elapsed += 10;
+    }
+#else
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    struct timeval timeout = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+    int ready = select(STDIN_FILENO + 1, &fds, NULL, NULL, &timeout);
+    if (ready == 0) return CLAY_KEY_NONE;
+    if (ready < 0 && errno == EINTR && g_interrupted) return CLAY_KEY_INTERRUPT;
+    if (ready < 0) return CLAY_KEY_NONE;
+#endif
+    return clay_term_read_key(ch_out);
+}
+
+int clay_term_take_escape(void) {
+    if (!clay_term_input_pending()) return 0;
+    return clay_term_read_key(NULL) == CLAY_KEY_ESCAPE;
 }
 
 int clay_term_input_pending(void) {
