@@ -95,6 +95,10 @@ void clay_term_row_enter(int row, int *established);
 /* $HOME, or %USERPROFILE% on Windows. Malloc'd; NULL if unset. */
 char *clay_term_home_dir(void);
 
+/* Human-readable OS name/version, e.g. "Fedora Linux 41" or "Windows".
+   Malloc'd, never NULL. */
+char *clay_term_platform_name(void);
+
 /* Current working directory, absolute. Malloc'd; NULL on failure. */
 char *clay_term_cwd(void);
 

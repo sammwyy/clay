@@ -12,9 +12,13 @@ int main(void) {
     assert(home);
     assert(setenv("HOME", home, 1) == 0);
 
-    ClayChat *chat = clay_chat_create();
+    ClayChat *chat = clay_chat_create("you are clay");
     assert(chat);
     char *id = strdup(clay_chat_id(chat));
+    assert(strcmp(clay_chat_system_prompt(chat), "you are clay") == 0);
+    assert(strcmp(clay_chat_notes(chat), "") == 0);
+    assert(clay_chat_set_notes(chat, "remember this") == 0);
+    assert(strcmp(clay_chat_notes(chat), "remember this") == 0);
     assert(clay_chat_begin_turn(chat, "hello") == 0);
 
     ClayJson *messages = clay_json_array();
@@ -32,6 +36,8 @@ int main(void) {
 
     chat = clay_chat_load(id);
     assert(chat);
+    assert(strcmp(clay_chat_system_prompt(chat), "you are clay") == 0);
+    assert(strcmp(clay_chat_notes(chat), "remember this") == 0);
     ClayJson *history = clay_chat_openai_messages(chat);
     assert(clay_json_array_count(history) == 2);
     assert(strcmp(clay_json_string_value(clay_json_object_get(clay_json_array_get(history, 0), "content")), "hello") == 0);

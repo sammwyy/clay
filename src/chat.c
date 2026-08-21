@@ -166,7 +166,7 @@ static ClayChat *chat_new(const char *id, ClayJson *journal) {
     return chat;
 }
 
-ClayChat *clay_chat_create(void) {
+ClayChat *clay_chat_create(const char *system_prompt) {
     char *id = clay_uuid_v4();
     if (!id) return NULL;
     ClayJson *journal = clay_json_object();
@@ -174,6 +174,8 @@ ClayChat *clay_chat_create(void) {
     clay_json_object_set(journal, "id", clay_json_string(id));
     clay_json_object_set(journal, "created_at", clay_json_number(clay_time_now()));
     clay_json_object_set(journal, "updated_at", clay_json_number(clay_time_now()));
+    clay_json_object_set(journal, "system_prompt", clay_json_string(system_prompt ? system_prompt : ""));
+    clay_json_object_set(journal, "notes", clay_json_string(""));
     clay_json_object_set(journal, "turns", clay_json_array());
     ClayChat *chat = chat_new(id, journal);
     free(id);
@@ -208,6 +210,19 @@ void clay_chat_destroy(ClayChat *chat) {
 
 const char *clay_chat_id(const ClayChat *chat) {
     return chat ? chat->id : "";
+}
+
+const char *clay_chat_system_prompt(const ClayChat *chat) {
+    return clay_json_string_value(clay_json_object_get(chat->journal, "system_prompt"));
+}
+
+const char *clay_chat_notes(const ClayChat *chat) {
+    return clay_json_string_value(clay_json_object_get(chat->journal, "notes"));
+}
+
+int clay_chat_set_notes(ClayChat *chat, const char *notes) {
+    clay_json_object_set(chat->journal, "notes", clay_json_string(notes ? notes : ""));
+    return save(chat);
 }
 
 size_t clay_chat_message_count(const ClayChat *chat) {

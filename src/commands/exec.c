@@ -12,7 +12,7 @@ void clay_cmd_exec(const char *args, void *user_data) {
         return;
     }
     if (!commands->chat) {
-        commands->chat = clay_chat_create();
+        commands->chat = clay_chat_create(commands->system_prompt);
         if (!commands->chat) {
             clay_sayc(CLAY_RED, "Could not create a chat journal.");
             return;

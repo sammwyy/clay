@@ -6,6 +6,7 @@
 #include "clay/uuid.h"
 #include "clay/color.h"
 #include "clay/config.h"
+#include "clay/memory.h"
 #include "clay/chat.h"
 #include "clay/cli.h"
 #include "clay/term.h"

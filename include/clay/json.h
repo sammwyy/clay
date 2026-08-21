@@ -27,6 +27,7 @@ ClayJson *clay_json_object(void);
 /* Mutators. Both take ownership of `value`. clay_json_object_set replaces
    an existing member under the same key, freeing the old value. */
 void clay_json_array_push(ClayJson *array, ClayJson *value);
+void clay_json_array_remove(ClayJson *array, size_t index); /* no-op if out of range */
 void clay_json_object_set(ClayJson *object, const char *key, ClayJson *value);
 
 /* Recursively frees `value` and everything under it. No-op on NULL. */

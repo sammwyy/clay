@@ -63,6 +63,12 @@ void clay_json_array_push(ClayJson *array, ClayJson *value) {
     clay_array_push_val(&array->items, &value);
 }
 
+void clay_json_array_remove(ClayJson *array, size_t index) {
+    if (index >= array->items.count) return;
+    clay_json_free(*(ClayJson **)clay_array_get(&array->items, index));
+    clay_array_remove(&array->items, index);
+}
+
 void clay_json_object_set(ClayJson *object, const char *key, ClayJson *value) {
     for (size_t i = 0; i < object->members.count; i++) {
         ClayJsonMember *m = clay_array_get(&object->members, i);

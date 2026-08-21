@@ -410,6 +410,41 @@ char *clay_term_home_dir(void) {
     return home ? strdup(home) : NULL;
 }
 
+char *clay_term_platform_name(void) {
+#ifdef _WIN32
+    return strdup("Windows");
+#elif defined(__APPLE__)
+    return strdup("macOS");
+#else
+    /* PRETTY_NAME on a distro that ships /etc/os-release, else a bare "Linux". */
+    FILE *file = fopen("/etc/os-release", "r");
+    if (!file) return strdup("Linux");
+    ClayStr text;
+    clay_str_init(&text);
+    int ch;
+    while ((ch = fgetc(file)) != EOF) clay_str_push_char(&text, (char)ch);
+    fclose(file);
+    const char *marker = "PRETTY_NAME=";
+    const char *line = strstr(text.data, marker);
+    if (!line || (line != text.data && line[-1] != '\n')) {
+        clay_str_free(&text);
+        return strdup("Linux");
+    }
+    const char *value = line + strlen(marker);
+    const char *end = strchr(value, '\n');
+    size_t len = end ? (size_t)(end - value) : strlen(value);
+    if (len >= 2 && value[0] == '"' && value[len - 1] == '"') {
+        value++;
+        len -= 2;
+    }
+    char *name = malloc(len + 1);
+    memcpy(name, value, len);
+    name[len] = '\0';
+    clay_str_free(&text);
+    return name;
+#endif
+}
+
 char *clay_term_cwd(void) {
 #ifdef _WIN32
     return _getcwd(NULL, 0);

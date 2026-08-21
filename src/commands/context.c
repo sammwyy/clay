@@ -4,12 +4,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CLAY_SYSTEM_PROMPT "You are clay, a helpful AI coding assistant. Be concise, accurate, and practical. " \
-                           "Explain code changes clearly and ask for clarification when the request is ambiguous. " \
-                           "Use shell_exec when inspecting or changing the current workspace helps answer the user. " \
-                           "It runs in /workspace (the project root); /scratch and /tmp are a temporary scratch " \
-                           "area for this conversation. Depending on the user's /sandbox settings, paths outside " \
-                           "those may be read-only or unavailable. Prefer focused commands and summarize results."
+#define CLAY_SYSTEM_PROMPT_BASE                                                                                      \
+    "You are clay, a helpful AI coding assistant. Be concise, accurate, and practical. "                             \
+    "Explain code changes clearly and ask for clarification when the request is ambiguous. "                         \
+    "Use shell_exec when inspecting or changing the current workspace helps answer the user. "                       \
+    "It runs in /workspace (the project root); /scratch and /tmp are a temporary scratch "                           \
+    "area for this conversation. Depending on the user's /sandbox settings, paths outside "                          \
+    "those may be read-only or unavailable. Prefer focused commands and summarize results.\n\n"                      \
+    "You have two kinds of memory. Long-term memory (memory_save/memory_read) persists across every future "         \
+    "chat: call memory_save after completing significant work - a decision, a bug fix, a preference the user "       \
+    "stated - so later sessions have it; the index of existing entries is below, and memory_read loads one by "      \
+    "its slug. Short-term memory (remember) is a scratchpad for this chat only, replayed every turn even if "        \
+    "earlier messages are later dropped - use it to pin details you'll still need many turns from now."
+
+/* Sliding window: reused as-is (and its clock reset) while a chat-less
+   session starts within this long of the cache's last use, since the
+   provider's own prefix cache is likely still warm; rebuilt with fresh
+   memory/environment data once it's likely gone cold anyway. Never
+   applies to an existing chat - see clay_chat_system_prompt. */
+#define CLAY_SYSTEM_PROMPT_TTL_SECONDS 600
 
 static const ClayProviderType PROVIDER_TYPES[] = {
     {"openai", "OpenAI", "https://api.openai.com/v1"},
@@ -108,10 +121,113 @@ void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens, l
     clay_str_free(&text);
 }
 
+static char *system_prompt_cache_path(void) {
+    char *home = clay_term_home_dir();
+    if (!home) return NULL;
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/.clay/system_prompt.json", home);
+    free(home);
+    return path.data;
+}
+
+/* 0 with text_out/last_used_out set on a hit, -1 on a miss. */
+static int load_system_prompt_cache(char **text_out, long long *last_used_out) {
+    char *path = system_prompt_cache_path();
+    if (!path) return -1;
+    FILE *file = fopen(path, "r");
+    free(path);
+    if (!file) return -1;
+    ClayStr body;
+    clay_str_init(&body);
+    int ch;
+    while ((ch = fgetc(file)) != EOF) clay_str_push_char(&body, (char)ch);
+    fclose(file);
+    ClayJson *root = clay_json_parse(body.data, NULL);
+    clay_str_free(&body);
+    const char *text = clay_json_type(root) == CLAY_JSON_OBJECT ? clay_json_string_value(clay_json_object_get(root, "text")) : NULL;
+    if (!text || !*text) {
+        clay_json_free(root);
+        return -1;
+    }
+    *text_out = strdup(text);
+    *last_used_out = (long long)clay_json_number_value(clay_json_object_get(root, "last_used_at"));
+    clay_json_free(root);
+    return 0;
+}
+
+static void save_system_prompt_cache(const char *text, long long last_used_at) {
+    char *home = clay_term_home_dir();
+    if (!home) return;
+    ClayStr dir;
+    clay_str_init(&dir);
+    clay_str_printf(&dir, "%s/.clay", home);
+    free(home);
+    clay_term_mkdir(dir.data);
+    ClayJson *root = clay_json_object();
+    clay_json_object_set(root, "text", clay_json_string(text));
+    clay_json_object_set(root, "last_used_at", clay_json_number((double)last_used_at));
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/system_prompt.json", dir.data);
+    clay_str_free(&dir);
+    ClayStr body;
+    clay_str_init(&body);
+    clay_json_stringify(root, &body);
+    clay_json_free(root);
+    FILE *file = fopen(path.data, "w");
+    if (file) {
+        fwrite(body.data, 1, body.len, file);
+        fclose(file);
+    }
+    clay_str_free(&path);
+    clay_str_free(&body);
+}
+
+static char *build_fresh_system_prompt(void) {
+    ClayStr text;
+    clay_str_init(&text);
+    clay_str_push(&text, CLAY_SYSTEM_PROMPT_BASE);
+
+    char *platform = clay_term_platform_name();
+    char *date = clay_time_format_date(clay_time_now());
+    clay_str_printf(&text, "\n\nEnvironment: %s. Today's date (UTC): %s.", platform, date);
+    free(platform);
+    free(date);
+
+    char *index = clay_memory_index();
+    if (*index) clay_str_printf(&text, "\n\nLong-term memory index:\n%s", index);
+    free(index);
+
+    return text.data;
+}
+
+/* Reuses the cached prompt (and slides its TTL forward) if it's recent
+   enough that the provider's own prefix cache is plausibly still warm;
+   otherwise rebuilds with current memory/environment data. Only ever
+   called for a chat-less session - clay_commands_reset_conversation
+   never calls this once commands->chat exists. */
+static char *clay_commands_build_system_prompt(void) {
+    char *cached_text = NULL;
+    long long last_used = 0;
+    long long now = clay_time_now();
+    if (load_system_prompt_cache(&cached_text, &last_used) == 0 && now - last_used < CLAY_SYSTEM_PROMPT_TTL_SECONDS) {
+        save_system_prompt_cache(cached_text, now);
+        return cached_text;
+    }
+    free(cached_text);
+    char *fresh = build_fresh_system_prompt();
+    save_system_prompt_cache(fresh, now);
+    return fresh;
+}
+
 void clay_commands_reset_conversation(ClayCommands *commands) {
     clay_json_free(commands->conversation);
     commands->conversation = clay_json_array();
-    clay_json_array_push(commands->conversation, clay_openai_message("system", CLAY_SYSTEM_PROMPT));
+    free(commands->system_prompt);
+    const char *persisted = commands->chat ? clay_chat_system_prompt(commands->chat) : "";
+    commands->system_prompt = *persisted ? strdup(persisted) : clay_commands_build_system_prompt();
+    clay_json_array_push(commands->conversation, clay_openai_message("system", commands->system_prompt));
     if (!commands->chat) return;
     ClayJson *history = clay_chat_openai_messages(commands->chat);
     for (size_t i = 0; i < clay_json_array_count(history); i++) {
@@ -227,6 +343,7 @@ void clay_commands_destroy(ClayCommands *commands) {
     for (size_t i = 0; i < commands->providers.count; i++) provider_free(clay_array_get(&commands->providers, i));
     clay_array_free(&commands->providers);
     clay_json_free(commands->conversation);
+    free(commands->system_prompt);
     clay_chat_destroy(commands->chat);
     free(commands->selected_provider);
     free(commands->selected_model);

@@ -14,11 +14,24 @@ typedef struct {
     size_t message_count;
 } ClayChatSummary;
 
-ClayChat *clay_chat_create(void);
+/* system_prompt is frozen into the journal at creation and never rebuilt
+   on later loads, so a chat's provider-side prefix cache stays valid for
+   its whole lifetime. */
+ClayChat *clay_chat_create(const char *system_prompt);
 ClayChat *clay_chat_load(const char *id);
 void clay_chat_destroy(ClayChat *chat);
 const char *clay_chat_id(const ClayChat *chat);
 size_t clay_chat_message_count(const ClayChat *chat);
+
+/* The system prompt frozen at clay_chat_create time. Never "" for a chat
+   created by this build; empty for a pre-memory chat.json on disk. */
+const char *clay_chat_system_prompt(const ClayChat *chat);
+
+/* Short-term scratchpad for this chat only - not part of "turns", so it
+   survives independent of how much history is kept around it. "" if
+   unset. */
+const char *clay_chat_notes(const ClayChat *chat);
+int clay_chat_set_notes(ClayChat *chat, const char *notes); /* persists; 0 on success */
 
 /* ~/.clay/chats/<id>/scratch, created if missing. Malloc'd; NULL on
    failure. */

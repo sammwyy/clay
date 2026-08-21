@@ -48,6 +48,10 @@ UUID_TEST_SRC    := tests/test_uuid.c
 UUID_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(UUID_TEST_SRC))
 UUID_TEST_TARGET := $(BIN_DIR)/test_uuid
 
+MEMORY_TEST_SRC    := tests/test_memory.c
+MEMORY_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(MEMORY_TEST_SRC))
+MEMORY_TEST_TARGET := $(BIN_DIR)/test_memory
+
 SANDBOX_TEST_SRC    := tests/test_sandbox.c
 SANDBOX_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(SANDBOX_TEST_SRC))
 SANDBOX_TEST_TARGET := $(BIN_DIR)/test_sandbox
@@ -65,7 +69,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-sandbox run compress compress-win clean debug
+.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox run compress compress-win clean debug
 
 all: build
 
@@ -93,6 +97,11 @@ test-uuid: $(UUID_TEST_TARGET)
 
 $(UUID_TEST_TARGET): $(LIB_OBJ) $(UUID_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(UUID_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-memory: $(MEMORY_TEST_TARGET)
+
+$(MEMORY_TEST_TARGET): $(LIB_OBJ) $(MEMORY_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(MEMORY_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-sandbox: $(SANDBOX_TEST_TARGET)
 

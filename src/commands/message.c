@@ -62,6 +62,124 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     return result;
 }
 
+static ClayJson *memory_save_tool(const ClayJson *arguments, void *userdata) {
+    (void)userdata;
+    const char *slug = clay_json_string_value(clay_json_object_get(arguments, "slug"));
+    const char *type = clay_json_string_value(clay_json_object_get(arguments, "type"));
+    const char *summary = clay_json_string_value(clay_json_object_get(arguments, "summary"));
+    const char *content = clay_json_string_value(clay_json_object_get(arguments, "content"));
+    ClayJson *result = clay_json_object();
+    if (!clay_memory_valid_slug(slug)) {
+        clay_json_object_set(result, "ok", clay_json_bool(0));
+        clay_json_object_set(result, "error",
+                             clay_json_string("slug must be lowercase letters, digits, and hyphens, up to 64 chars"));
+        return result;
+    }
+    int rc = clay_memory_write(slug, type, summary, content);
+    clay_json_object_set(result, "ok", clay_json_bool(rc == 0));
+    if (rc != 0) clay_json_object_set(result, "error", clay_json_string("failed to write memory entry"));
+    return result;
+}
+
+static ClayJson *memory_save_schema(void) {
+    ClayJson *slug = clay_json_object();
+    clay_json_object_set(slug, "type", clay_json_string("string"));
+    clay_json_object_set(
+        slug, "description",
+        clay_json_string("Short id, lowercase letters/digits/hyphens (e.g. \"auth-compliance-decision\"). "
+                         "Reuse an existing slug to overwrite that entry."));
+    ClayJson *type = clay_json_object();
+    clay_json_object_set(type, "type", clay_json_string("string"));
+    clay_json_object_set(type, "description",
+                         clay_json_string("One word for the kind of memory, e.g. \"decision\", \"bug-fix\", \"preference\"."));
+    ClayJson *summary = clay_json_object();
+    clay_json_object_set(summary, "type", clay_json_string("string"));
+    clay_json_object_set(
+        summary, "description",
+        clay_json_string("One-line summary shown in the memory index - specific enough to judge relevance without "
+                         "opening the entry."));
+    ClayJson *content = clay_json_object();
+    clay_json_object_set(content, "type", clay_json_string("string"));
+    clay_json_object_set(content, "description",
+                         clay_json_string("The full memory: what happened, why it matters, anything learned."));
+    ClayJson *properties = clay_json_object();
+    clay_json_object_set(properties, "slug", slug);
+    clay_json_object_set(properties, "type", type);
+    clay_json_object_set(properties, "summary", summary);
+    clay_json_object_set(properties, "content", content);
+    ClayJson *required = clay_json_array();
+    clay_json_array_push(required, clay_json_string("slug"));
+    clay_json_array_push(required, clay_json_string("summary"));
+    clay_json_array_push(required, clay_json_string("content"));
+    ClayJson *schema = clay_json_object();
+    clay_json_object_set(schema, "type", clay_json_string("object"));
+    clay_json_object_set(schema, "properties", properties);
+    clay_json_object_set(schema, "required", required);
+    clay_json_object_set(schema, "additionalProperties", clay_json_bool(0));
+    return schema;
+}
+
+static ClayJson *memory_read_tool(const ClayJson *arguments, void *userdata) {
+    (void)userdata;
+    const char *slug = clay_json_string_value(clay_json_object_get(arguments, "slug"));
+    ClayJson *result = clay_json_object();
+    char *content = clay_memory_read(slug);
+    if (!content) {
+        clay_json_object_set(result, "ok", clay_json_bool(0));
+        clay_json_object_set(result, "error", clay_json_string("no memory entry with that slug"));
+        return result;
+    }
+    clay_json_object_set(result, "ok", clay_json_bool(1));
+    clay_json_object_set(result, "content", clay_json_string(content));
+    free(content);
+    return result;
+}
+
+static ClayJson *memory_read_schema(void) {
+    ClayJson *slug = clay_json_object();
+    clay_json_object_set(slug, "type", clay_json_string("string"));
+    clay_json_object_set(slug, "description", clay_json_string("Slug from the memory index in your system prompt."));
+    ClayJson *properties = clay_json_object();
+    clay_json_object_set(properties, "slug", slug);
+    ClayJson *required = clay_json_array();
+    clay_json_array_push(required, clay_json_string("slug"));
+    ClayJson *schema = clay_json_object();
+    clay_json_object_set(schema, "type", clay_json_string("object"));
+    clay_json_object_set(schema, "properties", properties);
+    clay_json_object_set(schema, "required", required);
+    clay_json_object_set(schema, "additionalProperties", clay_json_bool(0));
+    return schema;
+}
+
+static ClayJson *remember_tool(const ClayJson *arguments, void *userdata) {
+    ClayCommands *commands = userdata;
+    const char *content = clay_json_string_value(clay_json_object_get(arguments, "content"));
+    int rc = clay_chat_set_notes(commands->chat, content);
+    ClayJson *result = clay_json_object();
+    clay_json_object_set(result, "ok", clay_json_bool(rc == 0));
+    if (rc != 0) clay_json_object_set(result, "error", clay_json_string("failed to save notes"));
+    return result;
+}
+
+static ClayJson *remember_schema(void) {
+    ClayJson *content = clay_json_object();
+    clay_json_object_set(content, "type", clay_json_string("string"));
+    clay_json_object_set(
+        content, "description",
+        clay_json_string("Full replacement for this chat's scratchpad - rewrite everything still relevant, not "
+                         "just what changed. Shown alongside this conversation every turn."));
+    ClayJson *properties = clay_json_object();
+    clay_json_object_set(properties, "content", content);
+    ClayJson *required = clay_json_array();
+    clay_json_array_push(required, clay_json_string("content"));
+    ClayJson *schema = clay_json_object();
+    clay_json_object_set(schema, "type", clay_json_string("object"));
+    clay_json_object_set(schema, "properties", properties);
+    clay_json_object_set(schema, "required", required);
+    clay_json_object_set(schema, "additionalProperties", clay_json_bool(0));
+    return schema;
+}
+
 static ClayJson *shell_exec_schema(void) {
     ClayJson *command = clay_json_object();
     clay_json_object_set(command, "type", clay_json_string("string"));
@@ -137,6 +255,18 @@ static void append_label_text(ClayStr *out, const char *text) {
 static void tool_label(ClayStr *out, const char *name, int completed, int success) {
     if (strcmp(name, "shell_exec") == 0) {
         clay_str_push(out, completed ? (success ? "Executed" : "Failed") : "Executing shell command");
+        return;
+    }
+    if (strcmp(name, "memory_save") == 0) {
+        clay_str_push(out, completed ? (success ? "Saved memory" : "Failed to save memory") : "Saving memory");
+        return;
+    }
+    if (strcmp(name, "memory_read") == 0) {
+        clay_str_push(out, completed ? (success ? "Read memory" : "Failed to read memory") : "Reading memory");
+        return;
+    }
+    if (strcmp(name, "remember") == 0) {
+        clay_str_push(out, completed ? (success ? "Updated notes" : "Failed to update notes") : "Updating notes");
         return;
     }
     clay_str_push(out, completed ? (success ? "Executed: " : "Failed: ") : "Executing: ");
@@ -299,7 +429,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         return 0;
     }
     if (!commands->chat) {
-        commands->chat = clay_chat_create();
+        commands->chat = clay_chat_create(commands->system_prompt);
         if (!commands->chat) {
             clay_sayc(CLAY_RED, "Could not create a chat journal.");
             return 0;
@@ -310,8 +440,18 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         clay_sayc(CLAY_RED, "Could not save the chat journal.");
         return 0;
     }
-    size_t turn_start = clay_json_array_count(commands->conversation);
+    size_t history_end = clay_json_array_count(commands->conversation);
     ClayJson *messages = clay_json_clone(commands->conversation);
+    const char *notes = clay_chat_notes(commands->chat);
+    int has_notes = *notes != '\0';
+    if (has_notes) {
+        ClayStr block;
+        clay_str_init(&block);
+        clay_str_printf(&block, "Notes from earlier in this conversation:\n%s", notes);
+        clay_json_array_push(messages, clay_openai_message("system", block.data));
+        clay_str_free(&block);
+    }
+    size_t turn_start = clay_json_array_count(messages);
     clay_json_array_push(messages, clay_openai_message("user", input));
     ClayOpenAI *client = clay_openai_create(provider->config->base_url, provider->config->apikey, commands->selected_model);
     clay_openai_set_reasoning_effort(client, clay_commands_reasoning_effort(commands)->id);
@@ -330,12 +470,27 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clock_gettime(CLOCK_MONOTONIC, &started_at);
     show_thinking(&stream);
     clay_app_set_state(commands->app, CLAY_APP_BUSY);
-    ClayJson *schema = shell_exec_schema();
-    ClayTool tools[] = {{"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.", schema, shell_exec_tool, commands}};
+    ClayJson *shell_schema = shell_exec_schema();
+    ClayJson *memory_save_schema_json = memory_save_schema();
+    ClayJson *memory_read_schema_json = memory_read_schema();
+    ClayJson *remember_schema_json = remember_schema();
+    ClayTool tools[] = {
+        {"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.",
+         shell_schema, shell_exec_tool, commands},
+        {"memory_save", "Saves or updates a long-term memory entry that persists across every future chat.",
+         memory_save_schema_json, memory_save_tool, commands},
+        {"memory_read", "Reads one long-term memory entry by its slug from the index in your system prompt.",
+         memory_read_schema_json, memory_read_tool, commands},
+        {"remember", "Replaces this chat's short-term scratchpad, shown alongside the conversation every turn.",
+         remember_schema_json, remember_tool, commands},
+    };
     if (clay_term_is_interactive()) clay_term_raw_enable();
-    int rc = clay_openai_run(client, messages, tools, 1, 8, &callbacks);
+    int rc = clay_openai_run(client, messages, tools, sizeof(tools) / sizeof(tools[0]), 8, &callbacks);
     if (clay_term_is_interactive()) clay_term_raw_disable();
-    clay_json_free(schema);
+    clay_json_free(shell_schema);
+    clay_json_free(memory_save_schema_json);
+    clay_json_free(memory_read_schema_json);
+    clay_json_free(remember_schema_json);
     clay_openai_destroy(client);
     struct timespec finished_at;
     clock_gettime(CLOCK_MONOTONIC, &finished_at);
@@ -359,6 +514,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     }
     if (rc == 0) {
         clay_chat_finish_turn(commands->chat, messages, turn_start, "completed");
+        if (has_notes) clay_json_array_remove(messages, history_end);
         clay_json_free(commands->conversation);
         commands->conversation = messages;
         set_status(seconds, 1);

@@ -30,6 +30,7 @@ struct ClayCommands {
     ClayApp *app;
     int running;
     ClayJson *conversation;
+    char *system_prompt; /* text currently at conversation[0]; frozen per-chat once one exists */
     long input_tokens;
     long output_tokens;
     long total_input_tokens;
@@ -70,6 +71,7 @@ void clay_cmd_model(const char *args, void *user_data);
 void clay_cmd_effort(const char *args, void *user_data);
 void clay_cmd_resume(const char *args, void *user_data);
 void clay_cmd_history(const char *args, void *user_data);
+void clay_cmd_memory(const char *args, void *user_data);
 void clay_cmd_new(const char *args, void *user_data);
 void clay_cmd_mm(const char *args, void *user_data);
 void clay_cmd_demo(const char *args, void *user_data);
