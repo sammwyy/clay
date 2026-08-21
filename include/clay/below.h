@@ -41,7 +41,8 @@ void clay_below_render_status(void);
 
 /* Keeps a status-only row below streamed text. insert_above reserves the
    first response row; call push_down before each streamed newline, then
-   prepare_prompt when the stream completes. */
+   prepare_prompt when the stream completes. prepare_prompt leaves a blank
+   separator row before the next prompt. */
 void clay_below_status_insert_above(void);
 void clay_below_status_push_down(void);
 void clay_below_status_finish_output(void);

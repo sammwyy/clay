@@ -388,6 +388,8 @@ void clay_below_status_prepare_prompt(void) {
     if (g_status_only) {
         clay_term_cursor_down(1);
         clay_term_insert_line();
+        clay_term_cursor_down(1);
+        clay_term_insert_line();
         g_status_only = 0;
         g_last_line_count = 0;
         g_max_rows_established = 2;

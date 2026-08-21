@@ -136,6 +136,28 @@ static int g_connected_providers_ready = 0;
 static char *g_selected_provider = NULL;
 static char *g_selected_model = NULL;
 
+typedef struct {
+    const char *id; /* NULL uses the provider default. */
+    const char *label;
+    const char *description;
+} ClayReasoningEffort;
+
+static const ClayReasoningEffort REASONING_EFFORTS[] = {
+    {NULL, "Default", "Let the selected model use its default reasoning level."},
+    {"minimal", "Minimal", "Use the fewest reasoning tokens when supported."},
+    {"low", "Low", "Favor lower latency and token use when supported."},
+    {"medium", "Medium", "Balance reasoning depth, latency, and token use."},
+    {"high", "High", "Favor deeper reasoning when supported."},
+    {"xhigh", "XHigh", "Use the highest reasoning level when supported."},
+};
+#define REASONING_EFFORT_COUNT (sizeof(REASONING_EFFORTS) / sizeof(REASONING_EFFORTS[0]))
+
+static int g_reasoning_effort_index = 0;
+
+static const ClayReasoningEffort *selected_reasoning_effort(void) {
+    return &REASONING_EFFORTS[g_reasoning_effort_index];
+}
+
 static void provider_models_free(ClayConnectedProvider *provider) {
     for (size_t i = 0; i < provider->models.count; i++) {
         free(*(char **)clay_array_get(&provider->models, i));
@@ -204,8 +226,11 @@ static void update_selected_below(void) {
     ClayStr text;
     clay_str_init(&text);
     if (g_selected_model && g_selected_provider) {
-        clay_str_printf(&text, "%s%s%s %s(%s)%s", clay_color(CLAY_CORAL), g_selected_model,
-                        clay_color(CLAY_RESET), clay_color(CLAY_GRAY), g_selected_provider, clay_color(CLAY_RESET));
+        const ClayReasoningEffort *effort = selected_reasoning_effort();
+        clay_str_printf(&text, "%s%s%s %s[%s%s%s]%s %s(%s)%s", clay_color(CLAY_CORAL), g_selected_model,
+                        clay_color(CLAY_RESET), clay_color(CLAY_GRAY), clay_color(CLAY_CYAN), effort->label,
+                        clay_color(CLAY_GRAY), clay_color(CLAY_RESET), clay_color(CLAY_GRAY), g_selected_provider,
+                        clay_color(CLAY_RESET));
     } else {
         clay_str_push(&text, "None");
     }
@@ -450,6 +475,24 @@ static void cmd_model(const char *args, void *user_data) {
     clay_sayc(saved ? CLAY_GREEN : CLAY_RED,
               saved ? "Model set to %s via %s." : "Model set, but failed to save config.", sel.model, sel.provider);
     clay_model_selection_free(&sel);
+}
+
+static void cmd_effort(const char *args, void *user_data) {
+    (void)args;
+    ClayApp *app = user_data;
+    ClayChoice choices[REASONING_EFFORT_COUNT];
+    for (size_t i = 0; i < REASONING_EFFORT_COUNT; i++) {
+        choices[i].title = REASONING_EFFORTS[i].label;
+        choices[i].desc = REASONING_EFFORTS[i].description;
+    }
+
+    int index = clay_app_select(app, "Reasoning effort:", choices, (int)REASONING_EFFORT_COUNT,
+                                g_reasoning_effort_index);
+    if (index < 0) return;
+
+    g_reasoning_effort_index = index;
+    update_selected_below();
+    clay_sayc(CLAY_CYAN, "Reasoning effort: %s.", selected_reasoning_effort()->label);
 }
 
 typedef struct {
@@ -708,6 +751,7 @@ static int run_conversation(ClayApp *app, const char *input) {
     clay_json_array_push(messages, clay_openai_message("user", input));
 
     ClayOpenAI *client = clay_openai_create(provider->config->base_url, provider->config->apikey, g_selected_model);
+    clay_openai_set_reasoning_effort(client, selected_reasoning_effort()->id);
     ClayConversationStream stream = {0};
     ClayOpenAICallbacks callbacks = {0};
     callbacks.on_token = on_conversation_token;
@@ -876,6 +920,7 @@ int main(int argc, char **argv) {
     clay_command_register(commands, "mm", "Smoke-test the mm module", cmd_mm, app);
     clay_command_register(commands, "below", "Cycle the below-prompt status modules", cmd_below, app);
     clay_command_register(commands, "model", "Pick a model from a connected provider", cmd_model, app);
+    clay_command_register(commands, "effort", "Set reasoning effort for supported models", cmd_effort, app);
     clay_command_register(commands, "connect", "Connect a provider, or /connect <id> directly", cmd_connect, app);
     clay_command_register(commands, "demo", "Run the render demo sequence", cmd_demo, app);
 

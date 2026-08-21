@@ -11,6 +11,7 @@ struct ClayOpenAI {
     char *base_url;
     char *api_key;
     char *model;
+    char *reasoning_effort;
 };
 
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const char *model) {
@@ -18,6 +19,7 @@ ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const 
     client->base_url = strdup(base_url);
     client->api_key = strdup(api_key);
     client->model = strdup(model ? model : "");
+    client->reasoning_effort = NULL;
     return client;
 }
 
@@ -26,7 +28,13 @@ void clay_openai_destroy(ClayOpenAI *client) {
     free(client->base_url);
     free(client->api_key);
     free(client->model);
+    free(client->reasoning_effort);
     free(client);
+}
+
+void clay_openai_set_reasoning_effort(ClayOpenAI *client, const char *effort) {
+    free(client->reasoning_effort);
+    client->reasoning_effort = effort ? strdup(effort) : NULL;
 }
 
 int clay_openai_list_models(ClayOpenAI *client, ClayArray *models) {
@@ -221,6 +229,9 @@ static ClayStr build_request_body(ClayOpenAI *client, const ClayJson *messages, 
     clay_json_object_set(root, "model", clay_json_string(client->model));
     clay_json_object_set(root, "messages", clay_json_clone(messages));
     clay_json_object_set(root, "stream", clay_json_bool(1));
+    if (client->reasoning_effort) {
+        clay_json_object_set(root, "reasoning_effort", clay_json_string(client->reasoning_effort));
+    }
 
     ClayJson *stream_options = clay_json_object();
     clay_json_object_set(stream_options, "include_usage", clay_json_bool(1));

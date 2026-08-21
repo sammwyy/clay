@@ -500,9 +500,12 @@ int clay_prompt_select(const char *question, const ClayChoice *options, int coun
         render_select_line(question, options, count, selected);
     }
 
+    /* A horizontal selector is transient UI. Leave its row clear so the
+       caller can replace it with a concise confirmation or next prompt. */
+    clay_term_clear_line();
     clay_term_show_cursor();
     clay_term_raw_disable();
-    fputc('\n', stdout);
+    fflush(stdout);
     return result;
 }
 

@@ -12,6 +12,8 @@ typedef struct ClayOpenAI ClayOpenAI;
    "/chat/completions" is appended to it. */
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const char *model);
 void clay_openai_destroy(ClayOpenAI *client);
+/* NULL omits reasoning_effort from requests and uses the provider default. */
+void clay_openai_set_reasoning_effort(ClayOpenAI *client, const char *effort);
 
 /* Retrieves every id returned by the provider's OpenAI-compatible
    `GET /models` endpoint. `models` must be a ClayArray of `char *`;
