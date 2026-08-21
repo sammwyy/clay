@@ -31,10 +31,11 @@ static double elapsed_seconds(const struct timespec *start) {
     return (double)(now.tv_sec - start->tv_sec) + (double)(now.tv_nsec - start->tv_nsec) / 1e9;
 }
 
-static void render_line(const char *icon_color, const char *icon, const char *label, const char *suffix) {
+static void render_line(const char *icon_color, const char *icon, const char *label, const char *suffix, int active) {
     clay_term_clear_line();
-    printf("%s%s clay%s  %s%s%s %s%s%s\xe2\x80\xa6", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, clay_color(CLAY_RESET),
+    printf("%s%s clay%s  %s%s%s %s%s%s", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, clay_color(CLAY_RESET),
            clay_color(icon_color), icon, clay_color(CLAY_RESET), clay_color(CLAY_GRAY), label, clay_color(CLAY_RESET));
+    if (active) fputs("\xe2\x80\xa6", stdout);
     if (suffix) printf(" %s", suffix);
     fflush(stdout);
 }
@@ -49,7 +50,7 @@ static void *spinner_loop(void *arg) {
         pthread_mutex_unlock(&task->lock);
         if (!running) break;
 
-        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], task->label.data, NULL);
+        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], task->label.data, NULL, 1);
         frame = (frame + 1) % CLAY_SPINNER_FRAME_COUNT;
         clay_term_sleep_ms(80);
     }
@@ -74,11 +75,17 @@ ClayTask *clay_task_start(const char *fmt, ...) {
     return task;
 }
 
-static void finish(ClayTask *task, const char *icon_color, const char *icon, const char *fmt, va_list args) {
+static void finish(ClayTask *task, const char *icon_color, const char *icon, const char *label,
+                   const char *fmt, va_list args) {
     pthread_mutex_lock(&task->lock);
     task->running = 0;
     pthread_mutex_unlock(&task->lock);
     pthread_join(task->thread, NULL);
+
+    if (label) {
+        clay_str_clear(&task->label);
+        clay_str_push(&task->label, label);
+    }
 
     ClayStr result;
     clay_str_init(&result);
@@ -86,10 +93,13 @@ static void finish(ClayTask *task, const char *icon_color, const char *icon, con
 
     ClayStr suffix;
     clay_str_init(&suffix);
-    clay_str_printf(&suffix, "%s%s%s %s(%.1fs)%s", clay_color(icon_color), result.data, clay_color(CLAY_RESET),
-                     clay_color(CLAY_GRAY), elapsed_seconds(&task->start), clay_color(CLAY_RESET));
+    if (result.len > 0) {
+        clay_str_printf(&suffix, "%s%s%s ", clay_color(icon_color), result.data, clay_color(CLAY_RESET));
+    }
+    clay_str_printf(&suffix, "%s(%.1fs)%s", clay_color(CLAY_GRAY), elapsed_seconds(&task->start),
+                    clay_color(CLAY_RESET));
 
-    render_line(icon_color, icon, task->label.data, suffix.data);
+    render_line(icon_color, icon, task->label.data, suffix.data, 0);
     fputc('\n', stdout);
     clay_term_show_cursor();
 
@@ -103,13 +113,27 @@ static void finish(ClayTask *task, const char *icon_color, const char *icon, con
 void clay_task_success(ClayTask *task, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    finish(task, CLAY_GREEN, CLAY_ICON_CHECK, fmt, args);
+    finish(task, CLAY_GREEN, CLAY_ICON_CHECK, NULL, fmt, args);
     va_end(args);
 }
 
 void clay_task_fail(ClayTask *task, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    finish(task, CLAY_RED, CLAY_ICON_CROSS, fmt, args);
+    finish(task, CLAY_RED, CLAY_ICON_CROSS, NULL, fmt, args);
+    va_end(args);
+}
+
+void clay_task_success_with_label(ClayTask *task, const char *label, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    finish(task, CLAY_GREEN, CLAY_ICON_CHECK, label, fmt, args);
+    va_end(args);
+}
+
+void clay_task_fail_with_label(ClayTask *task, const char *label, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    finish(task, CLAY_RED, CLAY_ICON_CROSS, label, fmt, args);
     va_end(args);
 }

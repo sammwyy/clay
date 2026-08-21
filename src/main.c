@@ -524,9 +524,37 @@ static void append_tool_label_text(ClayStr *out, const char *text) {
     }
 }
 
-static void print_tool_output(const ClayJson *result) {
+static void tool_task_label(ClayStr *out, const char *name, int completed, int success) {
+    if (strcmp(name, "shell_exec") == 0) {
+        clay_str_push(out, completed ? (success ? "Executed" : "Failed") : "Executing shell command");
+        return;
+    }
+    clay_str_push(out, completed ? (success ? "Executed: " : "Failed: ") : "Executing: ");
+    append_tool_label_text(out, name);
+}
+
+static int shell_command_fits_inline(const char *command) {
+    ClayStr label;
+    clay_str_init(&label);
+    clay_str_push(&label, "Executed $");
+    append_tool_label_text(&label, command);
+    size_t width = clay_utf8_width("\xe2\x97\x86 clay  \xe2\x9c\x93 ") + clay_utf8_width(label.data) + 8;
+    int fits = width < (size_t)clay_term_width();
+    clay_str_free(&label);
+    return fits;
+}
+
+static void print_tool_output(const ClayJson *result, int show_command) {
+    const char *command = clay_json_string_value(clay_json_object_get(result, "command"));
     const char *output = clay_json_string_value(clay_json_object_get(result, "output"));
     int truncated = clay_json_bool_value(clay_json_object_get(result, "output_truncated"));
+    if (show_command && *command) {
+        ClayStr display;
+        clay_str_init(&display);
+        append_tool_label_text(&display, command);
+        clay_list_bullet("$ %s", display.data);
+        clay_str_free(&display);
+    }
     if (!*output) {
         clay_list_bullet("(no output)");
         return;
@@ -562,41 +590,41 @@ static void print_tool_output(const ClayJson *result) {
 }
 
 static void on_conversation_tool_call(const char *name, const char *arguments_json, void *userdata) {
+    (void)arguments_json;
     ClayConversationStream *stream = userdata;
     close_response_for_tool(stream);
 
-    ClayJson *arguments = clay_json_parse(arguments_json, NULL);
-    const char *command = clay_json_string_value(clay_json_object_get(arguments, "command"));
-    const char *args = clay_json_string_value(clay_json_object_get(arguments, "args"));
     ClayStr label;
     clay_str_init(&label);
-    append_tool_label_text(&label, name);
-    if (*command) {
-        clay_str_push(&label, ": ");
-        append_tool_label_text(&label, command);
-    }
-    if (*args) {
-        clay_str_push_char(&label, ' ');
-        append_tool_label_text(&label, args);
-    }
-    stream->tool_task = clay_task_start("Running %s", label.data);
+    tool_task_label(&label, name, 0, 0);
+    stream->tool_task = clay_task_start("%s", label.data);
     clay_str_free(&label);
-    clay_json_free(arguments);
 }
 
 static void on_conversation_tool_result(const char *name, const ClayJson *result, void *userdata) {
     ClayConversationStream *stream = userdata;
     int ok = clay_json_bool_value(clay_json_object_get(result, "ok"));
     long exit_code = (long)clay_json_number_value(clay_json_object_get(result, "exit_code"));
+    const char *command = clay_json_string_value(clay_json_object_get(result, "command"));
+    int command_inline = ok && strcmp(name, "shell_exec") == 0 && *command && shell_command_fits_inline(command);
 
     if (stream->tool_task) {
-        if (ok) clay_task_success(stream->tool_task, "exit %ld", exit_code);
-        else clay_task_fail(stream->tool_task, "exit %ld", exit_code);
+        ClayStr label;
+        clay_str_init(&label);
+        if (command_inline) {
+            clay_str_push(&label, "Executed $");
+            append_tool_label_text(&label, command);
+        } else {
+            tool_task_label(&label, name, 1, ok);
+        }
+        if (ok) clay_task_success_with_label(stream->tool_task, label.data, "");
+        else clay_task_fail_with_label(stream->tool_task, label.data, "exit %ld", exit_code);
+        clay_str_free(&label);
         stream->tool_task = NULL;
     } else {
-        clay_sayc(ok ? CLAY_GREEN : CLAY_RED, "%s finished with exit %ld.", name, exit_code);
+        clay_sayc(ok ? CLAY_GREEN : CLAY_RED, "%s: %s", ok ? "Executed" : "Failed", name);
     }
-    print_tool_output(result);
+    print_tool_output(result, !command_inline);
     show_conversation_thinking(stream);
 }
 

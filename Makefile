@@ -50,7 +50,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli run clean debug
+.PHONY: all build build-win build_win test-openai test-cli run compress clean debug
 
 all: build
 
@@ -92,6 +92,9 @@ $(BIN_DIR_WIN):
 run: build
 	@mkdir -p .playground
 	@./$(TARGET) --cwd .playground
+
+compress: build
+	upx --best --lzma $(TARGET)
 
 debug: CFLAGS += -g -O0 -DDEBUG
 debug: clean build

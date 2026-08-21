@@ -15,4 +15,9 @@ void clay_task_success(ClayTask *task, const char *fmt, ...);
    then prints the given result text on the same line. */
 void clay_task_fail(ClayTask *task, const char *fmt, ...);
 
+/* Like clay_task_success/fail, but replaces the running label only after
+   the spinner thread has stopped. */
+void clay_task_success_with_label(ClayTask *task, const char *label, const char *fmt, ...);
+void clay_task_fail_with_label(ClayTask *task, const char *label, const char *fmt, ...);
+
 #endif /* CLAY_TASK_H */
