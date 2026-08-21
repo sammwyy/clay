@@ -706,7 +706,10 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     ClayJson *glob_schema_json = clay_fs_tool_glob_schema();
     ClayJson *grep_schema_json = clay_fs_tool_grep_schema();
     ClayJson *todowrite_schema_json = todowrite_schema();
-    ClayTool tools[] = {
+    clay_commands_connect_mcp_servers(commands);
+    ClayArray tool_list;
+    clay_array_init(&tool_list, sizeof(ClayTool));
+    ClayTool builtin_tools[] = {
         {"shell_exec", "Runs a shell command in the current workspace and returns stdout, stderr, and exit status.",
          shell_schema, shell_exec_tool, commands},
         {"memory_save", "Saves or updates a long-term memory entry that persists across every future chat.",
@@ -728,9 +731,21 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         {"todowrite", "Writes the full task plan, shown to the user as a checklist. Use for any multi-step task.",
          todowrite_schema_json, todowrite_tool, commands},
     };
+    for (size_t i = 0; i < sizeof(builtin_tools) / sizeof(builtin_tools[0]); i++) {
+        clay_array_push_val(&tool_list, &builtin_tools[i]);
+    }
+    for (size_t i = 0; i < commands->mcp_bindings.count; i++) {
+        ClayMcpToolBinding *binding = clay_array_get(&commands->mcp_bindings, i);
+        const ClayMcpTool *mcp_tool = clay_mcp_find_tool(binding->server, binding->tool_name);
+        ClayTool tool = {binding->exposed_name, mcp_tool->description, mcp_tool->input_schema,
+                         clay_mcp_tool_call_fn, binding};
+        clay_array_push_val(&tool_list, &tool);
+    }
+
     if (clay_term_is_interactive()) clay_term_raw_enable();
-    int rc = clay_openai_run(client, messages, tools, sizeof(tools) / sizeof(tools[0]), 8, &callbacks);
+    int rc = clay_openai_run(client, messages, tool_list.data, tool_list.count, 8, &callbacks);
     if (clay_term_is_interactive()) clay_term_raw_disable();
+    clay_array_free(&tool_list);
     clay_json_free(shell_schema);
     clay_json_free(memory_save_schema_json);
     clay_json_free(memory_read_schema_json);

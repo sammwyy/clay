@@ -9,6 +9,7 @@
 #include "clay/memory.h"
 #include "clay/chat.h"
 #include "clay/checkpoint.h"
+#include "clay/mcp.h"
 #include "clay/cli.h"
 #include "clay/term.h"
 #include "clay/render.h"

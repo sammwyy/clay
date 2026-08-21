@@ -146,6 +146,208 @@ void clay_term_setenv(const char *name, const char *value) {
 #endif
 }
 
+#ifdef _WIN32
+struct ClayProcess {
+    HANDLE process_handle;
+    HANDLE write_handle;
+    HANDLE read_handle;
+    ClayStr read_buffer; /* bytes read past the last line boundary returned */
+};
+
+ClayProcess *clay_term_process_start(const char *command, char *const argv[]) {
+    (void)command;
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    HANDLE child_stdin_read, child_stdin_write;
+    HANDLE child_stdout_read, child_stdout_write;
+    if (!CreatePipe(&child_stdin_read, &child_stdin_write, &sa, 0)) return NULL;
+    if (!SetHandleInformation(child_stdin_write, HANDLE_FLAG_INHERIT, 0)) {
+        CloseHandle(child_stdin_read);
+        CloseHandle(child_stdin_write);
+        return NULL;
+    }
+    if (!CreatePipe(&child_stdout_read, &child_stdout_write, &sa, 0)) {
+        CloseHandle(child_stdin_read);
+        CloseHandle(child_stdin_write);
+        return NULL;
+    }
+    if (!SetHandleInformation(child_stdout_read, HANDLE_FLAG_INHERIT, 0)) {
+        CloseHandle(child_stdin_read);
+        CloseHandle(child_stdin_write);
+        CloseHandle(child_stdout_read);
+        CloseHandle(child_stdout_write);
+        return NULL;
+    }
+
+    ClayStr cmdline;
+    clay_str_init(&cmdline);
+    for (int i = 0; argv[i]; i++) {
+        if (i > 0) clay_str_push_char(&cmdline, ' ');
+        clay_str_push_char(&cmdline, '"');
+        for (const char *p = argv[i]; *p; p++) {
+            if (*p == '"') clay_str_push(&cmdline, "\\\"");
+            else clay_str_push_char(&cmdline, *p);
+        }
+        clay_str_push_char(&cmdline, '"');
+    }
+
+    STARTUPINFO si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags |= STARTF_USESTDHANDLES;
+    si.hStdInput = child_stdin_read;
+    si.hStdOutput = child_stdout_write;
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof(pi));
+
+    BOOL started = CreateProcess(NULL, cmdline.data, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+    clay_str_free(&cmdline);
+    CloseHandle(child_stdin_read);
+    CloseHandle(child_stdout_write);
+    if (!started) {
+        CloseHandle(child_stdin_write);
+        CloseHandle(child_stdout_read);
+        return NULL;
+    }
+    CloseHandle(pi.hThread);
+
+    ClayProcess *process = malloc(sizeof(ClayProcess));
+    process->process_handle = pi.hProcess;
+    process->write_handle = child_stdin_write;
+    process->read_handle = child_stdout_read;
+    clay_str_init(&process->read_buffer);
+    return process;
+}
+
+int clay_term_process_write(ClayProcess *process, const char *data, size_t len) {
+    size_t written = 0;
+    while (written < len) {
+        DWORD n = 0;
+        if (!WriteFile(process->write_handle, data + written, (DWORD)(len - written), &n, NULL)) return -1;
+        written += n;
+    }
+    return 0;
+}
+
+char *clay_term_process_read_line(ClayProcess *process) {
+    for (;;) {
+        for (size_t i = 0; i < process->read_buffer.len; i++) {
+            if (process->read_buffer.data[i] != '\n') continue;
+            size_t line_len = i;
+            if (line_len > 0 && process->read_buffer.data[line_len - 1] == '\r') line_len--;
+            char *line = malloc(line_len + 1);
+            memcpy(line, process->read_buffer.data, line_len);
+            line[line_len] = '\0';
+            clay_str_remove_n(&process->read_buffer, 0, i + 1);
+            return line;
+        }
+        char chunk[4096];
+        DWORD n = 0;
+        BOOL ok = ReadFile(process->read_handle, chunk, sizeof(chunk), &n, NULL);
+        if (!ok || n == 0) {
+            if (process->read_buffer.len == 0) return NULL;
+            char *line = strdup(process->read_buffer.data);
+            clay_str_clear(&process->read_buffer);
+            return line;
+        }
+        clay_str_push_n(&process->read_buffer, chunk, n);
+    }
+}
+
+void clay_term_process_stop(ClayProcess *process) {
+    if (!process) return;
+    CloseHandle(process->write_handle);
+    TerminateProcess(process->process_handle, 0);
+    WaitForSingleObject(process->process_handle, 2000);
+    CloseHandle(process->read_handle);
+    CloseHandle(process->process_handle);
+    clay_str_free(&process->read_buffer);
+    free(process);
+}
+#else
+struct ClayProcess {
+    pid_t pid;
+    int write_fd;
+    FILE *read_file;
+};
+
+ClayProcess *clay_term_process_start(const char *command, char *const argv[]) {
+    int stdin_pipe[2];
+    int stdout_pipe[2];
+    if (pipe(stdin_pipe) != 0) return NULL;
+    if (pipe(stdout_pipe) != 0) {
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        return NULL;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        return NULL;
+    }
+    if (pid == 0) {
+        dup2(stdin_pipe[0], STDIN_FILENO);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        execvp(command, argv);
+        _exit(127);
+    }
+
+    close(stdin_pipe[0]);
+    close(stdout_pipe[1]);
+    ClayProcess *process = malloc(sizeof(ClayProcess));
+    process->pid = pid;
+    process->write_fd = stdin_pipe[1];
+    process->read_file = fdopen(stdout_pipe[0], "r");
+    if (!process->read_file) {
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        free(process);
+        return NULL;
+    }
+    return process;
+}
+
+int clay_term_process_write(ClayProcess *process, const char *data, size_t len) {
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(process->write_fd, data + written, len - written);
+        if (n <= 0) return -1;
+        written += (size_t)n;
+    }
+    return 0;
+}
+
+char *clay_term_process_read_line(ClayProcess *process) {
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t n = getline(&line, &cap, process->read_file);
+    if (n < 0) {
+        free(line);
+        return NULL;
+    }
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = '\0';
+    return line;
+}
+
+void clay_term_process_stop(ClayProcess *process) {
+    if (!process) return;
+    close(process->write_fd);
+    fclose(process->read_file);
+    kill(process->pid, SIGTERM);
+    int status = 0;
+    waitpid(process->pid, &status, 0);
+    free(process);
+}
+#endif
+
 int clay_term_change_dir(const char *path) {
 #ifdef _WIN32
     return _chdir(path);

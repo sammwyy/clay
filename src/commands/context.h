@@ -70,6 +70,9 @@ struct ClayCommands {
     ClayArray remembered_patterns[CLAY_PERMISSION_CATEGORY_COUNT]; /* char*, approved for this session only */
     ClayCommandsMode mode;
     ClayArray todos; /* ClayTodoItem, the current plan - session-only, not persisted */
+    ClayArray mcp_servers;   /* ClayMcpServer*, connected for the life of the session */
+    ClayArray mcp_bindings;  /* ClayMcpToolBinding, one per discovered MCP tool */
+    int mcp_connect_attempted;
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands, const char *id);
@@ -91,6 +94,11 @@ int clay_commands_maybe_compact(ClayCommands *commands);
 /* Frees every item's content/status and empties commands->todos in place
    (keeps the array itself, so it's ready for more clay_array_push_val). */
 void clay_commands_clear_todos(ClayCommands *commands);
+/* Connects to every configured MCP server (src/commands/mcp.c) the first
+   time it's called in this session; later calls are a no-op. Best-effort -
+   a server that fails to connect is skipped with a warning, not fatal. */
+void clay_commands_connect_mcp_servers(ClayCommands *commands);
+void clay_cmd_mcp(const char *args, void *user_data);
 void clay_commands_new_chat(ClayCommands *commands);
 const ClayReasoningEffort *clay_commands_reasoning_effort(const ClayCommands *commands);
 size_t clay_commands_reasoning_effort_count(void);

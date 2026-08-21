@@ -102,6 +102,27 @@ int clay_term_input_pending(void);
    them up the screen when pinned to the bottom of the terminal. */
 void clay_term_row_enter(int row, int *established);
 
+/* A long-lived child process wired up for line-based bidirectional
+   communication over its stdin/stdout (its stderr is inherited, so
+   diagnostics reach the terminal directly) - for a protocol like MCP's
+   stdio transport, as opposed to clay_term_shell_exec's one-shot capture. */
+typedef struct ClayProcess ClayProcess;
+
+/* Starts `command` (found via PATH) with `argv` (NULL-terminated,
+   argv[0] conventionally the program name). NULL on failure. */
+ClayProcess *clay_term_process_start(const char *command, char *const argv[]);
+
+/* Writes `len` bytes to the process's stdin. 0 on success, -1 on failure. */
+int clay_term_process_write(ClayProcess *process, const char *data, size_t len);
+
+/* Reads one line from the process's stdout, blocking until a newline or
+   EOF; strips the trailing newline. Malloc'd; NULL on EOF or error. */
+char *clay_term_process_read_line(ClayProcess *process);
+
+/* Closes the process's pipes, terminates it if still running, and waits
+   for it to exit. Frees `process`. */
+void clay_term_process_stop(ClayProcess *process);
+
 /* $HOME, or %USERPROFILE% on Windows. Malloc'd; NULL if unset. */
 char *clay_term_home_dir(void);
 

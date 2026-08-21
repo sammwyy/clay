@@ -22,7 +22,9 @@
     "earlier messages are later dropped - use it to pin details you'll still need many turns from now.\n\n"          \
     "For any task with multiple steps, call todowrite with the full plan before starting, and again whenever a "     \
     "step's status changes - it's shown to the user as a checklist. Keep exactly one task in_progress at a time; "   \
-    "mark it completed before moving to the next. Skip it for a single quick action."
+    "mark it completed before moving to the next. Skip it for a single quick action.\n\n"                            \
+    "Tools named mcp__<server>__<tool> come from MCP servers the user configured with /mcp - use them like any "     \
+    "other tool."
 
 /* Sliding window: reused as-is (and its clock reset) while a chat-less
    session starts within this long of the cache's last use, since the
@@ -494,6 +496,8 @@ ClayCommands *clay_commands_create(ClayApp *app) {
         clay_array_init(&commands->remembered_patterns[i], sizeof(char *));
     }
     clay_array_init(&commands->todos, sizeof(ClayTodoItem));
+    clay_array_init(&commands->mcp_servers, sizeof(ClayMcpServer *));
+    clay_array_init(&commands->mcp_bindings, sizeof(ClayMcpToolBinding));
     clay_commands_reset_conversation(commands);
     clay_config_selection_save(commands->selected_provider, commands->selected_model);
     clay_below_add(0, "status");
@@ -525,6 +529,16 @@ void clay_commands_destroy(ClayCommands *commands) {
     }
     clay_commands_clear_todos(commands);
     clay_array_free(&commands->todos);
+    for (size_t i = 0; i < commands->mcp_bindings.count; i++) {
+        ClayMcpToolBinding *binding = clay_array_get(&commands->mcp_bindings, i);
+        free(binding->tool_name);
+        free(binding->exposed_name);
+    }
+    clay_array_free(&commands->mcp_bindings);
+    for (size_t i = 0; i < commands->mcp_servers.count; i++) {
+        clay_mcp_disconnect(*(ClayMcpServer **)clay_array_get(&commands->mcp_servers, i));
+    }
+    clay_array_free(&commands->mcp_servers);
     free(commands);
 }
 
