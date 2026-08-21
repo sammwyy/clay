@@ -41,6 +41,19 @@ static ClayJson *denied_result(void) {
     return result;
 }
 
+static ClayJson *plan_blocked_result(const char *why) {
+    ClayJson *result = clay_json_object();
+    clay_json_object_set(result, "ok", clay_json_bool(0));
+    ClayStr error;
+    clay_str_init(&error);
+    clay_str_printf(&error, "blocked: clay is in Plan mode - %s. Describe the change instead, or ask the user to "
+                            "run /plan to switch to Act mode.",
+                    why);
+    clay_json_object_set(result, "error", clay_json_string(error.data));
+    clay_str_free(&error);
+    return result;
+}
+
 static ClayJson *read_tool_gated(const ClayJson *arguments, void *userdata) {
     const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
     if (path && *path && !clay_permissions_check(userdata, CLAY_PERMISSION_READ, "Read", path)) return denied_result();
@@ -62,6 +75,7 @@ static ClayJson *grep_tool_gated(const ClayJson *arguments, void *userdata) {
 }
 
 static ClayJson *write_tool_checkpointed(const ClayJson *arguments, void *userdata) {
+    if (((ClayCommands *)userdata)->mode == CLAY_MODE_PLAN) return plan_blocked_result("writing files is disabled");
     const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
     if (path && *path && !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Write", path)) return denied_result();
     ClayStr label;
@@ -73,6 +87,7 @@ static ClayJson *write_tool_checkpointed(const ClayJson *arguments, void *userda
 }
 
 static ClayJson *edit_tool_checkpointed(const ClayJson *arguments, void *userdata) {
+    if (((ClayCommands *)userdata)->mode == CLAY_MODE_PLAN) return plan_blocked_result("editing files is disabled");
     const char *path = clay_json_string_value(clay_json_object_get(arguments, "path"));
     if (path && *path && !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Edit", path)) return denied_result();
     ClayStr label;
@@ -97,6 +112,12 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     clay_str_init(&invocation);
     clay_str_push(&invocation, command);
     if (*args) clay_str_printf(&invocation, " %s", args);
+    if (commands->mode == CLAY_MODE_PLAN && clay_permissions_is_mutating_command(invocation.data)) {
+        clay_json_free(result);
+        ClayJson *blocked = plan_blocked_result("this command would mutate the workspace");
+        clay_str_free(&invocation);
+        return blocked;
+    }
     ClayPermissionCategory exec_category =
         clay_permissions_is_safe_command(invocation.data) ? CLAY_PERMISSION_EXEC_SAFE : CLAY_PERMISSION_EXEC_ALL;
     if (!clay_permissions_check(commands, exec_category, "Run", invocation.data)) {

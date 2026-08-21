@@ -13,6 +13,11 @@ static const char *const SAFE_GIT_SUBCOMMANDS[] = {
     "status", "log", "diff", "show", "branch", "remote", "rev-parse", "describe", "blame",
 };
 
+/* Always mutates the filesystem regardless of arguments. */
+static const char *const MUTATING_COMMANDS[] = {
+    "rm", "mv", "cp", "dd", "shred", "mkfs", "chmod", "chown", "truncate", "sudo",
+};
+
 static int token_matches(const char *token, size_t token_len, const char *const *list, size_t list_count) {
     for (size_t i = 0; i < list_count; i++) {
         if (token_len == strlen(list[i]) && strncmp(token, list[i], token_len) == 0) return 1;
@@ -20,25 +25,52 @@ static int token_matches(const char *token, size_t token_len, const char *const 
     return 0;
 }
 
-int clay_permissions_is_safe_command(const char *command) {
+/* Splits `command` into its program name (basename of the first token) and
+   the token after it (a subcommand, for programs like git). *name_len is 0
+   if `command` is empty. */
+static void split_program(const char *command, const char **name, size_t *name_len, const char **sub,
+                          size_t *sub_len) {
     while (*command == ' ') command++;
     const char *end = command;
     while (*end && *end != ' ') end++;
-    const char *name = command;
+    *name = command;
     for (const char *p = command; p < end; p++) {
-        if (*p == '/') name = p + 1;
+        if (*p == '/') *name = p + 1;
     }
-    size_t name_len = (size_t)(end - name);
+    *name_len = (size_t)(end - *name);
+
+    const char *rest = end;
+    while (*rest == ' ') rest++;
+    const char *rest_end = rest;
+    while (*rest_end && *rest_end != ' ') rest_end++;
+    *sub = rest;
+    *sub_len = (size_t)(rest_end - rest);
+}
+
+int clay_permissions_is_safe_command(const char *command) {
+    const char *name;
+    const char *sub;
+    size_t name_len;
+    size_t sub_len;
+    split_program(command, &name, &name_len, &sub, &sub_len);
 
     if (name_len == 3 && strncmp(name, "git", 3) == 0) {
-        const char *sub = end;
-        while (*sub == ' ') sub++;
-        const char *sub_end = sub;
-        while (*sub_end && *sub_end != ' ') sub_end++;
-        return token_matches(sub, (size_t)(sub_end - sub), SAFE_GIT_SUBCOMMANDS,
-                             sizeof(SAFE_GIT_SUBCOMMANDS) / sizeof(SAFE_GIT_SUBCOMMANDS[0]));
+        return token_matches(sub, sub_len, SAFE_GIT_SUBCOMMANDS, sizeof(SAFE_GIT_SUBCOMMANDS) / sizeof(SAFE_GIT_SUBCOMMANDS[0]));
     }
     return token_matches(name, name_len, SAFE_COMMANDS, sizeof(SAFE_COMMANDS) / sizeof(SAFE_COMMANDS[0]));
+}
+
+int clay_permissions_is_mutating_command(const char *command) {
+    const char *name;
+    const char *sub;
+    size_t name_len;
+    size_t sub_len;
+    split_program(command, &name, &name_len, &sub, &sub_len);
+
+    if (name_len == 3 && strncmp(name, "git", 3) == 0) {
+        return !token_matches(sub, sub_len, SAFE_GIT_SUBCOMMANDS, sizeof(SAFE_GIT_SUBCOMMANDS) / sizeof(SAFE_GIT_SUBCOMMANDS[0]));
+    }
+    return token_matches(name, name_len, MUTATING_COMMANDS, sizeof(MUTATING_COMMANDS) / sizeof(MUTATING_COMMANDS[0]));
 }
 
 const char *clay_permissions_category_name(ClayPermissionCategory category) {

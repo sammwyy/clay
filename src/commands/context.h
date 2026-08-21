@@ -36,6 +36,14 @@ typedef enum {
     CLAY_PERMISSION_CATEGORY_COUNT,
 } ClayPermissionCategory;
 
+/* Plan: shell_exec runs but mutating commands are blocked outright, and
+   write/edit are refused - for exploring/discussing before committing to
+   changes. Act: normal operation. Session-only, not persisted. */
+typedef enum {
+    CLAY_MODE_ACT,
+    CLAY_MODE_PLAN,
+} ClayCommandsMode;
+
 struct ClayCommands {
     ClayApp *app;
     int running;
@@ -55,6 +63,7 @@ struct ClayCommands {
     ClaySandboxAccess sandbox_access;
     int auto_approve[CLAY_PERMISSION_CATEGORY_COUNT];
     ClayArray remembered_patterns[CLAY_PERMISSION_CATEGORY_COUNT]; /* char*, approved for this session only */
+    ClayCommandsMode mode;
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands, const char *id);
@@ -82,6 +91,10 @@ int clay_permissions_check(ClayCommands *commands, ClayPermissionCategory catego
 /* True if `command`'s program name is on the curated read-only-ish
    whitelist (ls, cat, grep, git status, ...). */
 int clay_permissions_is_safe_command(const char *command);
+/* True if `command` would mutate the filesystem or a git repo (rm/mv/cp/...,
+   any git subcommand other than a read like status/log/diff) - the
+   blacklist Plan mode blocks regardless of approval settings. */
+int clay_permissions_is_mutating_command(const char *command);
 const char *clay_permissions_category_name(ClayPermissionCategory category);
 const char *clay_permissions_category_label(ClayPermissionCategory category);
 
@@ -104,6 +117,7 @@ void clay_cmd_sandbox(const char *args, void *user_data);
 void clay_cmd_exec(const char *args, void *user_data);
 void clay_cmd_checkpoints(const char *args, void *user_data);
 void clay_cmd_permissions(const char *args, void *user_data);
+void clay_cmd_plan(const char *args, void *user_data);
 
 /* Dedicated filesystem tools (src/commands/fs_tools.c), each scoped to the
    current workspace directory. userdata is a ClayCommands*. */

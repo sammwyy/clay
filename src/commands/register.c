@@ -26,5 +26,7 @@ void clay_commands_register(ClayCommands *commands) {
                           clay_cmd_checkpoints, commands);
     clay_command_register(registry, "permissions", "Toggle auto-approval for read/edit/exec tool calls",
                           clay_cmd_permissions, commands);
+    clay_command_register(registry, "plan", "Toggle Plan mode (blocks mutating tool calls) vs. Act mode",
+                          clay_cmd_plan, commands);
     clay_command_register(registry, "demo_all", "Run the complete render demo sequence", clay_cmd_demo, commands);
 }

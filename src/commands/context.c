@@ -12,7 +12,9 @@
     "for everything else (running builds/tests, git, other programs). It runs in /workspace (the project "           \
     "root); /scratch and /tmp are a temporary scratch area for this conversation. Depending on the user's "          \
     "/sandbox settings, paths outside those may be read-only or unavailable. Prefer focused commands and "           \
-    "summarize results.\n\n"                                                                                        \
+    "summarize results. The user can put you in Plan mode (/plan) to discuss an approach before any files "          \
+    "change - write/edit are refused and mutating shell commands are blocked there; a blocked tool result "         \
+    "means explain the plan in words instead of retrying the call.\n\n"                                              \
     "You have two kinds of memory. Long-term memory (memory_save/memory_read) persists across every future "         \
     "chat: call memory_save after completing significant work - a decision, a bug fix, a preference the user "       \
     "stated - so later sessions have it; the index of existing entries is below, and memory_read loads one by "      \
@@ -339,6 +341,8 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     clay_below_add(2, "tokens");
     clay_below_add(3, "hint");
     clay_below_set_enabled("hint", 0);
+    clay_below_add(4, "mode");
+    clay_below_set_enabled("mode", 0);
     clay_commands_set_tokens_below(commands, 0, 0);
     clay_commands_update_selected_below(commands);
     return commands;
