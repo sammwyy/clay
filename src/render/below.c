@@ -33,6 +33,7 @@ static int g_modules_ready = 0;
 
 static ClayStr g_last_input;
 static int g_last_input_ready = 0;
+static size_t g_last_cursor = 0;
 
 static int g_last_line_count = 0;
 static int g_max_rows_established = 1; /* rows below the prompt ever created via a real '\n' */
@@ -149,7 +150,13 @@ static void render_locked(void) {
     }
 
     if (rows_to_visit > 1) clay_term_cursor_up(rows_to_visit - 1);
-    clay_term_cursor_col(2 + (int)clay_utf8_width(g_last_input.data));
+
+    size_t cursor = g_last_cursor < g_last_input.len ? g_last_cursor : g_last_input.len;
+    char saved = g_last_input.data[cursor];
+    g_last_input.data[cursor] = '\0';
+    int col = (int)clay_utf8_width(g_last_input.data);
+    g_last_input.data[cursor] = saved;
+    clay_term_cursor_col(2 + col);
 
     g_last_line_count = total_now;
     fflush(stdout);
@@ -239,11 +246,12 @@ void clay_below_set_editing(int editing) {
     pthread_mutex_unlock(&g_lock);
 }
 
-void clay_below_render(const char *input) {
+void clay_below_render(const char *input, size_t cursor) {
     pthread_mutex_lock(&g_lock);
     ensure_last_input();
     clay_str_clear(&g_last_input);
     clay_str_push(&g_last_input, input);
+    g_last_cursor = cursor;
     render_locked();
     pthread_mutex_unlock(&g_lock);
 }
@@ -265,5 +273,6 @@ void clay_below_finish(void) {
     g_max_rows_established = 1;
     ensure_last_input();
     clay_str_clear(&g_last_input);
+    g_last_cursor = 0;
     pthread_mutex_unlock(&g_lock);
 }

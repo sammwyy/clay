@@ -87,22 +87,188 @@ static char *fallback_prompt_line(void) {
     return line;
 }
 
-/* Append-only line editor: chars append, backspace deletes last, up/down
-   recall history. No mid-line cursor movement; left/right ignored. */
+/* A burst of CLAY_KEY_CHAR reads that arrived without a gap collapses into
+   one of these instead of being inserted char by char. `start`/`end` are
+   the cyan placeholder's byte range in the editor buffer; `text` is the
+   real pasted content it stands for. Blocks are kept sorted by `start`
+   ascending, matching their order in the buffer. */
+#define CLAY_PASTE_MIN_CHARS 4
+
+typedef struct {
+    size_t start;
+    size_t end;
+    char *text;
+} ClayPasteBlock;
+
+static void paste_blocks_free(ClayArray *blocks) {
+    for (size_t i = 0; i < blocks->count; i++) {
+        ClayPasteBlock *b = clay_array_get(blocks, i);
+        free(b->text);
+    }
+    clay_array_clear(blocks);
+}
+
+/* Shifts every block at/after `at` by `delta` bytes - keeps the mapping
+   correct after an insert or delete elsewhere in the buffer. */
+static void paste_blocks_shift(ClayArray *blocks, size_t at, long delta) {
+    for (size_t i = 0; i < blocks->count; i++) {
+        ClayPasteBlock *b = clay_array_get(blocks, i);
+        if (b->start >= at) {
+            b->start = (size_t)((long)b->start + delta);
+            b->end = (size_t)((long)b->end + delta);
+        }
+    }
+}
+
+/* Index of the block strictly covering byte `idx` (start < idx < end), or
+   (size_t)-1. Used to keep the cursor from ever resting inside a
+   placeholder - it can only sit before or after one, never mid-escape. */
+static size_t paste_block_covering(ClayArray *blocks, size_t idx) {
+    for (size_t i = 0; i < blocks->count; i++) {
+        ClayPasteBlock *b = clay_array_get(blocks, i);
+        if (idx > b->start && idx < b->end) return i;
+    }
+    return (size_t)-1;
+}
+
+/* Index of the block occupying byte `idx` (start <= idx < end), or
+   (size_t)-1. Used by backspace: deleting any byte of a placeholder,
+   including its trailing ']', removes the whole block. */
+static size_t paste_block_at(ClayArray *blocks, size_t idx) {
+    for (size_t i = 0; i < blocks->count; i++) {
+        ClayPasteBlock *b = clay_array_get(blocks, i);
+        if (idx >= b->start && idx < b->end) return i;
+    }
+    return (size_t)-1;
+}
+
+/* Inserts a "[Pasted N chars]" placeholder at *cursor, records the range
+   it occupies, and advances *cursor past it. Takes ownership of `text`. */
+static void paste_block_insert(ClayStr *buf, ClayArray *blocks, size_t *cursor, char *text, size_t len) {
+    ClayStr placeholder;
+    clay_str_init(&placeholder);
+    clay_str_printf(&placeholder, "%s[Pasted %zu chars]%s", clay_color(CLAY_CYAN), len, clay_color(CLAY_RESET));
+
+    size_t insert_at = 0;
+    while (insert_at < blocks->count) {
+        ClayPasteBlock *b = clay_array_get(blocks, insert_at);
+        if (b->start >= *cursor) break;
+        insert_at++;
+    }
+
+    paste_blocks_shift(blocks, *cursor, (long)placeholder.len);
+    clay_str_insert_n(buf, *cursor, placeholder.data, placeholder.len);
+
+    ClayPasteBlock block;
+    block.start = *cursor;
+    block.end = *cursor + placeholder.len;
+    block.text = text;
+    clay_array_insert(blocks, insert_at, &block);
+
+    *cursor = block.end;
+    clay_str_free(&placeholder);
+}
+
+/* Deletes the byte before *cursor. If it belongs to a paste placeholder,
+   the whole block goes at once (wherever it sits, not just at the tail)
+   instead of chewing through the placeholder text one byte at a time. */
+static void prompt_backspace(ClayStr *buf, ClayArray *blocks, size_t *cursor) {
+    if (*cursor == 0) return;
+
+    size_t bi = paste_block_at(blocks, *cursor - 1);
+    if (bi != (size_t)-1) {
+        ClayPasteBlock *b = clay_array_get(blocks, bi);
+        size_t start = b->start, len = b->end - b->start;
+        free(b->text);
+        clay_array_remove(blocks, bi);
+        clay_str_remove_n(buf, start, len);
+        paste_blocks_shift(blocks, start, -(long)len);
+        *cursor = start;
+        return;
+    }
+
+    clay_str_remove_n(buf, *cursor - 1, 1);
+    paste_blocks_shift(blocks, *cursor, -1);
+    (*cursor)--;
+}
+
+/* Moves *cursor one byte left/right, jumping clean over a paste
+   placeholder instead of stepping into the middle of it. */
+static void prompt_cursor_left(ClayStr *buf, ClayArray *blocks, size_t *cursor) {
+    (void)buf;
+    if (*cursor == 0) return;
+    (*cursor)--;
+    size_t bi = paste_block_covering(blocks, *cursor);
+    if (bi != (size_t)-1) *cursor = ((ClayPasteBlock *)clay_array_get(blocks, bi))->start;
+}
+
+static void prompt_cursor_right(ClayStr *buf, ClayArray *blocks, size_t *cursor) {
+    if (*cursor >= buf->len) return;
+    (*cursor)++;
+    size_t bi = paste_block_covering(blocks, *cursor);
+    if (bi != (size_t)-1) *cursor = ((ClayPasteBlock *)clay_array_get(blocks, bi))->end;
+}
+
+/* Expands placeholders back into their real pasted text to build the line
+   actually submitted. Caller frees the result. */
+static char *paste_blocks_resolve(const ClayStr *buf, ClayArray *blocks) {
+    ClayStr out;
+    clay_str_init(&out);
+
+    size_t block_idx = 0;
+    size_t i = 0;
+    while (i < buf->len) {
+        if (block_idx < blocks->count) {
+            ClayPasteBlock *b = clay_array_get(blocks, block_idx);
+            if (i == b->start) {
+                clay_str_push(&out, b->text);
+                i = b->end;
+                block_idx++;
+                continue;
+            }
+        }
+        clay_str_push_char(&out, buf->data[i]);
+        i++;
+    }
+
+    return out.data;
+}
+
+/* Line editor: chars insert at the cursor, backspace deletes before it,
+   left/right move it (jumping over paste placeholders whole), up/down
+   recall history. A run of CLAY_PASTE_MIN_CHARS+ chars that arrive back
+   to back (no blocking wait between them) is treated as a paste: it
+   collapses into a single cyan "[Pasted N chars]" placeholder via
+   paste_block_insert, so a fast typist isn't mistaken for one. */
 static char *interactive_prompt_line(void) {
     ClayStr buf;
     clay_str_init(&buf);
 
+    ClayArray blocks;
+    clay_array_init(&blocks, sizeof(ClayPasteBlock));
+
+    size_t cursor = 0;
     int history_pos = -1; /* -1 = editing a fresh line, not browsing history */
     int got_eof = 0;
 
+    int pending_valid = 0; /* a key already read while scanning a burst, not yet handled */
+    ClayKey pending_key = CLAY_KEY_CHAR;
+    char pending_ch = 0;
+
     clay_term_raw_enable();
     clay_below_set_editing(1);
-    clay_below_render(buf.data);
+    clay_below_render(buf.data, cursor);
 
     for (;;) {
         char ch = 0;
-        ClayKey key = clay_term_read_key(&ch);
+        ClayKey key;
+        if (pending_valid) {
+            key = pending_key;
+            ch = pending_ch;
+            pending_valid = 0;
+        } else {
+            key = clay_term_read_key(&ch);
+        }
 
         if (key == CLAY_KEY_ENTER) {
             break;
@@ -110,14 +276,20 @@ static char *interactive_prompt_line(void) {
             got_eof = 1;
             break;
         } else if (key == CLAY_KEY_BACKSPACE) {
-            if (buf.len > 0) buf.data[--buf.len] = '\0';
+            prompt_backspace(&buf, &blocks, &cursor);
             history_pos = -1;
+        } else if (key == CLAY_KEY_LEFT) {
+            prompt_cursor_left(&buf, &blocks, &cursor);
+        } else if (key == CLAY_KEY_RIGHT) {
+            prompt_cursor_right(&buf, &blocks, &cursor);
         } else if (key == CLAY_KEY_UP) {
             size_t count = clay_prompt_history_count();
             if (count > 0) {
                 history_pos = (history_pos == -1) ? (int)count - 1 : (history_pos > 0 ? history_pos - 1 : 0);
                 clay_str_clear(&buf);
                 clay_str_push(&buf, clay_prompt_history_get((size_t)history_pos));
+                paste_blocks_free(&blocks);
+                cursor = buf.len;
             }
         } else if (key == CLAY_KEY_DOWN) {
             if (history_pos != -1) {
@@ -130,15 +302,39 @@ static char *interactive_prompt_line(void) {
                     history_pos = -1;
                     clay_str_clear(&buf);
                 }
+                paste_blocks_free(&blocks);
+                cursor = buf.len;
             }
         } else if (key == CLAY_KEY_CHAR) {
-            clay_str_push_char(&buf, ch);
+            ClayStr burst;
+            clay_str_init(&burst);
+            clay_str_push_char(&burst, ch);
+            while (clay_term_input_pending()) {
+                char nch = 0;
+                ClayKey nkey = clay_term_read_key(&nch);
+                if (nkey != CLAY_KEY_CHAR) {
+                    pending_key = nkey;
+                    pending_ch = nch;
+                    pending_valid = 1;
+                    break;
+                }
+                clay_str_push_char(&burst, nch);
+            }
+
+            if (burst.len >= CLAY_PASTE_MIN_CHARS) {
+                paste_block_insert(&buf, &blocks, &cursor, burst.data, burst.len);
+            } else {
+                paste_blocks_shift(&blocks, cursor, (long)burst.len);
+                clay_str_insert_n(&buf, cursor, burst.data, burst.len);
+                cursor += burst.len;
+                clay_str_free(&burst);
+            }
             history_pos = -1;
         } else {
             continue;
         }
 
-        clay_below_render(buf.data);
+        clay_below_render(buf.data, cursor);
     }
 
     clay_below_set_editing(0);
@@ -147,11 +343,18 @@ static char *interactive_prompt_line(void) {
 
     if (got_eof && buf.len == 0) {
         clay_str_free(&buf);
+        paste_blocks_free(&blocks);
+        clay_array_free(&blocks);
         return NULL;
     }
 
-    push_history(buf.data);
-    return buf.data;
+    char *result = paste_blocks_resolve(&buf, &blocks);
+    clay_str_free(&buf);
+    paste_blocks_free(&blocks);
+    clay_array_free(&blocks);
+
+    push_history(result);
+    return result;
 }
 
 char *clay_prompt_line(void) {

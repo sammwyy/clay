@@ -18,6 +18,8 @@ void clay_str_clear(ClayStr *s);
 void clay_str_push_char(ClayStr *s, char c);
 void clay_str_push(ClayStr *s, const char *text);
 void clay_str_push_n(ClayStr *s, const char *text, size_t len);
+void clay_str_insert_n(ClayStr *s, size_t at, const char *text, size_t len); /* shifts the tail right */
+void clay_str_remove_n(ClayStr *s, size_t at, size_t len);                   /* shifts the tail left */
 void clay_str_printf(ClayStr *s, const char *fmt, ...);
 void clay_str_vprintf(ClayStr *s, const char *fmt, va_list args);
 

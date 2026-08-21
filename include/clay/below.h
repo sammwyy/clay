@@ -1,6 +1,8 @@
 #ifndef CLAY_BELOW_H
 #define CLAY_BELOW_H
 
+#include <stddef.h>
+
 typedef enum {
     CLAY_BELOW_NONE,     /* no icon */
     CLAY_BELOW_LOADING,  /* animated spinner */
@@ -24,8 +26,10 @@ void clay_below_reorder(const char *id, int index);
 void clay_below_set_editing(int editing);
 
 /* Redraws the prompt line (`input`) plus enabled modules as one block;
-   cursor ends at the end of `input`. Thread-safe. */
-void clay_below_render(const char *input);
+   the terminal cursor is placed at display column `cursor` (a byte
+   offset into `input`; ANSI escapes in the prefix up to it don't count
+   towards the column). Thread-safe. */
+void clay_below_render(const char *input, size_t cursor);
 
 /* Erases the modules row and moves the cursor to a fresh line below it.
    The prompt line itself stays on screen as history. */

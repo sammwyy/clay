@@ -52,6 +52,18 @@ void clay_str_push_char(ClayStr *s, char c) {
     s->data[s->len] = '\0';
 }
 
+void clay_str_insert_n(ClayStr *s, size_t at, const char *text, size_t len) {
+    str_reserve(s, len);
+    memmove(s->data + at + len, s->data + at, s->len - at + 1); /* +1 carries the NUL */
+    memcpy(s->data + at, text, len);
+    s->len += len;
+}
+
+void clay_str_remove_n(ClayStr *s, size_t at, size_t len) {
+    memmove(s->data + at, s->data + at + len, s->len - at - len + 1); /* +1 carries the NUL */
+    s->len -= len;
+}
+
 void clay_str_vprintf(ClayStr *s, const char *fmt, va_list args) {
     va_list args_copy;
     va_copy(args_copy, args);

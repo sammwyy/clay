@@ -43,3 +43,22 @@ void clay_array_push_val(ClayArray *a, const void *value) {
 void *clay_array_get(ClayArray *a, size_t index) {
     return (unsigned char *)a->data + index * a->elem_size;
 }
+
+void clay_array_insert(ClayArray *a, size_t index, const void *value) {
+    clay_array_push(a); /* grow if needed, reserve the extra slot */
+    unsigned char *base = (unsigned char *)a->data;
+    size_t tail = a->count - 1 - index;
+    if (tail > 0) {
+        memmove(base + (index + 1) * a->elem_size, base + index * a->elem_size, tail * a->elem_size);
+    }
+    memcpy(base + index * a->elem_size, value, a->elem_size);
+}
+
+void clay_array_remove(ClayArray *a, size_t index) {
+    unsigned char *base = (unsigned char *)a->data;
+    size_t tail = a->count - index - 1;
+    if (tail > 0) {
+        memmove(base + index * a->elem_size, base + (index + 1) * a->elem_size, tail * a->elem_size);
+    }
+    a->count--;
+}

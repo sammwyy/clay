@@ -11,6 +11,7 @@
 #define CLAY_PATH_MAX MAX_PATH
 #else
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
 #define CLAY_PATH_MAX 4096
@@ -251,5 +252,17 @@ ClayKey clay_term_read_key(char *ch_out) {
 
     if (ch_out) *ch_out = (char)c;
     return CLAY_KEY_CHAR;
+#endif
+}
+
+int clay_term_input_pending(void) {
+#ifdef _WIN32
+    return _kbhit() != 0;
+#else
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    struct timeval tv = {0, 0};
+    return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
 #endif
 }

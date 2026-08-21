@@ -60,6 +60,13 @@ void clay_term_raw_disable(void);
    CLAY_KEY_CHAR. */
 ClayKey clay_term_read_key(char *ch_out);
 
+/* True if another byte is already sitting in stdin's input buffer, i.e.
+   a follow-up read won't block. A paste lands in that buffer all at
+   once, while typed keystrokes trickle in with a real gap between them
+   - this is what lets a caller tell the two apart without bracketed
+   paste mode. */
+int clay_term_input_pending(void);
+
 /* Moves the cursor down one row into `row` (row 1, 2, ... counted from a
    caller-tracked row 0). Uses cursor-down if the row already exists
    (*established > row, never scrolls), or a real '\n' if it's new
