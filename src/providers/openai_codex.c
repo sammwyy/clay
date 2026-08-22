@@ -2,9 +2,9 @@
    Its undocumented compatibility details deliberately live in this file. */
 #include "clay/providers/openai_codex.h"
 
-#include "clay/crypto.h"
 #include "clay/encoding.h"
 #include "clay/http.h"
+#include "clay/oauth.h"
 #include "clay/sse.h"
 #include "clay/term.h"
 
@@ -52,7 +52,7 @@ typedef struct {
   ClayStr raw;
   ClayStr content;
   ClayArray calls; /* CodexToolCall */
-  ClayCodexSseParser *sse;
+  ClaySseParser *sse;
   const ClayOpenAICallbacks *callbacks;
   int cancelled;
   int malformed;
@@ -61,46 +61,6 @@ typedef struct {
   long output_tokens;
 } CodexStream;
 
-static char *copy_n(const char *text, size_t len) {
-  char *copy = malloc(len + 1);
-  if (!copy)
-    return NULL;
-  memcpy(copy, text, len);
-  copy[len] = '\0';
-  return copy;
-}
-int clay_openai_codex_create_pkce(char **verifier, char **challenge,
-                                  char **state) {
-  unsigned char verifier_bytes[48], state_bytes[32], digest[32];
-  if (!verifier || !challenge || !state ||
-      clay_term_random_bytes(verifier_bytes, sizeof(verifier_bytes)) ||
-      clay_term_random_bytes(state_bytes, sizeof(state_bytes)))
-    return -1;
-  *verifier = clay_base64url_encode(verifier_bytes, sizeof(verifier_bytes));
-  *state = clay_base64url_encode(state_bytes, sizeof(state_bytes));
-  if (!*verifier || !*state) {
-    free(*verifier);
-    free(*state);
-    *verifier = NULL;
-    *state = NULL;
-    return -1;
-  }
-  clay_sha256(*verifier, strlen(*verifier), digest);
-  *challenge = clay_base64url_encode(digest, sizeof(digest));
-  return *verifier && *challenge && *state ? 0 : -1;
-}
-char *clay_openai_codex_pkce_challenge(const char *verifier) {
-  if (!verifier)
-    return NULL;
-  unsigned char digest[32];
-  clay_sha256(verifier, strlen(verifier), digest);
-  return clay_base64url_encode(digest, sizeof(digest));
-}
-void clay_openai_codex_pkce_free(char *verifier, char *challenge, char *state) {
-  free(verifier);
-  free(challenge);
-  free(state);
-}
 char *clay_openai_codex_authorization_url(const char *challenge,
                                           const char *state) {
   if (!challenge || !state)
@@ -130,82 +90,16 @@ int clay_openai_codex_extract_account_id(const char *id_token,
     *account_id_out = NULL;
   if (!id_token || !account_id_out)
     return -1;
-  const char *dot = strchr(id_token, '.');
-  if (!dot)
-    return -1;
-  const char *end = strchr(dot + 1, '.');
-  if (!end)
-    return -1;
-  char *segment = copy_n(dot + 1, (size_t)(end - dot - 1));
-  char *payload = clay_base64url_decode(segment);
-  free(segment);
+  ClayJson *payload = clay_jwt_decode_payload(id_token);
   if (!payload)
     return -1;
-  ClayJson *root = clay_json_parse(payload, NULL);
-  free(payload);
-  if (!root)
-    return -1;
-  ClayJson *auth = clay_json_object_get(root, "https://api.openai.com/auth");
-  const char *id =
+  ClayJson *auth = clay_json_object_get(payload, "https://api.openai.com/auth");
+  const char *account =
       clay_json_string_value(clay_json_object_get(auth, "chatgpt_account_id"));
-  if (id && *id)
-    *account_id_out = strdup(id);
-  clay_json_free(root);
+  if (account && *account)
+    *account_id_out = strdup(account);
+  clay_json_free(payload);
   return *account_id_out ? 0 : -1;
-}
-
-int clay_openai_codex_parse_callback(const char *target,
-                                     const char *expected_state,
-                                     ClayCodexCallback *out) {
-  if (out)
-    memset(out, 0, sizeof(*out));
-  if (!target || !expected_state || !out)
-    return -1;
-  const char *q = strchr(target, '?');
-  size_t path_len = q ? (size_t)(q - target) : strlen(target);
-  if (path_len != strlen("/auth/callback") ||
-      strncmp(target, "/auth/callback", path_len) != 0)
-    return -1;
-  char *code = NULL, *state = NULL;
-  int oauth_error = 0;
-  if (q)
-    for (const char *p = q + 1; *p;) {
-      const char *amp = strchr(p, '&');
-      const char *e = amp ? amp : p + strlen(p);
-      const char *eq = memchr(p, '=', (size_t)(e - p));
-      size_t key_len = eq ? (size_t)(eq - p) : (size_t)(e - p);
-      char *value = clay_form_url_decode(eq ? eq + 1 : e,
-                                         (size_t)(e - (eq ? eq + 1 : e)));
-      if (key_len == 4 && strncmp(p, "code", 4) == 0) {
-        free(code);
-        code = value;
-        value = NULL;
-      } else if (key_len == 5 && strncmp(p, "state", 5) == 0) {
-        free(state);
-        state = value;
-        value = NULL;
-      } else if (key_len == 5 && strncmp(p, "error", 5) == 0)
-        oauth_error = 1;
-      free(value);
-      if (!amp)
-        break;
-      p = amp + 1;
-    }
-  int ok = !oauth_error && code && *code && state &&
-           strcmp(state, expected_state) == 0;
-  if (ok) {
-    out->code = code;
-    out->ok = 1;
-  } else
-    free(code);
-  free(state);
-  return ok ? 0 : -1;
-}
-void clay_openai_codex_callback_free(ClayCodexCallback *callback) {
-  if (!callback)
-    return;
-  free(callback->code);
-  memset(callback, 0, sizeof(*callback));
 }
 
 static void append_error(ClayStr *error, const char *message) {
@@ -215,7 +109,7 @@ static void append_error(ClayStr *error, const char *message) {
   }
 }
 static int wait_callback(ClayTermHttpServer *listener, const char *state,
-                         ClayCodexCallback *out, ClayStr *error) {
+                         ClayOAuthCallback *out, ClayStr *error) {
   time_t deadline = time(NULL) + CODEX_CALLBACK_TIMEOUT_SECONDS;
   ClayStr request;
   clay_str_init(&request);
@@ -242,8 +136,8 @@ static int wait_callback(ClayTermHttpServer *listener, const char *state,
     int parsed =
         sscanf(request.data, "%7s %8191s %15s", method, target, version) == 3 &&
         strcmp(method, "GET") == 0;
-    int ok =
-        parsed && clay_openai_codex_parse_callback(target, state, out) == 0;
+    int ok = parsed && clay_oauth_parse_callback(target, "/auth/callback",
+                                                 state, out) == 0;
     const char *body = ok ? "<!doctype html><title>Authentication "
                             "complete</title><p>Authentication complete. You "
                             "can return to the application.</p>"
@@ -320,10 +214,11 @@ int clay_openai_codex_authenticate(ClayCodexCredentials *out, ClayStr *error) {
   memset(out, 0, sizeof(*out));
   char *verifier = NULL, *challenge = NULL, *state = NULL, *url = NULL;
   ClayTermHttpServer *listener = NULL;
-  ClayCodexCallback callback = {0};
+  ClayOAuthPkce pkce = {0};
+  ClayOAuthCallback callback = {0};
   ClayJson *token = NULL;
   int rc = -1;
-  if (clay_openai_codex_create_pkce(&verifier, &challenge, &state) != 0) {
+  if (clay_oauth_pkce_create(&pkce) != 0) {
     append_error(error, "Could not create secure OAuth credentials.");
     goto done;
   }
@@ -333,6 +228,9 @@ int clay_openai_codex_authenticate(ClayCodexCredentials *out, ClayStr *error) {
                         "application may already be using the OAuth port.");
     goto done;
   }
+  verifier = pkce.verifier;
+  challenge = pkce.challenge;
+  state = pkce.state;
   url = clay_openai_codex_authorization_url(challenge, state);
   if (!url) {
     append_error(error, "Could not create authorization URL.");
@@ -376,8 +274,8 @@ int clay_openai_codex_authenticate(ClayCodexCredentials *out, ClayStr *error) {
 done:
   clay_term_http_server_destroy(listener);
   clay_json_free(token);
-  clay_openai_codex_callback_free(&callback);
-  clay_openai_codex_pkce_free(verifier, challenge, state);
+  clay_oauth_callback_free(&callback);
+  clay_oauth_pkce_free(&pkce);
   free(url);
   return rc;
 }
@@ -467,19 +365,6 @@ void clay_openai_codex_copy_credentials(const ClayOpenAICodex *client,
 }
 int clay_openai_codex_authentication_invalid(const ClayOpenAICodex *client) {
   return client && client->authentication_invalid;
-}
-
-ClayCodexSseParser *clay_openai_codex_sse_create(void (*on_json)(const char *,
-                                                                 void *),
-                                                 void *userdata) {
-  return clay_sse_create(CODEX_SSE_LINE_LIMIT, on_json, userdata);
-}
-int clay_openai_codex_sse_feed(ClayCodexSseParser *p, const char *data,
-                               size_t len) {
-  return clay_sse_feed(p, data, len);
-}
-void clay_openai_codex_sse_destroy(ClayCodexSseParser *p) {
-  clay_sse_destroy(p);
 }
 
 static int append_limited(ClayStr *out, const char *text, size_t n,
@@ -592,7 +477,7 @@ static void stream_init(CodexStream *s, const ClayOpenAICallbacks *callbacks) {
   clay_str_init(&s->content);
   clay_array_init(&s->calls, sizeof(CodexToolCall));
   s->callbacks = callbacks;
-  s->sse = clay_openai_codex_sse_create(codex_sse_json, s);
+  s->sse = clay_sse_create(CODEX_SSE_LINE_LIMIT, codex_sse_json, s);
 }
 static void stream_free(CodexStream *s) {
   clay_str_free(&s->raw);
@@ -605,7 +490,7 @@ static void stream_free(CodexStream *s) {
     clay_str_free(&c->arguments);
   }
   clay_array_free(&s->calls);
-  clay_openai_codex_sse_destroy(s->sse);
+  clay_sse_destroy(s->sse);
 }
 static int stream_chunk(const char *data, size_t len, void *userdata) {
   CodexStream *s = userdata;
@@ -615,7 +500,7 @@ static int stream_chunk(const char *data, size_t len, void *userdata) {
       kept = len;
     clay_str_push_n(&s->raw, data, kept);
   }
-  return clay_openai_codex_sse_feed(s->sse, data, len);
+  return clay_sse_feed(s->sse, data, len);
 }
 static int stream_abort(void *userdata) {
   CodexStream *s = userdata;

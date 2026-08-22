@@ -18,6 +18,7 @@
 #include "clay/memory.h"
 #include "clay/mm.h"
 #include "clay/model_select.h"
+#include "clay/oauth.h"
 #include "clay/prompt.h"
 #include "clay/render.h"
 #include "clay/sse.h"

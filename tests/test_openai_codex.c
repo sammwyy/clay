@@ -1,5 +1,7 @@
 #include "clay/json.h"
+#include "clay/oauth.h"
 #include "clay/providers/openai_codex.h"
+#include "clay/sse.h"
 #include "clay/str.h"
 
 #include <assert.h>
@@ -18,18 +20,16 @@ static void collect_delta(const char *text, void *userdata) {
 }
 
 static void test_pkce_and_url(void) {
-  char *challenge = clay_openai_codex_pkce_challenge(
-      "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+  char *challenge =
+      clay_oauth_pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
   assert(strcmp(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM") == 0);
   free(challenge);
 
-  char *verifier = NULL, *generated_challenge = NULL, *state = NULL;
-  assert(clay_openai_codex_create_pkce(&verifier, &generated_challenge,
-                                       &state) == 0);
-  assert(strlen(verifier) >= 43 && strchr(verifier, '=') == NULL);
-  assert(strlen(generated_challenge) == 43 &&
-         strchr(generated_challenge, '=') == NULL);
-  char *url = clay_openai_codex_authorization_url(generated_challenge, state);
+  ClayOAuthPkce pkce;
+  assert(clay_oauth_pkce_create(&pkce) == 0);
+  assert(strlen(pkce.verifier) >= 43 && strchr(pkce.verifier, '=') == NULL);
+  assert(strlen(pkce.challenge) == 43 && strchr(pkce.challenge, '=') == NULL);
+  char *url = clay_openai_codex_authorization_url(pkce.challenge, pkce.state);
   assert(strstr(url, "client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
   assert(strstr(
       url, "redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
@@ -37,25 +37,24 @@ static void test_pkce_and_url(void) {
   assert(strstr(url, "code_challenge_method=S256"));
   assert(strstr(url, "state="));
   free(url);
-  clay_openai_codex_pkce_free(verifier, generated_challenge, state);
+  clay_oauth_pkce_free(&pkce);
 }
 
 static void test_callback(void) {
-  ClayCodexCallback callback;
-  assert(clay_openai_codex_parse_callback(
-             "/auth/callback?code=test-code&state=state", "state", &callback) ==
-         0);
-  assert(callback.ok && strcmp(callback.code, "test-code") == 0);
-  clay_openai_codex_callback_free(&callback);
-  assert(clay_openai_codex_parse_callback("/auth/callback?code=x&state=wrong",
-                                          "state", &callback) != 0);
-  assert(clay_openai_codex_parse_callback(
-             "/auth/callback?error=access_denied&state=state", "state",
-             &callback) != 0);
-  assert(clay_openai_codex_parse_callback("/auth/callback?state=state", "state",
-                                          &callback) != 0);
-  assert(clay_openai_codex_parse_callback("/unexpected?code=x&state=state",
-                                          "state", &callback) != 0);
+  ClayOAuthCallback callback;
+  assert(clay_oauth_parse_callback("/auth/callback?code=test-code&state=state",
+                                   "/auth/callback", "state", &callback) == 0);
+  assert(strcmp(callback.code, "test-code") == 0);
+  clay_oauth_callback_free(&callback);
+  assert(clay_oauth_parse_callback("/auth/callback?code=x&state=wrong",
+                                   "/auth/callback", "state", &callback) != 0);
+  assert(clay_oauth_parse_callback(
+             "/auth/callback?error=access_denied&state=state", "/auth/callback",
+             "state", &callback) != 0);
+  assert(clay_oauth_parse_callback("/auth/callback?state=state",
+                                   "/auth/callback", "state", &callback) != 0);
+  assert(clay_oauth_parse_callback("/unexpected?code=x&state=state",
+                                   "/auth/callback", "state", &callback) != 0);
 }
 
 static void test_account_id(void) {
@@ -71,16 +70,15 @@ static void test_account_id(void) {
 static void test_split_sse(void) {
   ClayStr text;
   clay_str_init(&text);
-  ClayCodexSseParser *parser =
-      clay_openai_codex_sse_create(collect_delta, &text);
+  ClaySseParser *parser = clay_sse_create(256 * 1024, collect_delta, &text);
   const char *first = "data: {\"type\":\"response.output";
   const char *second = "_text.delta\",\"delta\":\"hel";
   const char *third = "lo\"}\n\n";
-  assert(clay_openai_codex_sse_feed(parser, first, strlen(first)) == 0);
-  assert(clay_openai_codex_sse_feed(parser, second, strlen(second)) == 0);
-  assert(clay_openai_codex_sse_feed(parser, third, strlen(third)) == 0);
+  assert(clay_sse_feed(parser, first, strlen(first)) == 0);
+  assert(clay_sse_feed(parser, second, strlen(second)) == 0);
+  assert(clay_sse_feed(parser, third, strlen(third)) == 0);
   assert(strcmp(text.data, "hello") == 0);
-  clay_openai_codex_sse_destroy(parser);
+  clay_sse_destroy(parser);
   clay_str_free(&text);
 }
 
