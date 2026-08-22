@@ -1,0 +1,90 @@
+.TH CLAY 1 "August 2026" "clay 0.0.0" "User Commands"
+.SH NAME
+clay \- focused AI coding agent for the terminal
+.SH SYNOPSIS
+.B clay
+.RI [ options ]
+.br
+.B clay shell
+.RI [ command ]
+.SH DESCRIPTION
+.B clay
+connects to OpenAI, OpenAI Codex, Grok, OpenRouter, Groq, DeepSeek, Mistral,
+Together AI, or another OpenAI-compatible endpoint and provides a terminal
+coding workflow with file tools, checkpoints, memory, and streaming responses.
+.PP
+Run without a prompt for the interactive interface. Use
+.B --prompt
+for a single non-interactive request.
+.SH OPTIONS
+.TP
+.B --help
+Show command-line help.
+.TP
+.B --version
+Print the version and exit.
+.TP
+.B --no-color
+Disable terminal colors.
+.TP
+.BI --cwd= directory
+Change to DIRECTORY before starting.
+.TP
+.BI --prompt= text
+Send TEXT and exit after one response.
+.TP
+.BI -p\  text
+Short alias for
+.BR --prompt .
+.SH INTERACTIVE COMMANDS
+.TP
+.B /connect
+Connect a provider. Use
+.B /connect openai-codex
+for ChatGPT Plus/Pro OAuth, or select a named OpenAI-compatible provider.
+.TP
+.B /model
+Choose or set the active model.
+.TP
+.B /undo
+Undo the most recent successful
+.B write
+or
+.B edit
+without restoring the entire workspace. Undo is kept for the current session
+and refuses to overwrite a file that changed afterwards.
+.TP
+.B /checkpoints
+List and restore whole-workspace checkpoints.
+.TP
+.B /resume
+Resume a saved conversation.
+.TP
+.B /help
+List all interactive commands.
+.TP
+.B /exit
+Quit clay.
+.SH ENVIRONMENT
+.TP
+.B CLAY_PROVIDER, CLAY_MODEL
+Select a provider and model explicitly.
+.TP
+.B OPENAI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY
+API keys for the corresponding providers.
+.TP
+.B DEEPSEEK_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY
+API keys for the corresponding OpenAI-compatible providers.
+.TP
+.B CLAY_API_KEY, CLAY_BASE_URL, CUSTOM_MODEL
+Credentials and endpoint for the custom provider.
+.PP
+Provider-specific base URLs and model variables are documented in the project
+README.
+.SH FILES
+.TP
+.I ~/.clay/
+Configuration, credentials, chat journals, checkpoints, and memory.
+.SH SEE ALSO
+.BR git (1),
+.BR curl (1)

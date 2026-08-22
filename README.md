@@ -33,7 +33,7 @@ No giant framework to learn. No crowded dashboard. A single self-contained binar
 | **Dedicated file tools** | `read`, `write`, `edit`, `glob`, `grep` operate directly on the workspace — `edit` requires an exact, unique text match (no fuzzy diffing), and every path is checked against escaping the workspace root. |
 | **Sandboxed by default** | On Linux, shell commands run with an isolated filesystem, no network, and resource limits — `/workspace` is your project and `/scratch`/`/tmp` is conversation scratch space. Opt out with `/sandbox`. |
 | **Permissions & Plan mode** | `/permissions` sets which tool categories (read, edit, safe commands, all commands) run without asking; anything else prompts once, with an "always this session" option. `/plan` goes further and refuses writes/edits and mutating shell commands outright, so you can discuss an approach before anything changes. |
-| **Checkpoints, not just trust** | Every `write`/`edit`/`shell_exec` call snapshots the workspace into a real git repo behind the scenes first (no libgit2 — `git` is shelled out). `/checkpoints` lists them and restores any point, even if your project isn't a git repo itself. |
+| **Checkpoints, not just trust** | Every `write`/`edit`/`shell_exec` call snapshots the workspace into a real git repo behind the scenes first (no libgit2 — `git` is shelled out). `/checkpoints` lists them and restores any point, even if your project isn't a git repo itself. `/undo` quickly reverses the last successful file edit without restoring the whole workspace. |
 | **Memory that lasts** | Long-term memory (`/memory`) survives across every chat; a short-term scratchpad rides along with the active conversation as it grows. |
 | **Context that doesn't run away** | Old tool output is collapsed to short previews automatically once a request nears the token budget — no extra model call. `/compact` goes further: it asks the model itself to write a summary (with tool output stripped first) and replaces the conversation with it. |
 | **Already knows the room** | An `AGENTS.md`/`CLAY.md` in the workspace is folded into the system prompt automatically; the OS, working directory, git branch, and a top-level file listing ride along too, so the model doesn't spend a turn on `pwd`/`ls`/`git branch`. |
@@ -133,6 +133,7 @@ session can be used by `-p` as-is; headless Codex sessions may provide
 | `/permissions` | Toggle auto-approval for read / edit / safe-command / all-command tool calls. |
 | `/plan` | Toggle Plan mode (blocks writes/edits and mutating shell commands) vs. Act mode. |
 | `/checkpoints` | Browse and restore this chat's workspace checkpoints. |
+| `/undo` | Undo the last successful `write` or `edit` without restoring a full checkpoint. |
 | `/exec <command>` | Run a shell command through the sandbox directly, without going through the model. |
 
 ### Extensibility
@@ -159,6 +160,10 @@ session can be used by `-p` as-is; headless Codex sessions may provide
 | --- | --- |
 | `/help` | See every available command. |
 | `/exit` | Close Clay. |
+
+The repository also includes shell completions in `completions/` and a man
+page in `man/clay.1`. Run `make completions man-pages` to validate those
+distribution files.
 
 ### Keyboard shortcuts
 

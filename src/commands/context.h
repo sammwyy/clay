@@ -33,6 +33,16 @@ typedef struct {
 } ClayReasoningEffort;
 
 typedef struct {
+  char *path;
+  char *before;
+  size_t before_len;
+  char *after;
+  size_t after_len;
+  int before_exists;
+  int after_exists;
+} ClayUndoEntry;
+
+typedef struct {
   char *content;
   char *status; /* "pending", "in_progress", or "completed" */
 } ClayTodoItem;
@@ -94,6 +104,9 @@ struct ClayCommands {
       mcp_servers; /* ClayMcpServer*, connected for the life of the session */
   ClayArray mcp_bindings; /* ClayMcpToolBinding, one per discovered MCP tool */
   int mcp_connect_attempted;
+  ClayArray undo_history; /* ClayUndoEntry, newest entry last */
+  ClayUndoEntry undo_pending;
+  int undo_pending_valid;
   char *auto_test_command; /* "" if unset */
   ClayAutoTestChoice auto_test_choice;
 };
@@ -197,9 +210,20 @@ void clay_cmd_exec(const char *args, void *user_data);
 void clay_cmd_checkpoints(const char *args, void *user_data);
 void clay_cmd_permissions(const char *args, void *user_data);
 void clay_cmd_plan(const char *args, void *user_data);
+void clay_cmd_undo(const char *args, void *user_data);
+
+/* Captures and commits one file-level undo entry around a write/edit. The
+   snapshot is best-effort; unsupported or oversized files are still edited,
+   but simply won't appear in /undo. */
+int clay_commands_undo_prepare(ClayCommands *commands, const char *path);
+void clay_commands_undo_commit(ClayCommands *commands);
+void clay_commands_undo_discard(ClayCommands *commands);
+void clay_commands_undo_destroy(ClayCommands *commands);
 
 /* Dedicated filesystem tools (src/commands/fs_tools.c), each scoped to the
    current workspace directory. userdata is a ClayCommands*. */
+int clay_fs_resolve_workspace_path(const char *workspace_dir, const char *path,
+                                   ClayStr *abs_out);
 ClayJson *clay_fs_tool_read(const ClayJson *arguments, void *userdata);
 ClayJson *clay_fs_tool_read_schema(void);
 ClayJson *clay_fs_tool_write(const ClayJson *arguments, void *userdata);

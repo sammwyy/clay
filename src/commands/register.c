@@ -33,6 +33,8 @@ void clay_commands_register(ClayCommands *commands) {
                           commands);
     clay_command_register(registry, "checkpoints", "Browse and restore this chat's workspace checkpoints",
                           clay_cmd_checkpoints, commands);
+    clay_command_register(registry, "undo", "Undo the last successful write or edit",
+                          clay_cmd_undo, commands);
     clay_command_register(registry, "permissions", "Toggle auto-approval for read/edit/exec tool calls",
                           clay_cmd_permissions, commands);
     clay_command_register(registry, "plan", "Toggle Plan mode (blocks mutating tool calls) vs. Act mode",

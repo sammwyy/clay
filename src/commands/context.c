@@ -1047,6 +1047,7 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   clay_array_init(&commands->todos, sizeof(ClayTodoItem));
   clay_array_init(&commands->mcp_servers, sizeof(ClayMcpServer *));
   clay_array_init(&commands->mcp_bindings, sizeof(ClayMcpToolBinding));
+  clay_array_init(&commands->undo_history, sizeof(ClayUndoEntry));
   commands->auto_test_command = clay_config_auto_test_command();
   commands->auto_test_choice = CLAY_AUTO_TEST_UNASKED;
   clay_commands_reset_conversation(commands);
@@ -1093,6 +1094,7 @@ void clay_commands_destroy(ClayCommands *commands) {
     free(binding->exposed_name);
   }
   clay_array_free(&commands->mcp_bindings);
+  clay_commands_undo_destroy(commands);
   for (size_t i = 0; i < commands->mcp_servers.count; i++) {
     clay_mcp_disconnect(
         *(ClayMcpServer **)clay_array_get(&commands->mcp_servers, i));

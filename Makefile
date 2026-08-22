@@ -112,6 +112,10 @@ GROK_TEST_SRC    := tests/test_grok.c
 GROK_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(GROK_TEST_SRC))
 GROK_TEST_TARGET := $(BIN_DIR)/test_grok
 
+UNDO_TEST_SRC    := tests/test_undo.c
+UNDO_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(UNDO_TEST_SRC))
+UNDO_TEST_TARGET := $(BIN_DIR)/test_undo
+
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
@@ -131,9 +135,9 @@ UNIT_TEST_TARGETS := $(CLI_TEST_TARGET) $(COMMAND_TEST_TARGET) $(CHAT_TEST_TARGE
 	$(CONTEXT_COMPACT_TEST_TARGET) $(PROJECT_INSTRUCTIONS_TEST_TARGET) \
 	$(TODOWRITE_TEST_TARGET) $(PROCESS_TEST_TARGET) $(MCP_TEST_TARGET) \
 	$(REPO_MAP_TEST_TARGET) $(ENV_BLOCK_TEST_TARGET) $(COMPACT_TEST_TARGET) \
-	$(CODEX_TEST_TARGET) $(GROK_TEST_TARGET)
+	$(CODEX_TEST_TARGET) $(GROK_TEST_TARGET) $(UNDO_TEST_TARGET)
 
-.PHONY: all build build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact run compress compress-win clean debug
+.PHONY: all build build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact test-undo completions man-pages run compress compress-win clean debug
 
 all: build
 
@@ -159,6 +163,12 @@ $(CODEX_TEST_TARGET): $(LIB_OBJ) $(CODEX_TEST_OBJ) | $(BIN_DIR)
 
 $(GROK_TEST_TARGET): $(LIB_OBJ) $(GROK_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(GROK_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-undo: $(UNDO_TEST_TARGET)
+	@./$<
+
+$(UNDO_TEST_TARGET): $(LIB_OBJ) $(UNDO_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(UNDO_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(TEST_TARGET): $(LIB_OBJ) $(TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(TEST_OBJ) -o $@ $(LDFLAGS)
@@ -275,6 +285,12 @@ $(BUILD_DIR)/tests/%.o: tests/%.c
 
 $(BIN_DIR):
 	mkdir -p $@
+
+COMPLETION_FILES := completions/clay.bash completions/clay.zsh completions/clay.fish
+
+completions: $(COMPLETION_FILES)
+
+man-pages: man/clay.1
 
 build-win: $(TARGET_WIN)
 build_win: build-win

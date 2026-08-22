@@ -160,8 +160,13 @@ static ClayJson *write_tool_checkpointed(const ClayJson *arguments,
   clay_str_init(&label);
   clay_str_printf(&label, "write: %s", path && *path ? path : "?");
   checkpoint_before(userdata, label.data);
+  clay_commands_undo_prepare(userdata, path);
   clay_str_free(&label);
   ClayJson *result = clay_fs_tool_write(arguments, userdata);
+  if (clay_json_bool_value(clay_json_object_get(result, "ok")))
+    clay_commands_undo_commit(userdata);
+  else
+    clay_commands_undo_discard(userdata);
   run_auto_test(userdata, result);
   return result;
 }
@@ -179,8 +184,13 @@ static ClayJson *edit_tool_checkpointed(const ClayJson *arguments,
   clay_str_init(&label);
   clay_str_printf(&label, "edit: %s", path && *path ? path : "?");
   checkpoint_before(userdata, label.data);
+  clay_commands_undo_prepare(userdata, path);
   clay_str_free(&label);
   ClayJson *result = clay_fs_tool_edit(arguments, userdata);
+  if (clay_json_bool_value(clay_json_object_get(result, "ok")))
+    clay_commands_undo_commit(userdata);
+  else
+    clay_commands_undo_discard(userdata);
   run_auto_test(userdata, result);
   return result;
 }

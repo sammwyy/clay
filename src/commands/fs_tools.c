@@ -14,7 +14,7 @@
 /* Resolves `path` (relative to the workspace, or absolute) to a normalized
    absolute path in `abs_out`. Returns 0 if the result stays inside
    `workspace_dir`, -1 if it would escape it. */
-static int resolve_workspace_path(const char *workspace_dir, const char *path, ClayStr *abs_out) {
+int clay_fs_resolve_workspace_path(const char *workspace_dir, const char *path, ClayStr *abs_out) {
     ClayStr joined;
     clay_str_init(&joined);
     if (path[0] == '/') clay_str_push(&joined, path);
@@ -102,7 +102,7 @@ static int resolve_arg_path(const ClayJson *arguments, ClayStr *abs_out, char **
         return -1;
     }
     *workspace_out = clay_term_cwd();
-    if (resolve_workspace_path(*workspace_out, path, abs_out) != 0) {
+    if (clay_fs_resolve_workspace_path(*workspace_out, path, abs_out) != 0) {
         clay_str_free(abs_out);
         free(*workspace_out);
         *workspace_out = NULL;
@@ -511,7 +511,7 @@ ClayJson *clay_fs_tool_glob(const ClayJson *arguments, void *userdata) {
 
     char *workspace_dir = clay_term_cwd();
     ClayStr abs_base;
-    if (resolve_workspace_path(workspace_dir, base, &abs_base) != 0) {
+    if (clay_fs_resolve_workspace_path(workspace_dir, base, &abs_base) != 0) {
         free(workspace_dir);
         clay_str_free(&abs_base);
         clay_json_object_set(result, "ok", clay_json_bool(0));
