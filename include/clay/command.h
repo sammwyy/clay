@@ -16,6 +16,8 @@ void clay_command_register(ClayCommandRegistry *reg, const char *name, const cha
 void clay_command_register_alias(ClayCommandRegistry *reg, const char *alias, ClayCommandHandler handler,
                                  void *user_data);
 void clay_command_foreach(ClayCommandRegistry *reg, ClayCommandVisitor visitor, void *ctx);
+/* Visits visible commands and aliases, in registration order. */
+void clay_command_foreach_all(ClayCommandRegistry *reg, ClayCommandVisitor visitor, void *ctx);
 
 typedef enum {
     CLAY_INPUT_EMPTY,

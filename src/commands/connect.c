@@ -113,7 +113,7 @@ static void connect_type(ClayCommands *commands, const ClayProviderType *type) {
     clay_app_say(commands->app, "Base URL: %s", base_url);
   } else {
     clay_app_say(commands->app, "Base URL for %s:", type->label);
-    base_url = clay_prompt_line();
+    base_url = clay_prompt_line(NULL);
   }
   if (!base_url || !*base_url) {
     clay_sayc(CLAY_RED, "Cancelled.");

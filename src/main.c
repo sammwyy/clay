@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
 
     int interrupted = 0;
     while (clay_commands_running(commands)) {
-        char *line = clay_prompt_line();
+        char *line = clay_prompt_line(clay_app_commands(app));
         if (!line) {
             interrupted = clay_prompt_was_interrupted() || clay_term_take_interrupt();
             break;

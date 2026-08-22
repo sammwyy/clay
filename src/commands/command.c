@@ -82,6 +82,14 @@ void clay_command_foreach(ClayCommandRegistry *reg, ClayCommandVisitor visitor, 
     }
 }
 
+void clay_command_foreach_all(ClayCommandRegistry *reg, ClayCommandVisitor visitor, void *ctx) {
+    clay_command_foreach(reg, visitor, ctx);
+    for (size_t i = 0; i < reg->aliases.count; i++) {
+        ClayCommandEntry *entry = *(ClayCommandEntry **)clay_array_get(&reg->aliases, i);
+        visitor(entry->name, entry->description, ctx);
+    }
+}
+
 ClayInput clay_input_parse(const char *line) {
     ClayInput input = {0};
     while (isspace((unsigned char)*line)) line++;

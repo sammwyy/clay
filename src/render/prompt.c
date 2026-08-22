@@ -2,6 +2,7 @@
 
 #include "clay/array.h"
 #include "clay/below.h"
+#include "clay/command.h"
 #include "clay/color.h"
 #include "clay/str.h"
 #include "clay/term.h"
@@ -210,6 +211,98 @@ static void prompt_cursor_right(ClayStr *buf, ClayArray *blocks, size_t *cursor)
     if (bi != (size_t)-1) *cursor = ((ClayPasteBlock *)clay_array_get(blocks, bi))->end;
 }
 
+typedef struct {
+    ClayArray matches; /* const char*, borrowed from the command registry */
+    size_t selected;
+    int popup_rows;
+} ClayCommandCompletion;
+
+typedef struct {
+    const char *prefix;
+    size_t length;
+    ClayArray *matches;
+} CompletionContext;
+
+static void collect_completion(const char *name, const char *description, void *ctx) {
+    (void)description;
+    CompletionContext *completion = ctx;
+    if (strncmp(name, completion->prefix, completion->length) == 0) {
+        clay_array_push_val(completion->matches, &name);
+    }
+}
+
+static void completion_clear_popup(ClayCommandCompletion *completion) {
+    if (completion->popup_rows <= 0) return;
+
+    fputs("\x1b[s", stdout);
+    for (int row = 0; row < completion->popup_rows; row++) {
+        clay_term_cursor_down(1);
+        clay_term_clear_line();
+    }
+    fputs("\x1b[u", stdout);
+    completion->popup_rows = 0;
+}
+
+static void completion_update(ClayCommandCompletion *completion, ClayCommandRegistry *commands,
+                              const ClayStr *buf, size_t cursor) {
+    clay_array_clear(&completion->matches);
+    if (!commands || cursor != buf->len || buf->len == 0 || buf->data[0] != '/') return;
+
+    size_t name_len = 0;
+    while (name_len + 1 < buf->len && !isspace((unsigned char)buf->data[name_len + 1])) name_len++;
+    if (name_len + 1 != buf->len) return;
+
+    CompletionContext context = {buf->data + 1, name_len, &completion->matches};
+    clay_command_foreach_all(commands, collect_completion, &context);
+    if (completion->selected >= completion->matches.count) completion->selected = 0;
+}
+
+static void completion_draw_popup(ClayCommandCompletion *completion) {
+    size_t count = completion->matches.count;
+    if (count == 0) return;
+    if (count > 8) count = 8;
+
+    fputs("\x1b[s", stdout);
+    clay_term_cursor_down(1);
+    clay_term_clear_line();
+    printf("  %s+-- commands ----------------%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
+    for (size_t i = 0; i < count; i++) {
+        const char *name = *(const char **)clay_array_get(&completion->matches, i);
+        clay_term_cursor_down(1);
+        clay_term_clear_line();
+        if (i == completion->selected) {
+            printf("  %s> /%s%s", clay_color(CLAY_ORANGE), name, clay_color(CLAY_RESET));
+        } else {
+            printf("    %s/%s%s", clay_color(CLAY_GRAY), name, clay_color(CLAY_RESET));
+        }
+    }
+    clay_term_cursor_down(1);
+    clay_term_clear_line();
+    printf("  %s+---------------------------%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
+    fputs("\x1b[u", stdout);
+    completion->popup_rows = (int)count + 2;
+}
+
+static void completion_render(ClayCommandCompletion *completion, ClayCommandRegistry *commands,
+                              const ClayStr *buf, size_t cursor) {
+    completion_clear_popup(completion);
+    completion_update(completion, commands, buf, cursor);
+    clay_below_render(buf->data, cursor);
+    completion_draw_popup(completion);
+}
+
+static int completion_apply(ClayCommandCompletion *completion, ClayStr *buf, ClayArray *blocks,
+                            size_t *cursor, int *history_pos) {
+    if (completion->matches.count == 0) return 0;
+    const char *name = *(const char **)clay_array_get(&completion->matches, completion->selected);
+    clay_str_clear(buf);
+    clay_str_printf(buf, "/%s", name);
+    paste_blocks_free(blocks);
+    *cursor = buf->len;
+    *history_pos = -1;
+    return 1;
+}
+
 /* Expands placeholders back into their real pasted text to build the line
    actually submitted. Caller frees the result. */
 static char *paste_blocks_resolve(const ClayStr *buf, ClayArray *blocks) {
@@ -241,7 +334,7 @@ static char *paste_blocks_resolve(const ClayStr *buf, ClayArray *blocks) {
    to back (no blocking wait between them) is treated as a paste: it
    collapses into a single cyan "[Pasted N chars]" placeholder via
    paste_block_insert, so a fast typist isn't mistaken for one. */
-static char *interactive_prompt_line(void) {
+static char *interactive_prompt_line(ClayCommandRegistry *commands) {
     ClayStr buf;
     clay_str_init(&buf);
 
@@ -254,13 +347,18 @@ static char *interactive_prompt_line(void) {
     int interrupted = 0;
     int clear_armed = 0;
 
+    ClayCommandCompletion completion;
+    clay_array_init(&completion.matches, sizeof(const char *));
+    completion.selected = 0;
+    completion.popup_rows = 0;
+
     int pending_valid = 0; /* a key already read while scanning a burst, not yet handled */
     ClayKey pending_key = CLAY_KEY_CHAR;
     char pending_ch = 0;
 
     clay_term_raw_enable();
     clay_below_set_editing(1);
-    clay_below_render(buf.data, cursor);
+    completion_render(&completion, commands, &buf, cursor);
 
     for (;;) {
         char ch = 0;
@@ -285,7 +383,7 @@ static char *interactive_prompt_line(void) {
         }
 
         if (key == CLAY_KEY_ENTER) {
-            break;
+            if (!completion_apply(&completion, &buf, &blocks, &cursor, &history_pos)) break;
         } else if (key == CLAY_KEY_INTERRUPT) {
             clay_term_take_interrupt();
             if (buf.len == 0) {
@@ -323,16 +421,22 @@ static char *interactive_prompt_line(void) {
         } else if (key == CLAY_KEY_RIGHT) {
             prompt_cursor_right(&buf, &blocks, &cursor);
         } else if (key == CLAY_KEY_UP) {
-            size_t count = clay_prompt_history_count();
-            if (count > 0) {
-                history_pos = (history_pos == -1) ? (int)count - 1 : (history_pos > 0 ? history_pos - 1 : 0);
-                clay_str_clear(&buf);
-                clay_str_push(&buf, clay_prompt_history_get((size_t)history_pos));
-                paste_blocks_free(&blocks);
-                cursor = buf.len;
+            if (completion.matches.count > 0) {
+                completion.selected = completion.selected == 0 ? completion.matches.count - 1 : completion.selected - 1;
+            } else {
+                size_t count = clay_prompt_history_count();
+                if (count > 0) {
+                    history_pos = (history_pos == -1) ? (int)count - 1 : (history_pos > 0 ? history_pos - 1 : 0);
+                    clay_str_clear(&buf);
+                    clay_str_push(&buf, clay_prompt_history_get((size_t)history_pos));
+                    paste_blocks_free(&blocks);
+                    cursor = buf.len;
+                }
             }
         } else if (key == CLAY_KEY_DOWN) {
-            if (history_pos != -1) {
+            if (completion.matches.count > 0) {
+                completion.selected = (completion.selected + 1) % completion.matches.count;
+            } else if (history_pos != -1) {
                 size_t count = clay_prompt_history_count();
                 if ((size_t)(history_pos + 1) < count) {
                     history_pos++;
@@ -374,9 +478,11 @@ static char *interactive_prompt_line(void) {
             continue;
         }
 
-        clay_below_render(buf.data, cursor);
+        completion_render(&completion, commands, &buf, cursor);
     }
 
+    completion_clear_popup(&completion);
+    clay_array_free(&completion.matches);
     clay_below_set_enabled("hint", 0);
     clay_below_set_editing(0);
     clay_below_finish();
@@ -401,10 +507,10 @@ static char *interactive_prompt_line(void) {
     return result;
 }
 
-char *clay_prompt_line(void) {
+char *clay_prompt_line(ClayCommandRegistry *commands) {
     g_last_line_interrupted = 0;
     if (!clay_term_is_interactive()) return fallback_prompt_line();
-    char *line = interactive_prompt_line();
+    char *line = interactive_prompt_line(commands);
     if (!line && clay_term_take_interrupt()) g_last_line_interrupted = 1;
     return line;
 }

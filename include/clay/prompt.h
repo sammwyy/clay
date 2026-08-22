@@ -3,10 +3,12 @@
 
 #include <stddef.h>
 
+typedef struct ClayCommandRegistry ClayCommandRegistry;
+
 /* Reads one line, printing the "> " prompt. On a tty: up/down recall
    history, below-modules render live. Returns malloc'd string (caller
    frees), NULL on EOF with no input. */
-char *clay_prompt_line(void);
+char *clay_prompt_line(ClayCommandRegistry *commands);
 
 /* True when the most recent clay_prompt_line was cancelled by Ctrl-C. */
 int clay_prompt_was_interrupted(void);

@@ -89,9 +89,9 @@ make build
 
 | Command | What it does |
 | --- | --- |
-| `/connect [openai\|grok\|openrouter\|custom]` (`/login`) | Connect a provider. Grok offers xAI API-key or account/subscription sign-in. |
+| `/connect [openai\|grok\|openrouter\|custom]` (`/login`, `/provider`, `/providers`) | Connect a provider. Grok offers xAI API-key or account/subscription sign-in. |
 | `/logout` | Choose a connected provider and remove its saved session. |
-| `/model [id]` (`/models`, `/provider`, `/providers`) | Browse models by provider, or set an id directly. |
+| `/model [id]` (`/models`) | Browse models by provider, or set an id directly. |
 | `/effort` | Set the model reasoning effort when supported. |
 
 ### Safety & control

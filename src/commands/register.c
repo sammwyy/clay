@@ -14,8 +14,8 @@ void clay_commands_register(ClayCommands *commands) {
     clay_command_register(registry, "exit", "Quit clay", clay_cmd_exit, commands);
     clay_command_register(registry, "model", "Pick a model from a connected provider", clay_cmd_model, commands);
     clay_command_register_alias(registry, "models", clay_cmd_model, commands);
-    clay_command_register_alias(registry, "provider", clay_cmd_model, commands);
-    clay_command_register_alias(registry, "providers", clay_cmd_model, commands);
+    clay_command_register_alias(registry, "provider", clay_cmd_connect, commands);
+    clay_command_register_alias(registry, "providers", clay_cmd_connect, commands);
     clay_command_register(registry, "effort", "Set reasoning effort for supported models", clay_cmd_effort, commands);
     clay_command_register(registry, "resume", "Resume a saved chat", clay_cmd_resume, commands);
     clay_command_register(registry, "history", "Show recent messages from the active chat", clay_cmd_history, commands);
