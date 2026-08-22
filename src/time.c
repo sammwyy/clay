@@ -3,6 +3,7 @@
 #include "clay/str.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 long long clay_time_now(void) {
@@ -12,7 +13,11 @@ long long clay_time_now(void) {
 char *clay_time_format_date(long long timestamp) {
     time_t seconds = (time_t)timestamp;
     struct tm tm_utc;
-    gmtime_r(&seconds, &tm_utc);
+#ifdef _WIN32
+    if (gmtime_s(&tm_utc, &seconds) != 0) memset(&tm_utc, 0, sizeof(tm_utc));
+#else
+    if (!gmtime_r(&seconds, &tm_utc)) memset(&tm_utc, 0, sizeof(tm_utc));
+#endif
     ClayStr text;
     clay_str_init(&text);
     clay_str_printf(&text, "%04d-%02d-%02d", tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday);

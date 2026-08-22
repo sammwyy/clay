@@ -8,6 +8,7 @@
 #include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <windows.h>
 
@@ -17,6 +18,16 @@ static char *win_name_copy(const char *value, size_t length) {
     memcpy(copy, value, length);
     copy[length] = '\0';
     return copy;
+}
+static char *win_join_path(const char *path, const char *name) {
+    size_t path_len = strlen(path), name_len = strlen(name);
+    if (path_len > SIZE_MAX - 2 || name_len > SIZE_MAX - path_len - 2) return NULL;
+    char *joined = malloc(path_len + name_len + 2);
+    if (!joined) return NULL;
+    memcpy(joined, path, path_len);
+    joined[path_len] = '\\';
+    memcpy(joined + path_len + 1, name, name_len + 1);
+    return joined;
 }
 static void win_clear_clay_environment(void) {
     extern char **environ;
@@ -54,8 +65,10 @@ static int win_remove(const char *path, int recursive) {
     WIN32_FIND_DATAA data; HANDLE handle = FindFirstFileA(pattern, &data); int status = 0;
     if (handle != INVALID_HANDLE_VALUE) do {
         if (!strcmp(data.cFileName, ".") || !strcmp(data.cFileName, "..")) continue;
-        char child[MAX_PATH]; snprintf(child, sizeof(child), "%s\\%s", path, data.cFileName);
+        char *child = win_join_path(path, data.cFileName);
+        if (!child) { status = 1; continue; }
         if (win_remove(child, 1)) status = 1;
+        free(child);
     } while (FindNextFileA(handle, &data));
     if (handle != INVALID_HANDLE_VALUE) FindClose(handle);
     return (!status && RemoveDirectoryA(path)) ? 0 : 1;
