@@ -64,14 +64,11 @@ static char *index_path(void) {
     return path.data;
 }
 
+#define CLAY_MEMORY_FILE_LIMIT (4 * 1024 * 1024)
+
 static char *read_file(const char *path) {
-    FILE *file = fopen(path, "r");
-    if (!file) return NULL;
     ClayStr text;
-    clay_str_init(&text);
-    int ch;
-    while ((ch = fgetc(file)) != EOF) clay_str_push_char(&text, (char)ch);
-    fclose(file);
+    if (clay_term_read_file(path, CLAY_MEMORY_FILE_LIMIT, &text) != 0) return NULL;
     return text.data;
 }
 
@@ -101,14 +98,8 @@ static int save_manifest(ClayJson *root) {
     clay_str_init(&body);
     clay_json_stringify(root, &body);
     clay_json_free(root);
-    FILE *file = fopen(path, "w");
+    int ok = clay_term_write_file_atomic(path, body.data, body.len) == 0;
     free(path);
-    if (!file) {
-        clay_str_free(&body);
-        return -1;
-    }
-    size_t written = fwrite(body.data, 1, body.len, file);
-    int ok = written == body.len && fclose(file) == 0;
     clay_str_free(&body);
     return ok ? 0 : -1;
 }

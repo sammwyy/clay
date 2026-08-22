@@ -148,6 +148,10 @@ int clay_term_mkdir(const char *path);
 /* Writes a file through a sibling temporary file and atomically replaces the
    destination. The temporary file is removed on failure. */
 int clay_term_write_file_atomic(const char *path, const void *data, size_t len);
+
+/* Reads at most max_bytes into a NUL-terminated string. max_bytes == 0 means
+   unlimited; exceeding a non-zero limit returns -1 with errno == EFBIG. */
+int clay_term_read_file(const char *path, size_t max_bytes, ClayStr *out);
 int clay_term_list_dir(
     const char *path,
     ClayArray *names); /* char *, caller frees entries; dirs only */

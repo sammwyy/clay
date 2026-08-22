@@ -209,24 +209,16 @@ static char *config_path(void) {
     return path.data;
 }
 
-static char *read_whole_file(const char *path) {
-    FILE *file = fopen(path, "r");
-    if (!file) return NULL;
-    ClayStr text;
-    clay_str_init(&text);
-    int ch;
-    while ((ch = fgetc(file)) != EOF) clay_str_push_char(&text, (char)ch);
-    fclose(file);
-    return text.data;
-}
+#define CLAY_MCP_CONFIG_FILE_LIMIT (4 * 1024 * 1024)
 
 /* Array of server-config objects, or an empty array if missing/malformed. */
 static ClayJson *load_config_root(void) {
     char *path = config_path();
-    char *text = path ? read_whole_file(path) : NULL;
+    ClayStr text;
+    int read_rc = path ? clay_term_read_file(path, CLAY_MCP_CONFIG_FILE_LIMIT, &text) : -1;
     free(path);
-    ClayJson *root = text ? clay_json_parse(text, NULL) : NULL;
-    free(text);
+    ClayJson *root = read_rc == 0 ? clay_json_parse(text.data, NULL) : NULL;
+    if (read_rc == 0) clay_str_free(&text);
     if (!root || clay_json_type(root) != CLAY_JSON_ARRAY) {
         clay_json_free(root);
         root = clay_json_array();

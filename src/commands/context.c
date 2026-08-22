@@ -482,16 +482,11 @@ static int load_system_prompt_cache(char **text_out, long long *last_used_out,
   char *path = system_prompt_cache_path();
   if (!path)
     return -1;
-  FILE *file = fopen(path, "r");
-  free(path);
-  if (!file)
-    return -1;
   ClayStr body;
-  clay_str_init(&body);
-  int ch;
-  while ((ch = fgetc(file)) != EOF)
-    clay_str_push_char(&body, (char)ch);
-  fclose(file);
+  int read_rc = clay_term_read_file(path, 4 * 1024 * 1024, &body);
+  free(path);
+  if (read_rc != 0)
+    return -1;
   ClayJson *root = clay_json_parse(body.data, NULL);
   clay_str_free(&body);
   const char *text =
@@ -543,15 +538,8 @@ static void save_system_prompt_cache(const char *text, long long last_used_at,
 #define CLAY_PROJECT_INSTRUCTIONS_MAX_DEPTH 32
 
 static char *read_file_if_exists(const char *path) {
-  FILE *file = fopen(path, "rb");
-  if (!file)
-    return NULL;
   ClayStr text;
-  clay_str_init(&text);
-  int ch;
-  while ((ch = fgetc(file)) != EOF)
-    clay_str_push_char(&text, (char)ch);
-  fclose(file);
+  if (clay_term_read_file(path, 4 * 1024 * 1024, &text) != 0) return NULL;
   return text.data;
 }
 
@@ -793,9 +781,6 @@ void clay_commands_reset_conversation(ClayCommands *commands) {
   clay_json_free(history);
 }
 
-/* No per-model context window lookup exists yet, so this is a conservative
-   fixed budget rather than something read off the selected model. */
-#define CLAY_CONTEXT_TOKEN_BUDGET 128000
 #define CLAY_CONTEXT_COMPACT_RATIO 0.9
 #define CLAY_CONTEXT_KEEP_TURNS 6
 #define CLAY_CONTEXT_TOOL_PREVIEW 200
@@ -828,8 +813,9 @@ static int collapse_tool_content(ClayJson *message) {
 }
 
 int clay_commands_maybe_compact(ClayCommands *commands) {
+  long token_budget = clay_config_context_token_budget();
   if (commands->input_tokens <
-      (long)(CLAY_CONTEXT_TOKEN_BUDGET * CLAY_CONTEXT_COMPACT_RATIO))
+      (long)(token_budget * CLAY_CONTEXT_COMPACT_RATIO))
     return 0;
   size_t count = clay_json_array_count(commands->conversation);
   if (count < 2)

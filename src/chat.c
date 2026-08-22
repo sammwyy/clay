@@ -6,10 +6,14 @@
 #include "clay/uuid.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define CLAY_CHAT_FORMAT_VERSION 1
+#define CLAY_CHAT_FILE_LIMIT (64 * 1024 * 1024)
+#define CLAY_CHAT_SUMMARY_PREFIX_LIMIT (64 * 1024)
+#define CLAY_CHAT_INDEX_FILE_LIMIT (8 * 1024 * 1024)
 
 struct ClayChat {
     char *id;
@@ -39,6 +43,16 @@ static char *chat_path(const char *id) {
     return path.data;
 }
 
+static char *chat_index_path(void) {
+    char *dir = clay_dir();
+    if (!dir) return NULL;
+    ClayStr path;
+    clay_str_init(&path);
+    clay_str_printf(&path, "%s/chats/index.json", dir);
+    free(dir);
+    return path.data;
+}
+
 static int ensure_chat_dir(const char *id) {
     char *dir = clay_dir();
     if (!dir || clay_term_mkdir(dir) != 0) {
@@ -63,38 +77,213 @@ static int ensure_chat_dir(const char *id) {
 }
 
 static char *read_file(const char *path) {
-    FILE *file = fopen(path, "r");
-    if (!file) return NULL;
     ClayStr text;
-    clay_str_init(&text);
-    int ch;
-    while ((ch = fgetc(file)) != EOF) clay_str_push_char(&text, (char)ch);
-    fclose(file);
+    if (clay_term_read_file(path, CLAY_CHAT_FILE_LIMIT, &text) != 0) return NULL;
     return text.data;
+}
+
+static size_t journal_message_count(const ClayJson *journal) {
+    ClayJson *turns = clay_json_object_get(journal, "turns");
+    size_t count = 0;
+    for (size_t i = 0; i < clay_json_array_count(turns); i++) {
+        ClayJson *turn = clay_json_array_get(turns, i);
+        if (strcmp(clay_json_string_value(clay_json_object_get(turn, "state")),
+                   "completed") != 0) continue;
+        ClayJson *records = clay_json_object_get(turn, "messages");
+        for (size_t j = 0; j < clay_json_array_count(records); j++) {
+            ClayJson *record = clay_json_array_get(records, j);
+            if (strcmp(clay_json_string_value(clay_json_object_get(record, "kind")),
+                       "message") == 0) count++;
+        }
+    }
+    return count;
+}
+
+static int compare_chat_summaries(const void *left, const void *right) {
+    const ClayChatSummary *a = left;
+    const ClayChatSummary *b = right;
+    return a->updated_at < b->updated_at ? 1 : (a->updated_at > b->updated_at ? -1 : 0);
+}
+
+static void sort_chat_summaries(ClayArray *summaries) {
+    if (summaries->count > 1)
+        qsort(summaries->data, summaries->count, sizeof(ClayChatSummary), compare_chat_summaries);
+}
+
+/* Reads the small metadata prefix written before `turns`. Old journals fall
+   back to one full load, which also makes them eligible for index migration. */
+static int chat_summary_read(const char *id, ClayChatSummary *summary) {
+    char *path = chat_path(id);
+    if (path) {
+        FILE *file = fopen(path, "rb");
+        if (file) {
+            char prefix[CLAY_CHAT_SUMMARY_PREFIX_LIMIT + 1];
+            size_t length = fread(prefix, 1, CLAY_CHAT_SUMMARY_PREFIX_LIMIT, file);
+            fclose(file);
+            prefix[length] = '\0';
+            const char *updated_key = strstr(prefix, "\"updated_at\"");
+            const char *count_key = strstr(prefix, "\"message_count\"");
+            const char *updated_colon = updated_key ? strchr(updated_key, ':') : NULL;
+            const char *count_colon = count_key ? strchr(count_key, ':') : NULL;
+            if (updated_colon && count_colon) {
+                char *updated_end = NULL, *count_end = NULL;
+                double updated = strtod(updated_colon + 1, &updated_end);
+                double count = strtod(count_colon + 1, &count_end);
+                if (updated_end != updated_colon + 1 && count_end != count_colon + 1 &&
+                    updated >= 0 && count >= 0 && count <= (double)SIZE_MAX) {
+                    summary->id = strdup(id);
+                    summary->updated_at = (long long)updated;
+                    summary->message_count = (size_t)count;
+                    free(path);
+                    return summary->id ? 0 : -1;
+                }
+            }
+        }
+        free(path);
+    }
+
+    ClayChat *chat = clay_chat_load(id);
+    if (!chat) return -1;
+    summary->id = strdup(id);
+    summary->updated_at = (long long)clay_json_number_value(
+        clay_json_object_get(chat->journal, "updated_at"));
+    summary->message_count = clay_chat_message_count(chat);
+    clay_chat_destroy(chat);
+    return summary->id ? 0 : -1;
+}
+
+static void chat_summaries_free(ClayArray *summaries) {
+    for (size_t i = 0; i < summaries->count; i++)
+        free(((ClayChatSummary *)clay_array_get(summaries, i))->id);
+    clay_array_free(summaries);
+}
+
+static int chat_index_load(ClayArray *summaries) {
+    char *path = chat_index_path();
+    if (!path) return -1;
+    ClayStr text;
+    int rc = clay_term_read_file(path, CLAY_CHAT_INDEX_FILE_LIMIT, &text);
+    free(path);
+    if (rc != 0) return -1;
+    ClayJson *root = clay_json_parse(text.data, NULL);
+    clay_str_free(&text);
+    ClayJson *items = root && clay_json_type(root) == CLAY_JSON_OBJECT
+                          ? clay_json_object_get(root, "chats") : NULL;
+    if (clay_json_type(items) != CLAY_JSON_ARRAY) {
+        clay_json_free(root);
+        return -1;
+    }
+    clay_array_init(summaries, sizeof(ClayChatSummary));
+    for (size_t i = 0; i < clay_json_array_count(items); i++) {
+        ClayJson *item = clay_json_array_get(items, i);
+        ClayJson *id_value = clay_json_object_get(item, "id");
+        ClayJson *updated_value = clay_json_object_get(item, "updated_at");
+        ClayJson *count_value = clay_json_object_get(item, "message_count");
+        if (clay_json_type(id_value) != CLAY_JSON_STRING ||
+            clay_json_type(updated_value) != CLAY_JSON_NUMBER ||
+            clay_json_type(count_value) != CLAY_JSON_NUMBER)
+            continue;
+        double count = clay_json_number_value(count_value);
+        if (count < 0 || count > (double)SIZE_MAX) continue;
+        ClayChatSummary summary = {
+            strdup(clay_json_string_value(id_value)),
+            (long long)clay_json_number_value(updated_value),
+            (size_t)count};
+        if (summary.id) clay_array_push_val(summaries, &summary);
+    }
+    clay_json_free(root);
+    sort_chat_summaries(summaries);
+    return 0;
+}
+
+static int chat_index_save(const ClayArray *summaries) {
+    char *path = chat_index_path();
+    if (!path) return -1;
+    ClayJson *root = clay_json_object();
+    ClayJson *items = clay_json_array();
+    for (size_t i = 0; i < summaries->count; i++) {
+        const ClayChatSummary *summary = clay_array_get((ClayArray *)summaries, i);
+        ClayJson *item = clay_json_object();
+        clay_json_object_set(item, "id", clay_json_string(summary->id));
+        clay_json_object_set(item, "updated_at", clay_json_number((double)summary->updated_at));
+        clay_json_object_set(item, "message_count", clay_json_number((double)summary->message_count));
+        clay_json_array_push(items, item);
+    }
+    clay_json_object_set(root, "chats", items);
+    ClayStr body;
+    clay_str_init(&body);
+    clay_json_stringify(root, &body);
+    clay_json_free(root);
+    int rc = clay_term_write_file_atomic(path, body.data, body.len);
+    clay_str_free(&body);
+    free(path);
+    return rc;
+}
+
+static void chat_index_update(const ClayChat *chat) {
+    char *root = clay_dir();
+    if (!root) return;
+    ClayStr directory;
+    clay_str_init(&directory);
+    clay_str_printf(&directory, "%s/chats", root);
+    free(root);
+    ClayArray names;
+    if (clay_term_list_dir(directory.data, &names) != 0) {
+        clay_str_free(&directory);
+        return;
+    }
+    clay_str_free(&directory);
+    /* A single chat is cheap to discover and keeping no sidecar preserves the
+       simple on-disk layout used by older installations. */
+    if (names.count <= 1) {
+        for (size_t i = 0; i < names.count; i++) free(*(char **)clay_array_get(&names, i));
+        clay_array_free(&names);
+        return;
+    }
+
+    ClayArray summaries;
+    int index_loaded = chat_index_load(&summaries) == 0;
+    if (!index_loaded || summaries.count != names.count) {
+        if (index_loaded) chat_summaries_free(&summaries);
+        clay_array_init(&summaries, sizeof(ClayChatSummary));
+        for (size_t i = 0; i < names.count; i++) {
+            ClayChatSummary summary = {0};
+            if (chat_summary_read(*(char **)clay_array_get(&names, i), &summary) == 0)
+                clay_array_push_val(&summaries, &summary);
+        }
+    }
+    ClayChatSummary current = {strdup(chat->id),
+                               (long long)clay_json_number_value(clay_json_object_get(chat->journal, "updated_at")),
+                               journal_message_count(chat->journal)};
+    int replaced = 0;
+    for (size_t i = 0; i < summaries.count; i++) {
+        ClayChatSummary *entry = clay_array_get(&summaries, i);
+        if (strcmp(entry->id, current.id) == 0) {
+            free(entry->id);
+            *entry = current;
+            replaced = 1;
+            break;
+        }
+    }
+    if (!replaced) clay_array_push_val(&summaries, &current);
+    sort_chat_summaries(&summaries);
+    chat_index_save(&summaries);
+    chat_summaries_free(&summaries);
+    for (size_t i = 0; i < names.count; i++) free(*(char **)clay_array_get(&names, i));
+    clay_array_free(&names);
 }
 
 static int save(ClayChat *chat) {
     if (ensure_chat_dir(chat->id) != 0) return -1;
     clay_json_object_set(chat->journal, "updated_at", clay_json_number(clay_time_now()));
+    clay_json_object_set(chat->journal, "message_count",
+                         clay_json_number((double)journal_message_count(chat->journal)));
     ClayStr body;
     clay_str_init(&body);
     clay_json_stringify(chat->journal, &body);
-    ClayStr temporary;
-    clay_str_init(&temporary);
-    clay_str_printf(&temporary, "%s.tmp", chat->path);
-    FILE *file = fopen(temporary.data, "w");
-    if (!file) {
-        clay_str_free(&body);
-        clay_str_free(&temporary);
-        return -1;
-    }
-    size_t written = fwrite(body.data, 1, body.len, file);
-    int closed = fclose(file) == 0;
-    int ok = written == body.len && closed && rename(temporary.data, chat->path) == 0;
-    if (!ok) remove(temporary.data);
-    else clay_term_restrict_file(chat->path);
+    int ok = clay_term_write_file_atomic(chat->path, body.data, body.len) == 0;
     clay_str_free(&body);
-    clay_str_free(&temporary);
+    if (ok) chat_index_update(chat);
     return ok ? 0 : -1;
 }
 
@@ -176,6 +365,7 @@ ClayChat *clay_chat_create(const char *system_prompt) {
     clay_json_object_set(journal, "updated_at", clay_json_number(clay_time_now()));
     clay_json_object_set(journal, "system_prompt", clay_json_string(system_prompt ? system_prompt : ""));
     clay_json_object_set(journal, "notes", clay_json_string(""));
+    clay_json_object_set(journal, "message_count", clay_json_number(0));
     clay_json_object_set(journal, "turns", clay_json_array());
     ClayChat *chat = chat_new(id, journal);
     free(id);
@@ -226,10 +416,7 @@ int clay_chat_set_notes(ClayChat *chat, const char *notes) {
 }
 
 size_t clay_chat_message_count(const ClayChat *chat) {
-    ClayJson *messages = clay_chat_openai_messages(chat);
-    size_t count = clay_json_array_count(messages);
-    clay_json_free(messages);
-    return count;
+    return journal_message_count(chat->journal);
 }
 
 char *clay_chat_scratch_dir(const ClayChat *chat) {
@@ -299,28 +486,24 @@ int clay_chat_list(ClayArray *summaries) {
     int rc = clay_term_list_dir(directory.data, &names);
     clay_str_free(&directory);
     if (rc != 0) return rc;
+    if (names.count > 1 && chat_index_load(summaries) == 0 &&
+        summaries->count == names.count) {
+        for (size_t i = 0; i < names.count; i++) free(*(char **)clay_array_get(&names, i));
+        clay_array_free(&names);
+        return 0;
+    }
+    if (summaries->count > 0) chat_summaries_free(summaries);
     for (size_t i = 0; i < names.count; i++) {
         char *id = *(char **)clay_array_get(&names, i);
-        ClayChat *chat = clay_chat_load(id);
-        if (chat) {
-            ClayChatSummary summary = {strdup(id),
-                                       (long long)clay_json_number_value(clay_json_object_get(chat->journal, "updated_at")),
-                                       clay_chat_message_count(chat)};
+        ClayChatSummary summary = {0};
+        if (chat_summary_read(id, &summary) == 0) {
             clay_array_push_val(summaries, &summary);
-            clay_chat_destroy(chat);
-        }
+        } else free(summary.id);
         free(id);
     }
     clay_array_free(&names);
-    for (size_t i = 1; i < summaries->count; i++) {
-        ClayChatSummary value = *(ClayChatSummary *)clay_array_get(summaries, i);
-        size_t j = i;
-        while (j > 0 && ((ClayChatSummary *)clay_array_get(summaries, j - 1))->updated_at < value.updated_at) {
-            *(ClayChatSummary *)clay_array_get(summaries, j) = *(ClayChatSummary *)clay_array_get(summaries, j - 1);
-            j--;
-        }
-        *(ClayChatSummary *)clay_array_get(summaries, j) = value;
-    }
+    sort_chat_summaries(summaries);
+    if (summaries->count > 1) chat_index_save(summaries);
     return 0;
 }
 

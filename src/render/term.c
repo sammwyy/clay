@@ -1042,6 +1042,41 @@ int clay_term_write_file_atomic(const char *path, const void *data, size_t len) 
 #endif
 }
 
+int clay_term_read_file(const char *path, size_t max_bytes, ClayStr *out) {
+  if (!path || !out) return -1;
+  FILE *file = fopen(path, "rb");
+  if (!file) return -1;
+  clay_str_init(out);
+  char buffer[4096];
+  for (;;) {
+    size_t count = fread(buffer, 1, sizeof(buffer), file);
+    if (count > 0) {
+      if (max_bytes > 0 && (out->len > max_bytes || count > max_bytes - out->len)) {
+        fclose(file);
+        clay_str_free(out);
+        errno = EFBIG;
+        return -1;
+      }
+      clay_str_push_n(out, buffer, count);
+    }
+    if (count < sizeof(buffer)) {
+      if (ferror(file)) {
+        fclose(file);
+        clay_str_free(out);
+        errno = EIO;
+        return -1;
+      }
+      break;
+    }
+  }
+  int ok = fclose(file) == 0;
+  if (!ok) {
+    clay_str_free(out);
+    return -1;
+  }
+  return 0;
+}
+
 int clay_term_list_dir(const char *path, ClayArray *names) {
   clay_array_init(names, sizeof(char *));
 #ifdef _WIN32

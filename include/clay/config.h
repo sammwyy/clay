@@ -50,6 +50,11 @@ int clay_config_set_reasoning_effort(const char *effort);
 /* Number of previous messages shown after /resume. Defaults to 4. */
 int clay_config_history_preview_count(void);
 
+/* Maximum input-token budget before automatic context compaction. Defaults
+   to 128000; callers may lower it for models with smaller context windows. */
+long clay_config_context_token_budget(void);
+int clay_config_set_context_token_budget(long budget);
+
 /* "sandbox" (default), "auto", or "unleashed". Malloc'd. Doesn't know about
    ClaySandboxMode - callers map the string, same as PROVIDER_TYPES does
    for provider ids. */

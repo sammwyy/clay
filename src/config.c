@@ -69,14 +69,7 @@ int clay_config_exists(const char *id) {
   return 1;
 }
 
-static char *read_whole_file(FILE *f) {
-  ClayStr s;
-  clay_str_init(&s);
-  int c;
-  while ((c = fgetc(f)) != EOF)
-    clay_str_push_char(&s, (char)c);
-  return s.data;
-}
+#define CLAY_CONFIG_FILE_LIMIT (4 * 1024 * 1024)
 
 static char *json_optional_string(ClayJson *root, const char *key) {
   ClayJson *value = clay_json_object_get(root, key);
@@ -91,14 +84,13 @@ static ClayJson *load_selection_root(void) {
   char *path = selection_path();
   if (!path)
     return clay_json_object();
-  FILE *file = fopen(path, "r");
+  ClayStr text;
+  int read_rc = clay_term_read_file(path, CLAY_CONFIG_FILE_LIMIT, &text);
   free(path);
-  if (!file)
+  if (read_rc != 0)
     return clay_json_object();
-  char *text = read_whole_file(file);
-  fclose(file);
-  ClayJson *root = clay_json_parse(text, NULL);
-  free(text);
+  ClayJson *root = clay_json_parse(text.data, NULL);
+  clay_str_free(&text);
   if (!root || clay_json_type(root) != CLAY_JSON_OBJECT) {
     clay_json_free(root);
     return clay_json_object();
@@ -135,16 +127,13 @@ ClayProviderConfig *clay_config_load(const char *id) {
   if (!path)
     return NULL;
 
-  FILE *f = fopen(path, "r");
+  ClayStr text;
+  int read_rc = clay_term_read_file(path, CLAY_CONFIG_FILE_LIMIT, &text);
   free(path);
-  if (!f)
+  if (read_rc != 0)
     return NULL;
-
-  char *text = read_whole_file(f);
-  fclose(f);
-
-  ClayJson *root = clay_json_parse(text, NULL);
-  free(text);
+  ClayJson *root = clay_json_parse(text.data, NULL);
+  clay_str_free(&text);
   if (!root)
     return NULL;
 
@@ -299,6 +288,23 @@ int clay_config_history_preview_count(void) {
                   : 4;
   clay_json_free(root);
   return count >= 0 ? count : 4;
+}
+
+long clay_config_context_token_budget(void) {
+  ClayJson *root = load_selection_root();
+  ClayJson *value = clay_json_object_get(root, "context_token_budget");
+  long budget = clay_json_type(value) == CLAY_JSON_NUMBER
+                    ? (long)clay_json_number_value(value)
+                    : 128000;
+  clay_json_free(root);
+  return budget >= 1024 && budget <= 1073741824L ? budget : 128000;
+}
+
+int clay_config_set_context_token_budget(long budget) {
+  if (budget < 1024 || budget > 1073741824L) return -1;
+  ClayJson *root = load_selection_root();
+  clay_json_object_set(root, "context_token_budget", clay_json_number((double)budget));
+  return save_selection_root(root);
 }
 
 static char *string_field(ClayJson *root, const char *key,
