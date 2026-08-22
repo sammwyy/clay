@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CLAY_MODEL_VISIBLE_ROWS 6
+#define CLAY_MODEL_VISIBLE_ROWS 7
 #define CLAY_MODEL_SEARCH_PREFIX "Search: "
 
 typedef struct {
@@ -41,8 +41,12 @@ static int provider_label_width(const ClayModelProvider *providers, int count) {
 
 static void render_header(const ClayModelProvider *provider, int label_width, const char *filter) {
     int padding = label_width - (int)clay_utf8_width(provider->label);
-    printf("%s%s< %s", clay_color(CLAY_BOLD), clay_color(CLAY_ORANGE), provider->label);
-    for (int i = 0; i < padding; i++) fputc(' ', stdout);
+    int left_padding = padding / 2;
+    int right_padding = padding - left_padding;
+    printf("%s%s< ", clay_color(CLAY_BOLD), clay_color(CLAY_ORANGE));
+    for (int i = 0; i < left_padding; i++) fputc(' ', stdout);
+    fputs(provider->label, stdout);
+    for (int i = 0; i < right_padding; i++) fputc(' ', stdout);
     printf(" >%s  %s%s%s", clay_color(CLAY_RESET), clay_color(CLAY_GRAY), CLAY_MODEL_SEARCH_PREFIX,
            clay_color(CLAY_RESET));
     printf("%s%s%s", clay_color(CLAY_WHITE), filter, clay_color(CLAY_RESET));
@@ -50,18 +54,23 @@ static void render_header(const ClayModelProvider *provider, int label_width, co
 
 static void render_item(const ClayModelItem *item, int selected) {
     if (selected) {
-        printf("%s%s\xe2\x9d\xaf %s%s", clay_color(CLAY_ORANGE), clay_color(CLAY_BOLD), item->id, clay_color(CLAY_RESET));
+        printf("  %s›%s %s%s%s", clay_color(CLAY_ORANGE), clay_color(CLAY_RESET), clay_color(CLAY_BOLD), item->id,
+               clay_color(CLAY_RESET));
     } else {
-        printf("  %s%s%s", clay_color(CLAY_GRAY), item->id, clay_color(CLAY_RESET));
+        printf("    %s%s%s", clay_color(CLAY_GRAY), item->id, clay_color(CLAY_RESET));
     }
     if (item->desc) {
         printf("  %s%s%s", clay_color(CLAY_GRAY), item->desc, clay_color(CLAY_RESET));
     }
 }
 
-static void render_more_hint(int count, int above) {
-    printf("  %s\xe2\x80\xa6 %d more models %s%s", clay_color(CLAY_GRAY), count, above ? "above" : "below",
+static void render_list_header(void) {
+    printf("  %sModels  %s↑↓ navigate · Enter select%s", clay_color(CLAY_DIM), clay_color(CLAY_DIM),
            clay_color(CLAY_RESET));
+}
+
+static void render_list_count(int first, int last, int total) {
+    printf("  %s%d–%d of %d models%s", clay_color(CLAY_DIM), first, last, total, clay_color(CLAY_RESET));
 }
 
 static ClayModelSelection model_select_fallback(const ClayModelProvider *providers, int provider_count,
@@ -110,9 +119,10 @@ static ClayModelSelection model_select_fallback(const ClayModelProvider *provide
     return result;
 }
 
-/* Row layout: 0 = active provider and search input, 1 = above hint,
-   2..7 = fixed item area, 8 = below hint. The cursor rests on row 0
-   between redraws. */
+/* Row layout: 0 = active provider and search input, 1 = list title,
+   2..8 = fixed item area, 9 = range/count. The cursor rests on row 0
+   between redraws. The header is intentionally the only part that differs
+   from command completion: it carries the provider tabs and search field. */
 ClayModelSelection clay_model_select(const ClayModelProvider *providers, int provider_count, int default_provider) {
     ClayModelSelection result;
     memset(&result, 0, sizeof(result));
@@ -165,9 +175,15 @@ ClayModelSelection clay_model_select(const ClayModelProvider *providers, int pro
         if (selected >= filtered_count) selected = filtered_count > 0 ? filtered_count - 1 : 0;
         if (selected < 0) selected = 0;
 
-        if (selected < scroll) scroll = selected;
-        if (selected >= scroll + CLAY_MODEL_VISIBLE_ROWS) scroll = selected - CLAY_MODEL_VISIBLE_ROWS + 1;
+        /* Match command completion's viewport: the first model starts at
+           the top, the active one stays near the middle while possible, and
+           it moves down only after reaching the final scroll position. */
+        int middle = CLAY_MODEL_VISIBLE_ROWS / 2;
+        int max_scroll = filtered_count - CLAY_MODEL_VISIBLE_ROWS;
+        if (max_scroll < 0) max_scroll = 0;
+        scroll = selected - middle;
         if (scroll < 0) scroll = 0;
+        if (scroll > max_scroll) scroll = max_scroll;
 
         int item_rows = filtered_count - scroll;
         if (item_rows > CLAY_MODEL_VISIBLE_ROWS) item_rows = CLAY_MODEL_VISIBLE_ROWS;
@@ -184,7 +200,7 @@ ClayModelSelection clay_model_select(const ClayModelProvider *providers, int pro
             clay_term_clear_line();
 
             if (row == 1) {
-                if (scroll > 0) render_more_hint(scroll, 1);
+                render_list_header();
             } else if (row == 2 && empty) {
                 if (cache->fetch_rc != 0) {
                     printf("  %sCould not retrieve models from %s.%s", clay_color(CLAY_RED), providers[active_tab].label,
@@ -196,9 +212,8 @@ ClayModelSelection clay_model_select(const ClayModelProvider *providers, int pro
                 int item_row = row - 2;
                 int fi = *(int *)clay_array_get(&filtered, (size_t)(scroll + item_row));
                 render_item(clay_array_get(&cache->items, (size_t)fi), (scroll + item_row) == selected);
-            } else if (row == total_rows - 1) {
-                int below = filtered_count - (scroll + item_rows);
-                if (below > 0) render_more_hint(below, 0);
+            } else if (row == total_rows - 1 && filtered_count > CLAY_MODEL_VISIBLE_ROWS) {
+                render_list_count(scroll + 1, scroll + item_rows, filtered_count);
             }
         }
 
@@ -213,9 +228,9 @@ ClayModelSelection clay_model_select(const ClayModelProvider *providers, int pro
         } else if (key == CLAY_KEY_RIGHT) {
             active_tab = (active_tab + 1) % provider_count;
         } else if (key == CLAY_KEY_UP) {
-            if (selected > 0) selected--;
+            if (filtered_count > 0) selected = (selected - 1 + filtered_count) % filtered_count;
         } else if (key == CLAY_KEY_DOWN) {
-            if (selected < filtered_count - 1) selected++;
+            if (filtered_count > 0) selected = (selected + 1) % filtered_count;
         } else if (key == CLAY_KEY_BACKSPACE) {
             if (filter.len > 0) filter.data[--filter.len] = '\0';
         } else if (key == CLAY_KEY_CHAR) {
