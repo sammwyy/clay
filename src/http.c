@@ -69,7 +69,7 @@ int clay_http_request(const ClayHttpRequest *req, ClayHttpResponse *response) {
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     if (req->should_abort) {
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
