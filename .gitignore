@@ -6,3 +6,5 @@
 *.d
 *.exe
 .playground/
+investigation/
+REPORT.md
