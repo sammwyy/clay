@@ -116,7 +116,7 @@ GROK_TEST_TARGET := $(BIN_DIR)/test_grok
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
 CFLAGS_WIN  := $(STD) $(WARN) $(OPT) -Iinclude -MMD -MP $(CURL_CFLAGS)
-LDFLAGS_WIN := -lpthread -lws2_32 -lshell32 $(CURL_LDFLAGS)
+LDFLAGS_WIN := -lpthread -lws2_32 -lshell32 -ladvapi32 $(CURL_LDFLAGS)
 
 BUILD_DIR_WIN := build-win
 BIN_DIR_WIN   := bin-win

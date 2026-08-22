@@ -534,11 +534,8 @@ static void save_system_prompt_cache(const char *text, long long last_used_at,
   clay_str_init(&body);
   clay_json_stringify(root, &body);
   clay_json_free(root);
-  FILE *file = fopen(path.data, "w");
-  if (file) {
-    fwrite(body.data, 1, body.len, file);
-    fclose(file);
-  }
+  clay_term_write_file_atomic(path.data, body.data, body.len);
+  clay_term_restrict_file(path.data);
   clay_str_free(&path);
   clay_str_free(&body);
 }

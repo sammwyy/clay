@@ -149,22 +149,27 @@ int clay_commands_connect(ClayCommands *commands) {
   size_t provider_count = commands->providers.count;
   size_t count;
   const ClayProviderType *types = clay_commands_provider_types(&count);
-  ClayChoice choices[count];
-  ClayStr titles[count];
+  ClayArray choices, titles;
+  clay_array_init(&choices, sizeof(ClayChoice));
+  clay_array_init(&titles, sizeof(ClayStr));
   for (size_t i = 0; i < count; i++) {
-    clay_str_init(&titles[i]);
-    clay_str_push(&titles[i], types[i].label);
+    ClayStr title;
+    clay_str_init(&title);
+    clay_str_push(&title, types[i].label);
     if (clay_config_exists(types[i].id)) {
-      clay_str_printf(&titles[i], " %s%s%s", clay_color(CLAY_GREEN),
+      clay_str_printf(&title, " %s%s%s", clay_color(CLAY_GREEN),
                       CLAY_ICON_CHECK, clay_color(CLAY_RESET));
     }
-    choices[i].title = titles[i].data;
-    choices[i].desc = NULL;
+    clay_array_push_val(&titles, &title);
+    ClayChoice choice = {title.data, NULL};
+    clay_array_push_val(&choices, &choice);
   }
-  int index = clay_app_choice(commands->app, "Connect a provider:", choices,
-                              (int)count, 0, NULL);
-  for (size_t i = 0; i < count; i++)
-    clay_str_free(&titles[i]);
+  int index = clay_app_choice(commands->app, "Connect a provider:", choices.data,
+                              (int)choices.count, 0, NULL);
+  for (size_t i = 0; i < titles.count; i++)
+    clay_str_free(clay_array_get(&titles, i));
+  clay_array_free(&choices);
+  clay_array_free(&titles);
   if (index < 0) {
     clay_sayc(CLAY_RED, "Cancelled.");
     return 0;

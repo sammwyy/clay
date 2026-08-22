@@ -249,6 +249,43 @@ static const char *skip_ws(const char *p) {
     return p;
 }
 
+#define CLAY_JSON_MAX_DEPTH 128
+
+static int parse_hex4(const char **pp, unsigned int *value) {
+    const char *p = *pp;
+    unsigned int result = 0;
+    for (int i = 0; i < 4; i++, p++) {
+        char c = *p;
+        unsigned int digit;
+        if (c >= '0' && c <= '9') digit = (unsigned int)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (unsigned int)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (unsigned int)(c - 'A' + 10);
+        else return 0;
+        result = (result << 4) | digit;
+    }
+    *pp = p;
+    *value = result;
+    return 1;
+}
+
+static void append_utf8(ClayStr *s, unsigned int cp) {
+    if (cp < 0x80) {
+        clay_str_push_char(s, (char)cp);
+    } else if (cp < 0x800) {
+        clay_str_push_char(s, (char)(0xC0 | (cp >> 6)));
+        clay_str_push_char(s, (char)(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+        clay_str_push_char(s, (char)(0xE0 | (cp >> 12)));
+        clay_str_push_char(s, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        clay_str_push_char(s, (char)(0x80 | (cp & 0x3F)));
+    } else {
+        clay_str_push_char(s, (char)(0xF0 | (cp >> 18)));
+        clay_str_push_char(s, (char)(0x80 | ((cp >> 12) & 0x3F)));
+        clay_str_push_char(s, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        clay_str_push_char(s, (char)(0x80 | (cp & 0x3F)));
+    }
+}
+
 /* Parses a JSON string starting at *pp (which must point at the opening
    quote), advances *pp past the closing quote. Returns a malloc'd,
    unescaped C string, or NULL on a malformed literal. */
@@ -262,6 +299,10 @@ static char *parse_string_raw(const char **pp) {
 
     while (*p && *p != '"') {
         if (*p != '\\') {
+            if ((unsigned char)*p < 0x20) {
+                clay_str_free(&s);
+                return NULL;
+            }
             clay_str_push_char(&s, *p);
             p++;
             continue;
@@ -280,31 +321,33 @@ static char *parse_string_raw(const char **pp) {
             case 'u': {
                 p++;
                 unsigned int cp = 0;
-                for (int i = 0; i < 4 && *p; i++, p++) {
-                    char c = *p;
-                    cp <<= 4;
-                    if (c >= '0' && c <= '9') cp |= (unsigned)(c - '0');
-                    else if (c >= 'a' && c <= 'f') cp |= (unsigned)(c - 'a' + 10);
-                    else if (c >= 'A' && c <= 'F') cp |= (unsigned)(c - 'A' + 10);
+                if (!parse_hex4(&p, &cp)) {
+                    clay_str_free(&s);
+                    return NULL;
                 }
-                /* Encoded straight to UTF-8; surrogate pairs aren't
-                   recombined, which only matters for astral-plane
-                   characters in chat text. */
-                if (cp < 0x80) {
-                    clay_str_push_char(&s, (char)cp);
-                } else if (cp < 0x800) {
-                    clay_str_push_char(&s, (char)(0xC0 | (cp >> 6)));
-                    clay_str_push_char(&s, (char)(0x80 | (cp & 0x3F)));
-                } else {
-                    clay_str_push_char(&s, (char)(0xE0 | (cp >> 12)));
-                    clay_str_push_char(&s, (char)(0x80 | ((cp >> 6) & 0x3F)));
-                    clay_str_push_char(&s, (char)(0x80 | (cp & 0x3F)));
+                if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                    clay_str_free(&s);
+                    return NULL;
                 }
+                if (cp >= 0xD800 && cp <= 0xDBFF) {
+                    if (p[0] != '\\' || p[1] != 'u') {
+                        clay_str_free(&s);
+                        return NULL;
+                    }
+                    p += 2;
+                    unsigned int low = 0;
+                    if (!parse_hex4(&p, &low) || low < 0xDC00 || low > 0xDFFF) {
+                        clay_str_free(&s);
+                        return NULL;
+                    }
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                }
+                append_utf8(&s, cp);
                 break;
             }
             default:
-                clay_str_push_char(&s, *p);
-                p++;
+                clay_str_free(&s);
+                return NULL;
         }
     }
 
@@ -318,8 +361,9 @@ static char *parse_string_raw(const char **pp) {
     return s.data;
 }
 
-static ClayJson *parse_value(const char **pp) {
+static ClayJson *parse_value(const char **pp, unsigned int depth) {
     const char *p = skip_ws(*pp);
+    if (depth > CLAY_JSON_MAX_DEPTH) return NULL;
 
     if (strncmp(p, "null", 4) == 0) { *pp = p + 4; return clay_json_null(); }
     if (strncmp(p, "true", 4) == 0) { *pp = p + 4; return clay_json_bool(1); }
@@ -344,7 +388,7 @@ static ClayJson *parse_value(const char **pp) {
             return arr;
         }
         for (;;) {
-            ClayJson *item = parse_value(&p);
+            ClayJson *item = parse_value(&p, depth + 1);
             if (!item) {
                 clay_json_free(arr);
                 return NULL;
@@ -383,7 +427,7 @@ static ClayJson *parse_value(const char **pp) {
                 return NULL;
             }
             p++;
-            ClayJson *val = parse_value(&p);
+            ClayJson *val = parse_value(&p, depth + 1);
             if (!val) {
                 free(key);
                 clay_json_free(obj);
@@ -413,11 +457,16 @@ static ClayJson *parse_value(const char **pp) {
 }
 
 ClayJson *clay_json_parse(const char *text, const char **end_out) {
+    if (!text) return NULL;
     const char *p = text;
-    ClayJson *v = parse_value(&p);
+    ClayJson *v = parse_value(&p, 0);
     if (!v) return NULL;
 
     p = skip_ws(p);
+    if (*p != '\0') {
+        clay_json_free(v);
+        return NULL;
+    }
     if (end_out) *end_out = p;
     return v;
 }

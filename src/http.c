@@ -90,6 +90,10 @@ int clay_http_request(const ClayHttpRequest *req, ClayHttpResponse *response) {
     if (req->timeout_seconds > 0) {
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)req->timeout_seconds);
     }
+    if (req->low_speed_limit > 0 && req->low_speed_seconds > 0) {
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, req->low_speed_limit);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, req->low_speed_seconds);
+    }
 
     if (req->method && strcmp(req->method, "POST") == 0) {
         curl_easy_setopt(curl, CURLOPT_POST, 1L);

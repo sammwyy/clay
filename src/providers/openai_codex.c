@@ -716,6 +716,8 @@ int clay_openai_codex_run(ClayOpenAICodex *client, ClayJson *messages,
     req.userdata = &stream;
     req.should_abort = stream_abort;
     req.abort_userdata = &stream;
+    req.low_speed_limit = 1;
+    req.low_speed_seconds = 60;
     req.max_response_bytes = CODEX_RESPONSE_LIMIT;
     ClayHttpResponse response;
     int transport = clay_http_request(&req, &response);

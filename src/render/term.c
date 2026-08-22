@@ -11,11 +11,13 @@
 #endif
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #ifdef _WIN32
 #include <conio.h>
 #include <direct.h>
 #include <io.h>
+#include <aclapi.h>
 #include <shellapi.h>
 #include <sys/stat.h>
 #include <windows.h>
@@ -23,16 +25,21 @@
 #else
 #include <arpa/inet.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 #define CLAY_PATH_MAX 4096
 #endif
+
+#define CLAY_TERM_SHELL_TIMEOUT_SECONDS 120
 
 struct ClayTermHttpServer {
 #ifdef _WIN32
@@ -115,42 +122,215 @@ void clay_term_sleep_ms(int ms) {
 int clay_term_shell_exec(const char *command, ClayStr *output,
                          size_t output_limit, int *exit_code,
                          int *output_truncated) {
+#ifdef _WIN32
+  SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
+  HANDLE read_handle = NULL, write_handle = NULL;
+  if (!CreatePipe(&read_handle, &write_handle, &security, 0) ||
+      !SetHandleInformation(read_handle, HANDLE_FLAG_INHERIT, 0)) {
+    if (read_handle) CloseHandle(read_handle);
+    if (write_handle) CloseHandle(write_handle);
+    return -1;
+  }
+
   ClayStr invocation;
   clay_str_init(&invocation);
-  clay_str_printf(&invocation, "%s 2>&1", command);
-
-#ifdef _WIN32
-  FILE *pipe = _popen(invocation.data, "r");
-#else
-  FILE *pipe = popen(invocation.data, "r");
-#endif
+  clay_str_printf(&invocation, "cmd.exe /d /s /c \"%s\"", command);
+  STARTUPINFOA startup = {0};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESTDHANDLES;
+  startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  startup.hStdOutput = write_handle;
+  startup.hStdError = write_handle;
+  PROCESS_INFORMATION process = {0};
+  BOOL started = CreateProcessA(NULL, invocation.data, NULL, NULL, TRUE, 0,
+                                NULL, NULL, &startup, &process);
   clay_str_free(&invocation);
-  if (!pipe)
+  CloseHandle(write_handle);
+  if (!started) {
+    CloseHandle(read_handle);
     return -1;
+  }
 
-  int truncated = 0;
-  int character;
-  while ((character = fgetc(pipe)) != EOF) {
-    if (output->len < output_limit) {
-      clay_str_push_char(output, character == '\0' ? '?' : (char)character);
-    } else {
-      truncated = 1;
+  /* Killing only cmd.exe leaves grandchildren (and their inherited pipe
+     handle) alive. A kill-on-close job gives this one-shot command the same
+     process-group semantics as the POSIX implementation below. */
+  HANDLE job = CreateJobObjectA(NULL, NULL);
+  if (job) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                 &limits, sizeof(limits)) ||
+        !AssignProcessToJobObject(job, process.hProcess)) {
+      CloseHandle(job);
+      job = NULL;
     }
   }
 
-#ifdef _WIN32
-  int status = _pclose(pipe);
-  if (exit_code)
-    *exit_code = status < 0 ? -1 : status;
+  int truncated = 0;
+  int timed_out = 0;
+  ULONGLONG deadline = GetTickCount64() +
+                       (ULONGLONG)CLAY_TERM_SHELL_TIMEOUT_SECONDS * 1000;
+  for (;;) {
+    DWORD available = 0;
+    if (!PeekNamedPipe(read_handle, NULL, 0, NULL, &available, NULL)) break;
+    while (available > 0) {
+      char buffer[4096];
+      DWORD requested = available < sizeof(buffer) ? available : sizeof(buffer);
+      DWORD count = 0;
+      if (!ReadFile(read_handle, buffer, requested, &count, NULL) || count == 0)
+        break;
+      for (DWORD i = 0; i < count; i++) {
+        if (buffer[i] == '\0') buffer[i] = '?';
+      }
+      size_t kept = output->len < output_limit ? output_limit - output->len : 0;
+      if ((size_t)count > kept) truncated = 1;
+      if (kept > (size_t)count) kept = count;
+      if (kept) clay_str_push_n(output, buffer, kept);
+      available -= count;
+    }
+
+    DWORD state = WaitForSingleObject(process.hProcess, 50);
+    if (state == WAIT_OBJECT_0) break;
+    if (state == WAIT_FAILED) {
+      if (job) TerminateJobObject(job, 1);
+      else TerminateProcess(process.hProcess, 1);
+      WaitForSingleObject(process.hProcess, INFINITE);
+      CloseHandle(read_handle);
+      CloseHandle(process.hThread);
+      CloseHandle(process.hProcess);
+      if (job) CloseHandle(job);
+      return -1;
+    }
+    if (GetTickCount64() >= deadline) {
+      timed_out = 1;
+      if (job) TerminateJobObject(job, 124);
+      else TerminateProcess(process.hProcess, 124);
+      WaitForSingleObject(process.hProcess, INFINITE);
+      break;
+    }
+  }
+
+  /* Drain output after process termination. The job has closed inherited
+     writers, so PeekNamedPipe can no longer leave us blocked indefinitely. */
+  for (;;) {
+    DWORD available = 0;
+    if (!PeekNamedPipe(read_handle, NULL, 0, NULL, &available, NULL) || !available)
+      break;
+    char buffer[4096];
+    DWORD requested = available < sizeof(buffer) ? available : sizeof(buffer);
+    DWORD count = 0;
+    if (!ReadFile(read_handle, buffer, requested, &count, NULL) || count == 0)
+      break;
+    for (DWORD i = 0; i < count; i++) if (buffer[i] == '\0') buffer[i] = '?';
+    size_t kept = output->len < output_limit ? output_limit - output->len : 0;
+    if ((size_t)count > kept) truncated = 1;
+    if (kept > (size_t)count) kept = count;
+    if (kept) clay_str_push_n(output, buffer, kept);
+  }
+  DWORD status = 1;
+  GetExitCodeProcess(process.hProcess, &status);
+  CloseHandle(read_handle);
+  CloseHandle(process.hThread);
+  CloseHandle(process.hProcess);
+  if (job) CloseHandle(job);
+  if (timed_out) {
+    static const char message[] = "\nclay: command timed out\n";
+    size_t kept = output->len < output_limit ? output_limit - output->len : 0;
+    if (kept > sizeof(message) - 1) kept = sizeof(message) - 1;
+    if (kept < sizeof(message) - 1) truncated = 1;
+    if (kept) clay_str_push_n(output, message, kept);
+  }
+  if (exit_code) *exit_code = timed_out ? 124 : (int)status;
+  if (output_truncated) *output_truncated = truncated;
+  return 0;
 #else
-  int status = pclose(pipe);
-  if (exit_code)
-    *exit_code =
-        status < 0 ? -1 : (WIFEXITED(status) ? WEXITSTATUS(status) : status);
-#endif
+  int pipe_fds[2];
+  if (pipe(pipe_fds) != 0) return -1;
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+    return -1;
+  }
+  if (pid == 0) {
+    setpgid(0, 0);
+    dup2(pipe_fds[1], STDOUT_FILENO);
+    dup2(pipe_fds[1], STDERR_FILENO);
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+    execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+    _exit(127);
+  }
+  close(pipe_fds[1]);
+  setpgid(pid, pid);
+  int flags = fcntl(pipe_fds[0], F_GETFL);
+  if (flags < 0 || fcntl(pipe_fds[0], F_SETFL, flags | O_NONBLOCK) != 0) {
+    close(pipe_fds[0]);
+    kill(-pid, SIGKILL);
+    waitpid(pid, NULL, 0);
+    return -1;
+  }
+
+  int truncated = 0, timed_out = 0, child_done = 0, pipe_open = 1;
+  int status = 0;
+  struct timespec started;
+  clock_gettime(CLOCK_MONOTONIC, &started);
+  while (pipe_open || !child_done) {
+    if (!child_done && waitpid(pid, &status, WNOHANG) == pid) child_done = 1;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    long long elapsed = (long long)(now.tv_sec - started.tv_sec) * 1000 +
+                        (now.tv_nsec - started.tv_nsec) / 1000000;
+    if (pipe_open && elapsed >= CLAY_TERM_SHELL_TIMEOUT_SECONDS * 1000) {
+      kill(-pid, SIGKILL);
+      timed_out = 1;
+      if (!child_done && waitpid(pid, &status, 0) == pid) child_done = 1;
+    }
+    struct pollfd descriptor = {pipe_fds[0], POLLIN | POLLHUP, 0};
+    int polled = pipe_open ? poll(&descriptor, 1, child_done ? 0 : 100) :
+                             poll(NULL, 0, 100);
+    if (polled < 0) {
+      if (errno == EINTR) continue;
+      close(pipe_fds[0]);
+      if (!child_done) kill(-pid, SIGKILL);
+      waitpid(pid, NULL, 0);
+      return -1;
+    }
+    if (pipe_open && (polled > 0 || child_done)) {
+      for (;;) {
+        char buffer[4096];
+        ssize_t count = read(pipe_fds[0], buffer, sizeof(buffer));
+        if (count > 0) {
+          for (ssize_t i = 0; i < count; i++) if (buffer[i] == '\0') buffer[i] = '?';
+          size_t kept = output->len < output_limit ? output_limit - output->len : 0;
+          if ((size_t)count > kept) truncated = 1;
+          if (kept > (size_t)count) kept = count;
+          if (kept) clay_str_push_n(output, buffer, kept);
+          continue;
+        }
+        if (count == 0) {
+          close(pipe_fds[0]);
+          pipe_open = 0;
+        } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+          close(pipe_fds[0]);
+          pipe_open = 0;
+        }
+        break;
+      }
+    }
+  }
+  if (timed_out) {
+    static const char message[] = "\nclay: command timed out\n";
+    size_t kept = output->len < output_limit ? output_limit - output->len : 0;
+    if (kept > sizeof(message) - 1) kept = sizeof(message) - 1;
+    if (kept < sizeof(message) - 1) truncated = 1;
+    if (kept) clay_str_push_n(output, message, kept);
+  }
+  if (exit_code) *exit_code = timed_out ? 124 : (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
   if (output_truncated)
     *output_truncated = truncated;
   return 0;
+#endif
 }
 
 void clay_term_shell_quote(ClayStr *out, const char *value) {
@@ -783,9 +963,82 @@ char *clay_term_cwd(void) {
 
 int clay_term_mkdir(const char *path) {
 #ifdef _WIN32
-  return _mkdir(path) == 0 || errno == EEXIST ? 0 : -1;
+  if (_mkdir(path) != 0 && errno != EEXIST) return -1;
+  clay_term_restrict_file(path);
+  return 0;
 #else
   return mkdir(path, 0700) == 0 || errno == EEXIST ? 0 : -1;
+#endif
+}
+
+int clay_term_write_file_atomic(const char *path, const void *data, size_t len) {
+  if (!path || (!data && len > 0)) return -1;
+#ifdef _WIN32
+  char directory[MAX_PATH];
+  strncpy(directory, path, sizeof(directory) - 1);
+  directory[sizeof(directory) - 1] = '\0';
+  char *slash = strrchr(directory, '/');
+  char *backslash = strrchr(directory, '\\');
+  if (backslash && (!slash || backslash > slash)) slash = backslash;
+  if (slash) {
+    *slash = '\0';
+  } else {
+    strcpy(directory, ".");
+  }
+  char temporary[MAX_PATH];
+  if (GetTempFileNameA(directory, "clay", 0, temporary) == 0) return -1;
+  FILE *file = fopen(temporary, "wb");
+  if (!file) {
+    DeleteFileA(temporary);
+    return -1;
+  }
+  int ok = fwrite(data, 1, len, file) == len;
+  if (ok && fflush(file) != 0) ok = 0;
+  if (ok && _commit(_fileno(file)) != 0) ok = 0;
+  if (fclose(file) != 0) ok = 0;
+  if (!ok) {
+    DeleteFileA(temporary);
+    return -1;
+  }
+  if (!MoveFileExA(temporary, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    DeleteFileA(temporary);
+    return -1;
+  }
+  clay_term_restrict_file(path);
+  return 0;
+#else
+  ClayStr temporary;
+  clay_str_init(&temporary);
+  clay_str_printf(&temporary, "%s.tmp.XXXXXX", path);
+  int descriptor = mkstemp(temporary.data);
+  if (descriptor < 0) {
+    clay_str_free(&temporary);
+    return -1;
+  }
+  FILE *file = fdopen(descriptor, "wb");
+  if (!file) {
+    close(descriptor);
+    remove(temporary.data);
+    clay_str_free(&temporary);
+    return -1;
+  }
+  int ok = fwrite(data, 1, len, file) == len;
+  if (ok && fflush(file) != 0) ok = 0;
+  if (ok && fsync(fileno(file)) != 0) ok = 0;
+  if (fclose(file) != 0) ok = 0;
+  if (!ok) {
+    remove(temporary.data);
+    clay_str_free(&temporary);
+    return -1;
+  }
+  if (rename(temporary.data, path) != 0) {
+    remove(temporary.data);
+    clay_str_free(&temporary);
+    return -1;
+  }
+  clay_term_restrict_file(path);
+  clay_str_free(&temporary);
+  return 0;
 #endif
 }
 
@@ -1103,6 +1356,34 @@ void clay_term_restrict_file(const char *path) {
 #ifndef _WIN32
   chmod(path, 0600);
 #else
-  (void)path;
+  HANDLE token = NULL;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return;
+  DWORD token_size = 0;
+  GetTokenInformation(token, TokenUser, NULL, 0, &token_size);
+  if (!token_size) {
+    CloseHandle(token);
+    return;
+  }
+  PTOKEN_USER user = (PTOKEN_USER)malloc(token_size);
+  PACL acl = NULL;
+  if (!user || !GetTokenInformation(token, TokenUser, user, token_size, &token_size)) {
+    free(user);
+    CloseHandle(token);
+    return;
+  }
+  EXPLICIT_ACCESSA access = {0};
+  access.grfAccessPermissions = GENERIC_ALL;
+  access.grfAccessMode = SET_ACCESS;
+  access.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+  BuildTrusteeWithSidA(&access.Trustee, user->User.Sid);
+  DWORD result = SetEntriesInAclA(1, &access, NULL, &acl);
+  if (result == ERROR_SUCCESS) {
+    SetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT,
+                          DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                          NULL, NULL, acl, NULL);
+  }
+  if (acl) LocalFree(acl);
+  free(user);
+  CloseHandle(token);
 #endif
 }

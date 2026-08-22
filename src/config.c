@@ -123,19 +123,11 @@ static int save_selection_root(ClayJson *root) {
   clay_json_stringify(root, &body);
   clay_json_free(root);
 
-  FILE *f = fopen(path.data, "w");
-  if (!f) {
-    clay_str_free(&path);
-    clay_str_free(&body);
-    return -1;
-  }
-  fwrite(body.data, 1, body.len, f);
-  fclose(f);
-  clay_term_restrict_file(path.data);
+  int rc = clay_term_write_file_atomic(path.data, body.data, body.len);
 
   clay_str_free(&path);
   clay_str_free(&body);
-  return 0;
+  return rc;
 }
 
 ClayProviderConfig *clay_config_load(const char *id) {
@@ -226,19 +218,11 @@ int clay_config_save(const ClayProviderConfig *config) {
   clay_json_stringify(root, &body);
   clay_json_free(root);
 
-  FILE *f = fopen(path.data, "w");
-  if (!f) {
-    clay_str_free(&path);
-    clay_str_free(&body);
-    return -1;
-  }
-  fwrite(body.data, 1, body.len, f);
-  fclose(f);
-  clay_term_restrict_file(path.data);
+  int rc = clay_term_write_file_atomic(path.data, body.data, body.len);
 
   clay_str_free(&path);
   clay_str_free(&body);
-  return 0;
+  return rc;
 }
 
 int clay_config_remove(const char *id) {

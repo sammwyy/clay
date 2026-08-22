@@ -28,27 +28,34 @@ void clay_cmd_checkpoints(const char *args, void *user_data) {
         return;
     }
 
-    ClayChoice choices[checkpoints.count];
-    ClayStr titles[checkpoints.count];
-    ClayStr descriptions[checkpoints.count];
+    ClayArray choices, titles, descriptions;
+    clay_array_init(&choices, sizeof(ClayChoice));
+    clay_array_init(&titles, sizeof(ClayStr));
+    clay_array_init(&descriptions, sizeof(ClayStr));
     long long now = clay_time_now();
     for (size_t i = 0; i < checkpoints.count; i++) {
         ClayCheckpoint *checkpoint = clay_array_get(&checkpoints, i);
         char *relative = clay_time_relative(checkpoint->created_at, now);
-        clay_str_init(&titles[i]);
-        clay_str_init(&descriptions[i]);
-        clay_str_push(&titles[i], checkpoint->label);
-        clay_str_push(&descriptions[i], relative);
+        ClayStr title, description;
+        clay_str_init(&title);
+        clay_str_init(&description);
+        clay_str_push(&title, checkpoint->label);
+        clay_str_push(&description, relative);
         free(relative);
-        choices[i].title = titles[i].data;
-        choices[i].desc = descriptions[i].data;
+        clay_array_push_val(&titles, &title);
+        clay_array_push_val(&descriptions, &description);
+        ClayChoice choice = {title.data, description.data};
+        clay_array_push_val(&choices, &choice);
     }
-    int index = clay_app_choice(commands->app, "Restore a checkpoint (overwrites files changed since):", choices,
-                                (int)checkpoints.count, 0, NULL);
-    for (size_t i = 0; i < checkpoints.count; i++) {
-        clay_str_free(&titles[i]);
-        clay_str_free(&descriptions[i]);
+    int index = clay_app_choice(commands->app, "Restore a checkpoint (overwrites files changed since):", choices.data,
+                                (int)choices.count, 0, NULL);
+    for (size_t i = 0; i < titles.count; i++) {
+        clay_str_free(clay_array_get(&titles, i));
+        clay_str_free(clay_array_get(&descriptions, i));
     }
+    clay_array_free(&choices);
+    clay_array_free(&titles);
+    clay_array_free(&descriptions);
 
     if (index >= 0 &&
         clay_app_confirm(commands->app, "Restore this checkpoint? Files changed since will be overwritten.", 0)) {

@@ -128,13 +128,11 @@ int clay_memory_write(const char *slug, const char *type, const char *summary, c
     if (!clay_memory_valid_slug(slug) || ensure_memory_dir() != 0) return -1;
     char *path = entry_path(slug);
     if (!path) return -1;
-    FILE *file = fopen(path, "w");
-    free(path);
-    if (!file) return -1;
     const char *body = content ? content : "";
     size_t len = strlen(body);
-    int ok = fwrite(body, 1, len, file) == len && fclose(file) == 0;
-    if (!ok) return -1;
+    int rc = clay_term_write_file_atomic(path, body, len);
+    free(path);
+    if (rc != 0) return -1;
 
     ClayJson *root = load_manifest();
     ClayJson *entries = clay_json_object_get(root, "entries");

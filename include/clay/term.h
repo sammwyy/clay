@@ -144,6 +144,10 @@ char *clay_term_cwd(void);
 /* Creates one directory level (not recursive). 0 on success or if it
    already exists, nonzero on failure. */
 int clay_term_mkdir(const char *path);
+
+/* Writes a file through a sibling temporary file and atomically replaces the
+   destination. The temporary file is removed on failure. */
+int clay_term_write_file_atomic(const char *path, const void *data, size_t len);
 int clay_term_list_dir(
     const char *path,
     ClayArray *names); /* char *, caller frees entries; dirs only */

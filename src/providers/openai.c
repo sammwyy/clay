@@ -500,6 +500,8 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages,
     req.userdata = &st;
     req.should_abort = should_abort_stream;
     req.abort_userdata = &st;
+    req.low_speed_limit = 1;
+    req.low_speed_seconds = 60;
     req.max_response_bytes = CLAY_OPENAI_STREAM_RESPONSE_LIMIT;
 
     ClayHttpResponse resp;

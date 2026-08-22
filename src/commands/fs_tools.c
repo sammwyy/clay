@@ -59,22 +59,26 @@ static int resolve_workspace_path(const char *workspace_dir, const char *path, C
     return contained ? 0 : -1;
 }
 
-static int read_whole_file(const char *path, ClayStr *out) {
+static int read_whole_file(const char *path, ClayStr *out, size_t limit) {
     FILE *file = fopen(path, "rb");
     if (!file) return -1;
     clay_str_init(out);
     int ch;
-    while ((ch = fgetc(file)) != EOF) clay_str_push_char(out, (char)ch);
+    while ((ch = fgetc(file)) != EOF) {
+        if (limit > 0 && out->len >= limit) {
+            fclose(file);
+            clay_str_free(out);
+            errno = EFBIG;
+            return -1;
+        }
+        clay_str_push_char(out, (char)ch);
+    }
     fclose(file);
     return 0;
 }
 
 static int write_whole_file(const char *path, const char *data, size_t len) {
-    FILE *file = fopen(path, "wb");
-    if (!file) return -1;
-    size_t written = fwrite(data, 1, len, file);
-    int ok = written == len && fclose(file) == 0;
-    return ok ? 0 : -1;
+    return clay_term_write_file_atomic(path, data, len);
 }
 
 /* Creates every directory above `abs_path`'s final component. */
@@ -377,7 +381,7 @@ ClayJson *clay_fs_tool_edit(const ClayJson *arguments, void *userdata) {
     result = clay_json_object();
     clay_json_object_set(result, "path", clay_json_string(path));
     ClayStr content;
-    if (read_whole_file(abs.data, &content) != 0) {
+    if (read_whole_file(abs.data, &content, CLAY_FS_READ_LIMIT) != 0) {
         clay_str_free(&abs);
         clay_json_object_set(result, "ok", clay_json_bool(0));
         clay_json_object_set(result, "error", clay_json_string(strerror(errno)));

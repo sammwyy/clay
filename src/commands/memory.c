@@ -40,27 +40,34 @@ void clay_cmd_memory(const char *args, void *user_data) {
         return;
     }
 
-    ClayChoice choices[entries.count];
-    ClayStr titles[entries.count];
-    ClayStr descriptions[entries.count];
+    ClayArray choices, titles, descriptions;
+    clay_array_init(&choices, sizeof(ClayChoice));
+    clay_array_init(&titles, sizeof(ClayStr));
+    clay_array_init(&descriptions, sizeof(ClayStr));
     long long now = clay_time_now();
     for (size_t i = 0; i < entries.count; i++) {
         ClayMemoryEntry *entry = clay_array_get(&entries, i);
         char *relative = clay_time_relative(entry->updated_at, now);
-        clay_str_init(&titles[i]);
-        clay_str_init(&descriptions[i]);
-        clay_str_printf(&titles[i], "%s [%s]", entry->slug, entry->type);
-        clay_str_printf(&descriptions[i], "%s \xc2\xb7 %s", entry->summary, relative);
+        ClayStr title, description;
+        clay_str_init(&title);
+        clay_str_init(&description);
+        clay_str_printf(&title, "%s [%s]", entry->slug, entry->type);
+        clay_str_printf(&description, "%s \xc2\xb7 %s", entry->summary, relative);
         free(relative);
-        choices[i].title = titles[i].data;
-        choices[i].desc = descriptions[i].data;
+        clay_array_push_val(&titles, &title);
+        clay_array_push_val(&descriptions, &description);
+        ClayChoice choice = {title.data, description.data};
+        clay_array_push_val(&choices, &choice);
     }
-    int index = clay_app_choice(commands->app, "Long-term memory (/memory forget <slug> to delete one):", choices,
-                                (int)entries.count, 0, NULL);
-    for (size_t i = 0; i < entries.count; i++) {
-        clay_str_free(&titles[i]);
-        clay_str_free(&descriptions[i]);
+    int index = clay_app_choice(commands->app, "Long-term memory (/memory forget <slug> to delete one):", choices.data,
+                                (int)choices.count, 0, NULL);
+    for (size_t i = 0; i < titles.count; i++) {
+        clay_str_free(clay_array_get(&titles, i));
+        clay_str_free(clay_array_get(&descriptions, i));
     }
+    clay_array_free(&choices);
+    clay_array_free(&titles);
+    clay_array_free(&descriptions);
     if (index >= 0) {
         ClayMemoryEntry *entry = clay_array_get(&entries, (size_t)index);
         char *content = clay_memory_read(entry->slug);

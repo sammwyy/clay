@@ -25,7 +25,9 @@ typedef struct {
     void *userdata;
     ClayHttpAbortFn should_abort;
     void *abort_userdata;
-    int timeout_seconds; /* 0 = no timeout; streaming responses can run long */
+    int timeout_seconds; /* 0 = no total timeout */
+    long low_speed_limit; /* 0 = disabled; useful for idle streaming connections */
+    long low_speed_seconds;
     size_t max_response_bytes; /* 0 = unlimited */
 } ClayHttpRequest;
 
