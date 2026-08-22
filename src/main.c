@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to initialize HTTP.\n");
         return 1;
     }
-    clay_banner("clay", CLAY_VERSION, "your AI code agent");
+    clay_banner("clay", CLAY_VERSION);
 
     ClayApp *app = clay_app_create();
     ClayCommands *commands = clay_commands_create(app);

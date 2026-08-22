@@ -14,9 +14,7 @@ Bring your own model. Stay in your flow. Ship better work.
 </div>
 
 ```text
-  ┌────────────────────────────────────┐
-  │  clay v0.0.0 — your AI code agent  │
-  └────────────────────────────────────┘
+clay v0.0.0  Type /help for view available commands.
 
 > review this project and find the rough edges
 ◆ ℂlay  I’ll inspect the structure and trace the main flows first.
