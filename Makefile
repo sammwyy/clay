@@ -40,6 +40,10 @@ CLI_TEST_SRC    := tests/test_cli.c
 CLI_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(CLI_TEST_SRC))
 CLI_TEST_TARGET := $(BIN_DIR)/test_cli
 
+COMMAND_TEST_SRC    := tests/test_command.c
+COMMAND_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(COMMAND_TEST_SRC))
+COMMAND_TEST_TARGET := $(BIN_DIR)/test_command
+
 CHAT_TEST_SRC    := tests/test_chat.c
 CHAT_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(CHAT_TEST_SRC))
 CHAT_TEST_TARGET := $(BIN_DIR)/test_chat
@@ -121,7 +125,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-openai-codex test-grok test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact run compress compress-win clean debug
+.PHONY: all build build-win build_win test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact run compress compress-win clean debug
 
 all: build
 
@@ -149,6 +153,11 @@ test-cli: $(CLI_TEST_TARGET)
 
 $(CLI_TEST_TARGET): $(LIB_OBJ) $(CLI_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CLI_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-command: $(COMMAND_TEST_TARGET)
+
+$(COMMAND_TEST_TARGET): $(LIB_OBJ) $(COMMAND_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(COMMAND_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-chat: $(CHAT_TEST_TARGET)
 

@@ -29,6 +29,12 @@ void clay_below_stop_elapsed(const char *id);
    being edited. Managed by clay_prompt_line. */
 void clay_below_set_editing(int editing);
 
+/* Sets transient rows displayed after the status modules while a prompt is
+   being edited. Each row is copied; passing no rows removes the overlay.
+   This keeps prompt popups ordered below (rather than on top of) the normal
+   below-text and lets the animator redraw the whole block safely. */
+void clay_below_set_overlay(const char *const *rows, size_t count);
+
 /* Redraws the prompt line (`input`) plus enabled modules as one block;
    the terminal cursor is placed at display column `cursor` (a byte
    offset into `input`; ANSI escapes in the prefix up to it don't count
@@ -49,7 +55,7 @@ void clay_below_status_finish_output(void);
 void clay_below_status_refresh_below(void);
 void clay_below_status_prepare_prompt(void);
 
-/* Erases the modules row and moves the cursor to a fresh line below it.
+/* Erases transient rows and modules, then moves to a fresh line below them.
    The prompt line itself stays on screen as history. */
 void clay_below_finish(void);
 

@@ -34,6 +34,9 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static ClayArray g_modules;
 static int g_modules_ready = 0;
 
+static ClayArray g_overlay; /* char*, transient rows after the status modules */
+static int g_overlay_ready = 0;
+
 static ClayStr g_last_input;
 static int g_last_input_ready = 0;
 static size_t g_last_cursor = 0;
@@ -52,6 +55,19 @@ static void ensure_modules(void) {
         clay_array_init(&g_modules, sizeof(ClayBelowModule));
         g_modules_ready = 1;
     }
+}
+
+static void ensure_overlay(void) {
+    if (!g_overlay_ready) {
+        clay_array_init(&g_overlay, sizeof(char *));
+        g_overlay_ready = 1;
+    }
+}
+
+static void clear_overlay(void) {
+    ensure_overlay();
+    for (size_t i = 0; i < g_overlay.count; i++) free(*(char **)clay_array_get(&g_overlay, i));
+    clay_array_clear(&g_overlay);
 }
 
 static void ensure_last_input(void) {
@@ -138,6 +154,7 @@ static void print_module_inline(const ClayBelowModule *m) {
 static void render_locked(void) {
     ensure_modules();
     ensure_last_input();
+    ensure_overlay();
 
     fputc('\r', stdout);
     clay_term_clear_line();
@@ -145,7 +162,8 @@ static void render_locked(void) {
 
     int order[CLAY_BELOW_MAX_MODULES];
     int count = sorted_enabled_indices(order);
-    int total_now = count > 0 ? 2 : 1;
+    int overlay_start = count > 0 ? 2 : 1;
+    int total_now = overlay_start + (int)g_overlay.count;
 
     int rows_to_visit = total_now > g_last_line_count ? total_now : g_last_line_count;
 
@@ -153,12 +171,14 @@ static void render_locked(void) {
         clay_term_row_enter(row, &g_max_rows_established);
         clay_term_clear_line();
 
-        if (row == 1 && row < total_now) {
+        if (count > 0 && row == 1) {
             fputs("  ", stdout);
             for (int k = 0; k < count; k++) {
                 if (k > 0) printf(" %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT, clay_color(CLAY_RESET));
                 print_module_inline(clay_array_get(&g_modules, (size_t)order[k]));
             }
+        } else if (row >= overlay_start && row < total_now) {
+            fputs(*(char **)clay_array_get(&g_overlay, (size_t)(row - overlay_start)), stdout);
         }
     }
 
@@ -321,6 +341,16 @@ void clay_below_set_editing(int editing) {
     pthread_mutex_unlock(&g_lock);
 }
 
+void clay_below_set_overlay(const char *const *rows, size_t count) {
+    pthread_mutex_lock(&g_lock);
+    clear_overlay();
+    for (size_t i = 0; i < count; i++) {
+        char *copy = strdup(rows[i] ? rows[i] : "");
+        clay_array_push_val(&g_overlay, &copy);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
 void clay_below_render(const char *input, size_t cursor) {
     pthread_mutex_lock(&g_lock);
     ensure_last_input();
@@ -415,6 +445,7 @@ void clay_below_status_prepare_prompt(void) {
 
 void clay_below_finish(void) {
     pthread_mutex_lock(&g_lock);
+    clear_overlay();
     if (g_status_only) {
         fputc('\r', stdout);
         clay_term_clear_line();

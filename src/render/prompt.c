@@ -212,91 +212,196 @@ static void prompt_cursor_right(ClayStr *buf, ClayArray *blocks, size_t *cursor)
 }
 
 typedef struct {
-    ClayArray matches; /* const char*, borrowed from the command registry */
+    const char *name;        /* borrowed from the command registry */
+    const char *description; /* borrowed from the command registry */
+    char *aliases;           /* owned, comma-separated aliases with slashes */
+    int exact_match;         /* the typed name is this command or one of its aliases */
+} ClayCommandCompletionItem;
+
+typedef struct {
+    ClayArray matches; /* ClayCommandCompletionItem */
     size_t selected;
-    int popup_rows;
 } ClayCommandCompletion;
 
 typedef struct {
     const char *prefix;
     size_t length;
-    ClayArray *matches;
+    ClayCommandCompletion *completion;
 } CompletionContext;
 
-static void collect_completion(const char *name, const char *description, void *ctx) {
-    (void)description;
-    CompletionContext *completion = ctx;
-    if (strncmp(name, completion->prefix, completion->length) == 0) {
-        clay_array_push_val(completion->matches, &name);
-    }
+static int completion_name_matches(const char *name, const char *prefix, size_t length) {
+    return strncmp(name, prefix, length) == 0;
 }
 
-static void completion_clear_popup(ClayCommandCompletion *completion) {
-    if (completion->popup_rows <= 0) return;
-
-    fputs("\x1b[s", stdout);
-    for (int row = 0; row < completion->popup_rows; row++) {
-        clay_term_cursor_down(1);
-        clay_term_clear_line();
+static void completion_items_clear(ClayCommandCompletion *completion) {
+    for (size_t i = 0; i < completion->matches.count; i++) {
+        ClayCommandCompletionItem *item = clay_array_get(&completion->matches, i);
+        free(item->aliases);
     }
-    fputs("\x1b[u", stdout);
-    completion->popup_rows = 0;
+    clay_array_clear(&completion->matches);
+}
+
+static void collect_completion(const ClayCommandGroup *group, void *ctx) {
+    CompletionContext *completion = ctx;
+    int matches = completion_name_matches(group->name, completion->prefix, completion->length);
+    int exact_match = strlen(group->name) == completion->length && matches;
+    for (size_t i = 0; i < group->alias_count; i++) {
+        if (completion_name_matches(group->aliases[i], completion->prefix, completion->length)) matches = 1;
+        if (strlen(group->aliases[i]) == completion->length &&
+            completion_name_matches(group->aliases[i], completion->prefix, completion->length)) {
+            exact_match = 1;
+        }
+    }
+    if (!matches) return;
+
+    ClayStr aliases;
+    clay_str_init(&aliases);
+    for (size_t i = 0; i < group->alias_count; i++) {
+        if (i > 0) clay_str_push(&aliases, ", ");
+        clay_str_push_char(&aliases, '/');
+        clay_str_push(&aliases, group->aliases[i]);
+    }
+    ClayCommandCompletionItem item = {group->name, group->description, aliases.data, exact_match};
+    clay_array_push_val(&completion->completion->matches, &item);
 }
 
 static void completion_update(ClayCommandCompletion *completion, ClayCommandRegistry *commands,
                               const ClayStr *buf, size_t cursor) {
-    clay_array_clear(&completion->matches);
+    const char *previous = NULL;
+    if (completion->selected < completion->matches.count) {
+        previous = ((ClayCommandCompletionItem *)clay_array_get(&completion->matches, completion->selected))->name;
+    }
+    completion_items_clear(completion);
     if (!commands || cursor != buf->len || buf->len == 0 || buf->data[0] != '/') return;
 
     size_t name_len = 0;
     while (name_len + 1 < buf->len && !isspace((unsigned char)buf->data[name_len + 1])) name_len++;
     if (name_len + 1 != buf->len) return;
 
-    CompletionContext context = {buf->data + 1, name_len, &completion->matches};
-    clay_command_foreach_all(commands, collect_completion, &context);
-    if (completion->selected >= completion->matches.count) completion->selected = 0;
-}
-
-static void completion_draw_popup(ClayCommandCompletion *completion) {
-    size_t count = completion->matches.count;
-    if (count == 0) return;
-    if (count > 8) count = 8;
-
-    fputs("\x1b[s", stdout);
-    clay_term_cursor_down(1);
-    clay_term_clear_line();
-    printf("  %s+-- commands ----------------%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
-    for (size_t i = 0; i < count; i++) {
-        const char *name = *(const char **)clay_array_get(&completion->matches, i);
-        clay_term_cursor_down(1);
-        clay_term_clear_line();
-        if (i == completion->selected) {
-            printf("  %s> /%s%s", clay_color(CLAY_ORANGE), name, clay_color(CLAY_RESET));
-        } else {
-            printf("    %s/%s%s", clay_color(CLAY_GRAY), name, clay_color(CLAY_RESET));
+    CompletionContext context = {buf->data + 1, name_len, completion};
+    clay_command_foreach_group(commands, collect_completion, &context);
+    completion->selected = 0;
+    for (size_t i = 0; previous && i < completion->matches.count; i++) {
+        ClayCommandCompletionItem *item = clay_array_get(&completion->matches, i);
+        if (item->name == previous) {
+            completion->selected = i;
+            break;
         }
     }
-    clay_term_cursor_down(1);
-    clay_term_clear_line();
-    printf("  %s+---------------------------%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
-    fputs("\x1b[u", stdout);
-    completion->popup_rows = (int)count + 2;
+}
+
+static void completion_add_row(ClayArray *rows, const char *text) {
+    char *row = strdup(text);
+    clay_array_push_val(rows, &row);
+}
+
+/* Keep every menu row on one terminal line, without splitting a UTF-8 code
+   point when a command description contains non-ASCII text. */
+static void completion_add_clipped(ClayStr *line, const char *text, int available) {
+    if (available <= 0 || !text || !text[0]) return;
+    if ((int)clay_utf8_width(text) <= available) {
+        clay_str_push(line, text);
+        return;
+    }
+
+    int limit = available > 3 ? available - 3 : available;
+    size_t bytes = 0;
+    int width = 0;
+    while (text[bytes] && width < limit) {
+        unsigned char byte = (unsigned char)text[bytes];
+        size_t char_bytes = 1;
+        if ((byte & 0xE0) == 0xC0) char_bytes = 2;
+        else if ((byte & 0xF0) == 0xE0) char_bytes = 3;
+        else if ((byte & 0xF8) == 0xF0) char_bytes = 4;
+        if (!text[bytes + char_bytes - 1]) break;
+        bytes += char_bytes;
+        width++;
+    }
+    clay_str_insert_n(line, line->len, text, bytes);
+    if (available > 3) clay_str_push(line, "...");
+}
+
+static void completion_set_overlay(ClayCommandCompletion *completion) {
+    ClayArray rows;
+    clay_array_init(&rows, sizeof(char *));
+
+    size_t count = completion->matches.count;
+    if (count > 0) {
+        const size_t max_visible = 7;
+        const size_t middle = max_visible / 2;
+        /* Keep the active command at the top only at the beginning, centered
+           through the normal range, and let it move toward the bottom when
+           the viewport reaches its last possible scroll position. */
+        size_t first = 0;
+        if (completion->selected > middle) first = completion->selected - middle;
+        if (count > max_visible && first + max_visible > count) first = count - max_visible;
+        size_t last = first + max_visible;
+        if (last > count) last = count;
+
+        ClayStr heading;
+        clay_str_init(&heading);
+        clay_str_printf(&heading, "  %sCommands  %s↑↓ navigate · Enter complete%s",
+                        clay_color(CLAY_DIM), clay_color(CLAY_DIM), clay_color(CLAY_RESET));
+        completion_add_row(&rows, heading.data);
+        clay_str_free(&heading);
+        int width = clay_term_width();
+        for (size_t i = first; i < last; i++) {
+            ClayCommandCompletionItem *item = clay_array_get(&completion->matches, i);
+            ClayStr row;
+            clay_str_init(&row);
+            if (i == completion->selected) {
+                clay_str_printf(&row, "  %s›%s %s/%s%s", clay_color(CLAY_ORANGE), clay_color(CLAY_RESET),
+                                clay_color(CLAY_BOLD), item->name, clay_color(CLAY_RESET));
+            } else {
+                clay_str_printf(&row, "    %s/%s%s", clay_color(CLAY_GRAY), item->name, clay_color(CLAY_RESET));
+            }
+
+            int used = (int)clay_utf8_width(row.data);
+            if (item->aliases[0] && used + 13 < width) {
+                clay_str_printf(&row, "  %saliases: ", clay_color(CLAY_DIM));
+                completion_add_clipped(&row, item->aliases, width - used - 11);
+                clay_str_push(&row, clay_color(CLAY_RESET));
+            }
+            used = (int)clay_utf8_width(row.data);
+            if (item->description[0] && used + 3 < width) {
+                clay_str_printf(&row, "  %s", clay_color(CLAY_DIM));
+                completion_add_clipped(&row, item->description, width - used - 2);
+                clay_str_push(&row, clay_color(CLAY_RESET));
+            }
+            completion_add_row(&rows, row.data);
+            clay_str_free(&row);
+        }
+        if (count > max_visible) {
+            ClayStr footer;
+            clay_str_init(&footer);
+            clay_str_printf(&footer, "  %s%zu–%zu of %zu commands%s", clay_color(CLAY_DIM), first + 1, last,
+                            count, clay_color(CLAY_RESET));
+            completion_add_row(&rows, footer.data);
+            clay_str_free(&footer);
+        }
+    }
+
+    clay_below_set_overlay((const char *const *)rows.data, rows.count);
+    for (size_t i = 0; i < rows.count; i++) free(*(char **)clay_array_get(&rows, i));
+    clay_array_free(&rows);
 }
 
 static void completion_render(ClayCommandCompletion *completion, ClayCommandRegistry *commands,
                               const ClayStr *buf, size_t cursor) {
-    completion_clear_popup(completion);
     completion_update(completion, commands, buf, cursor);
+    completion_set_overlay(completion);
     clay_below_render(buf->data, cursor);
-    completion_draw_popup(completion);
 }
 
 static int completion_apply(ClayCommandCompletion *completion, ClayStr *buf, ClayArray *blocks,
                             size_t *cursor, int *history_pos) {
     if (completion->matches.count == 0) return 0;
-    const char *name = *(const char **)clay_array_get(&completion->matches, completion->selected);
+    ClayCommandCompletionItem *item = clay_array_get(&completion->matches, completion->selected);
+    /* A fully typed command (including an alias) is ready to run. Enter only
+       fills the input when the selection is still a partial completion. */
+    if (item->exact_match) return 0;
     clay_str_clear(buf);
-    clay_str_printf(buf, "/%s", name);
+    clay_str_printf(buf, "/%s", item->name);
     paste_blocks_free(blocks);
     *cursor = buf->len;
     *history_pos = -1;
@@ -348,9 +453,8 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
     int clear_armed = 0;
 
     ClayCommandCompletion completion;
-    clay_array_init(&completion.matches, sizeof(const char *));
+    clay_array_init(&completion.matches, sizeof(ClayCommandCompletionItem));
     completion.selected = 0;
-    completion.popup_rows = 0;
 
     int pending_valid = 0; /* a key already read while scanning a burst, not yet handled */
     ClayKey pending_key = CLAY_KEY_CHAR;
@@ -481,7 +585,8 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
         completion_render(&completion, commands, &buf, cursor);
     }
 
-    completion_clear_popup(&completion);
+    clay_below_set_overlay(NULL, 0);
+    completion_items_clear(&completion);
     clay_array_free(&completion.matches);
     clay_below_set_enabled("hint", 0);
     clay_below_set_editing(0);

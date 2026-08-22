@@ -90,6 +90,32 @@ void clay_command_foreach_all(ClayCommandRegistry *reg, ClayCommandVisitor visit
     }
 }
 
+void clay_command_foreach_group(ClayCommandRegistry *reg, ClayCommandGroupVisitor visitor, void *ctx) {
+    for (size_t i = 0; i < reg->order.count; i++) {
+        ClayCommandEntry *entry = *(ClayCommandEntry **)clay_array_get(&reg->order, i);
+        /* An alias is bound by its handler and context, the exact pair used
+           for dispatch. This also supports aliases registered before their
+           visible command, such as /provider before /connect. */
+        size_t alias_count = 0;
+        for (size_t j = 0; j < reg->aliases.count; j++) {
+            ClayCommandEntry *alias = *(ClayCommandEntry **)clay_array_get(&reg->aliases, j);
+            if (alias->handler == entry->handler && alias->user_data == entry->user_data) alias_count++;
+        }
+
+        const char *alias_names[alias_count ? alias_count : 1];
+        size_t k = 0;
+        for (size_t j = 0; j < reg->aliases.count; j++) {
+            ClayCommandEntry *alias = *(ClayCommandEntry **)clay_array_get(&reg->aliases, j);
+            if (alias->handler == entry->handler && alias->user_data == entry->user_data) {
+                alias_names[k++] = alias->name;
+            }
+        }
+
+        ClayCommandGroup group = {entry->name, entry->description, alias_names, alias_count};
+        visitor(&group, ctx);
+    }
+}
+
 ClayInput clay_input_parse(const char *line) {
     ClayInput input = {0};
     while (isspace((unsigned char)*line)) line++;
