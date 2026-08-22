@@ -4,6 +4,7 @@
 #include "clay/array.h"
 #include "clay/json.h"
 #include "clay/providers/openai.h"
+#include "clay/sse.h"
 #include "clay/str.h"
 
 typedef struct ClayOpenAICodex ClayOpenAICodex;
@@ -63,7 +64,7 @@ int clay_openai_codex_run(ClayOpenAICodex *client, ClayJson *messages,
                           int max_rounds, const ClayOpenAICallbacks *callbacks);
 
 /* Small incremental SSE helper used by the provider and focused tests. */
-typedef struct ClayCodexSseParser ClayCodexSseParser;
+typedef ClaySseParser ClayCodexSseParser;
 ClayCodexSseParser *clay_openai_codex_sse_create(void (*on_json)(const char *,
                                                                  void *),
                                                  void *userdata);

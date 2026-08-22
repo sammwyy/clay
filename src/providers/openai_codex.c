@@ -2,11 +2,12 @@
    Its undocumented compatibility details deliberately live in this file. */
 #include "clay/providers/openai_codex.h"
 
+#include "clay/crypto.h"
+#include "clay/encoding.h"
 #include "clay/http.h"
+#include "clay/sse.h"
 #include "clay/term.h"
 
-#include <ctype.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,13 +41,6 @@ struct ClayOpenAICodex {
   long last_status;
 };
 
-struct ClayCodexSseParser {
-  ClayStr line;
-  ClayStr event_data;
-  void (*on_json)(const char *, void *);
-  void *userdata;
-};
-
 typedef struct {
   ClayStr id;
   ClayStr item_id;
@@ -67,136 +61,6 @@ typedef struct {
   long output_tokens;
 } CodexStream;
 
-/* Small SHA-256 implementation: PKCE needs only one short digest and adding
-   an OpenSSL dependency would violate clay's intentionally tiny footprint. */
-typedef struct {
-  unsigned int h[8];
-  unsigned char block[64];
-  size_t used;
-  unsigned long long bits;
-} Sha256;
-static unsigned int rotr(unsigned int x, unsigned int n) {
-  return (x >> n) | (x << (32 - n));
-}
-static void sha256_block(Sha256 *s, const unsigned char *p) {
-  static const unsigned int k[64] = {
-      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
-      0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-      0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
-      0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
-      0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-      0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-      0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
-      0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-      0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
-  unsigned int w[64], a, b, c, d, e, f, g, h;
-  for (int i = 0; i < 16; i++)
-    w[i] = ((unsigned int)p[i * 4] << 24) | ((unsigned int)p[i * 4 + 1] << 16) |
-           ((unsigned int)p[i * 4 + 2] << 8) | p[i * 4 + 3];
-  for (int i = 16; i < 64; i++) {
-    unsigned int s0 =
-        rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-    unsigned int s1 =
-        rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-    w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-  }
-  a = s->h[0];
-  b = s->h[1];
-  c = s->h[2];
-  d = s->h[3];
-  e = s->h[4];
-  f = s->h[5];
-  g = s->h[6];
-  h = s->h[7];
-  for (int i = 0; i < 64; i++) {
-    unsigned int S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25),
-                 ch = (e & f) ^ ((~e) & g), t1 = h + S1 + ch + k[i] + w[i],
-                 S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22),
-                 maj = (a & b) ^ (a & c) ^ (b & c), t2 = S0 + maj;
-    h = g;
-    g = f;
-    f = e;
-    e = d + t1;
-    d = c;
-    c = b;
-    b = a;
-    a = t1 + t2;
-  }
-  s->h[0] += a;
-  s->h[1] += b;
-  s->h[2] += c;
-  s->h[3] += d;
-  s->h[4] += e;
-  s->h[5] += f;
-  s->h[6] += g;
-  s->h[7] += h;
-}
-static void sha256_init(Sha256 *s) {
-  unsigned int h[] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-  memcpy(s->h, h, sizeof(h));
-  s->used = 0;
-  s->bits = 0;
-}
-static void sha256_update(Sha256 *s, const unsigned char *p, size_t n) {
-  s->bits += (unsigned long long)n * 8;
-  while (n) {
-    size_t take = 64 - s->used;
-    if (take > n)
-      take = n;
-    memcpy(s->block + s->used, p, take);
-    s->used += take;
-    p += take;
-    n -= take;
-    if (s->used == 64) {
-      sha256_block(s, s->block);
-      s->used = 0;
-    }
-  }
-}
-static void sha256_final(Sha256 *s, unsigned char out[32]) {
-  s->block[s->used++] = 0x80;
-  if (s->used > 56) {
-    while (s->used < 64)
-      s->block[s->used++] = 0;
-    sha256_block(s, s->block);
-    s->used = 0;
-  }
-  while (s->used < 56)
-    s->block[s->used++] = 0;
-  for (int i = 7; i >= 0; i--)
-    s->block[s->used++] = (unsigned char)(s->bits >> (i * 8));
-  sha256_block(s, s->block);
-  for (int i = 0; i < 8; i++) {
-    out[i * 4] = (unsigned char)(s->h[i] >> 24);
-    out[i * 4 + 1] = (unsigned char)(s->h[i] >> 16);
-    out[i * 4 + 2] = (unsigned char)(s->h[i] >> 8);
-    out[i * 4 + 3] = (unsigned char)s->h[i];
-  }
-}
-
-static char *base64url(const unsigned char *in, size_t n) {
-  static const char chars[] =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-  ClayStr out;
-  clay_str_init(&out);
-  for (size_t i = 0; i < n; i += 3) {
-    unsigned int v = (unsigned int)in[i] << 16;
-    if (i + 1 < n)
-      v |= (unsigned int)in[i + 1] << 8;
-    if (i + 2 < n)
-      v |= in[i + 2];
-    clay_str_push_char(&out, chars[(v >> 18) & 63]);
-    clay_str_push_char(&out, chars[(v >> 12) & 63]);
-    if (i + 1 < n)
-      clay_str_push_char(&out, chars[(v >> 6) & 63]);
-    if (i + 2 < n)
-      clay_str_push_char(&out, chars[v & 63]);
-  }
-  return out.data;
-}
 static char *copy_n(const char *text, size_t len) {
   char *copy = malloc(len + 1);
   if (!copy)
@@ -205,78 +69,6 @@ static char *copy_n(const char *text, size_t len) {
   copy[len] = '\0';
   return copy;
 }
-static int b64_value(char c) {
-  if (c >= 'A' && c <= 'Z')
-    return c - 'A';
-  if (c >= 'a' && c <= 'z')
-    return c - 'a' + 26;
-  if (c >= '0' && c <= '9')
-    return c - '0' + 52;
-  if (c == '-' || c == '+')
-    return 62;
-  if (c == '_' || c == '/')
-    return 63;
-  return -1;
-}
-static char *base64url_decode(const char *text) {
-  size_t n = strlen(text);
-  if (n % 4 == 1)
-    return NULL;
-  ClayStr out;
-  clay_str_init(&out);
-  unsigned int acc = 0;
-  int bits = 0;
-  for (size_t i = 0; i < n; i++) {
-    if (text[i] == '=')
-      break;
-    int v = b64_value(text[i]);
-    if (v < 0) {
-      clay_str_free(&out);
-      return NULL;
-    }
-    acc = (acc << 6) | (unsigned int)v;
-    bits += 6;
-    while (bits >= 8) {
-      bits -= 8;
-      clay_str_push_char(&out, (char)(acc >> bits));
-    }
-  }
-  return out.data;
-}
-static char *url_encode(const char *s) {
-  ClayStr out;
-  clay_str_init(&out);
-  static const char hex[] = "0123456789ABCDEF";
-  for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-    if (isalnum(*p) || *p == '-' || *p == '_' || *p == '.' || *p == '~')
-      clay_str_push_char(&out, *p);
-    else {
-      clay_str_push_char(&out, '%');
-      clay_str_push_char(&out, hex[*p >> 4]);
-      clay_str_push_char(&out, hex[*p & 15]);
-    }
-  }
-  return out.data;
-}
-static char *url_decode(const char *s, size_t n) {
-  ClayStr out;
-  clay_str_init(&out);
-  for (size_t i = 0; i < n; i++) {
-    if (s[i] == '+') {
-      clay_str_push_char(&out, ' ');
-      continue;
-    }
-    if (s[i] == '%' && i + 2 < n && isxdigit((unsigned char)s[i + 1]) &&
-        isxdigit((unsigned char)s[i + 2])) {
-      char x[3] = {s[i + 1], s[i + 2], 0};
-      clay_str_push_char(&out, (char)strtol(x, NULL, 16));
-      i += 2;
-    } else
-      clay_str_push_char(&out, s[i]);
-  }
-  return out.data;
-}
-
 int clay_openai_codex_create_pkce(char **verifier, char **challenge,
                                   char **state) {
   unsigned char verifier_bytes[48], state_bytes[32], digest[32];
@@ -284,24 +76,25 @@ int clay_openai_codex_create_pkce(char **verifier, char **challenge,
       clay_term_random_bytes(verifier_bytes, sizeof(verifier_bytes)) ||
       clay_term_random_bytes(state_bytes, sizeof(state_bytes)))
     return -1;
-  *verifier = base64url(verifier_bytes, sizeof(verifier_bytes));
-  *state = base64url(state_bytes, sizeof(state_bytes));
-  Sha256 sha;
-  sha256_init(&sha);
-  sha256_update(&sha, (const unsigned char *)*verifier, strlen(*verifier));
-  sha256_final(&sha, digest);
-  *challenge = base64url(digest, sizeof(digest));
+  *verifier = clay_base64url_encode(verifier_bytes, sizeof(verifier_bytes));
+  *state = clay_base64url_encode(state_bytes, sizeof(state_bytes));
+  if (!*verifier || !*state) {
+    free(*verifier);
+    free(*state);
+    *verifier = NULL;
+    *state = NULL;
+    return -1;
+  }
+  clay_sha256(*verifier, strlen(*verifier), digest);
+  *challenge = clay_base64url_encode(digest, sizeof(digest));
   return *verifier && *challenge && *state ? 0 : -1;
 }
 char *clay_openai_codex_pkce_challenge(const char *verifier) {
   if (!verifier)
     return NULL;
   unsigned char digest[32];
-  Sha256 sha;
-  sha256_init(&sha);
-  sha256_update(&sha, (const unsigned char *)verifier, strlen(verifier));
-  sha256_final(&sha, digest);
-  return base64url(digest, sizeof(digest));
+  clay_sha256(verifier, strlen(verifier), digest);
+  return clay_base64url_encode(digest, sizeof(digest));
 }
 void clay_openai_codex_pkce_free(char *verifier, char *challenge, char *state) {
   free(verifier);
@@ -312,10 +105,10 @@ char *clay_openai_codex_authorization_url(const char *challenge,
                                           const char *state) {
   if (!challenge || !state)
     return NULL;
-  char *redirect = url_encode(CODEX_REDIRECT_URI),
-       *scope = url_encode("openid profile email offline_access");
-  char *encoded_challenge = url_encode(challenge),
-       *encoded_state = url_encode(state);
+  char *redirect = clay_url_encode(CODEX_REDIRECT_URI),
+       *scope = clay_url_encode("openid profile email offline_access");
+  char *encoded_challenge = clay_url_encode(challenge),
+       *encoded_state = clay_url_encode(state);
   ClayStr url;
   clay_str_init(&url);
   clay_str_printf(&url,
@@ -344,7 +137,7 @@ int clay_openai_codex_extract_account_id(const char *id_token,
   if (!end)
     return -1;
   char *segment = copy_n(dot + 1, (size_t)(end - dot - 1));
-  char *payload = base64url_decode(segment);
+  char *payload = clay_base64url_decode(segment);
   free(segment);
   if (!payload)
     return -1;
@@ -381,8 +174,8 @@ int clay_openai_codex_parse_callback(const char *target,
       const char *e = amp ? amp : p + strlen(p);
       const char *eq = memchr(p, '=', (size_t)(e - p));
       size_t key_len = eq ? (size_t)(eq - p) : (size_t)(e - p);
-      char *value =
-          url_decode(eq ? eq + 1 : e, (size_t)(e - (eq ? eq + 1 : e)));
+      char *value = clay_form_url_decode(eq ? eq + 1 : e,
+                                         (size_t)(e - (eq ? eq + 1 : e)));
       if (key_len == 4 && strncmp(p, "code", 4) == 0) {
         free(code);
         code = value;
@@ -552,8 +345,9 @@ int clay_openai_codex_authenticate(ClayCodexCredentials *out, ClayStr *error) {
     goto done;
   clay_term_http_server_destroy(listener);
   listener = NULL;
-  char *code = url_encode(callback.code),
-       *redirect = url_encode(CODEX_REDIRECT_URI), *v = url_encode(verifier);
+  char *code = clay_url_encode(callback.code),
+       *redirect = clay_url_encode(CODEX_REDIRECT_URI),
+       *v = clay_url_encode(verifier);
   ClayStr body;
   clay_str_init(&body);
   clay_str_printf(&body,
@@ -678,58 +472,14 @@ int clay_openai_codex_authentication_invalid(const ClayOpenAICodex *client) {
 ClayCodexSseParser *clay_openai_codex_sse_create(void (*on_json)(const char *,
                                                                  void *),
                                                  void *userdata) {
-  ClayCodexSseParser *p = calloc(1, sizeof(*p));
-  if (!p)
-    return NULL;
-  clay_str_init(&p->line);
-  clay_str_init(&p->event_data);
-  p->on_json = on_json;
-  p->userdata = userdata;
-  return p;
-}
-static void sse_line(ClayCodexSseParser *p) {
-  size_t n = p->line.len;
-  if (n && p->line.data[n - 1] == '\r')
-    n--;
-  if (n == 0) {
-    if (p->event_data.len && p->on_json)
-      p->on_json(p->event_data.data, p->userdata);
-    clay_str_clear(&p->event_data);
-    return;
-  }
-  if (p->line.data[0] == ':')
-    return;
-  if (n >= 5 && strncmp(p->line.data, "data:", 5) == 0) {
-    size_t start = 5;
-    if (start < n && p->line.data[start] == ' ')
-      start++;
-    if (p->event_data.len)
-      clay_str_push_char(&p->event_data, '\n');
-    clay_str_push_n(&p->event_data, p->line.data + start, n - start);
-  }
+  return clay_sse_create(CODEX_SSE_LINE_LIMIT, on_json, userdata);
 }
 int clay_openai_codex_sse_feed(ClayCodexSseParser *p, const char *data,
                                size_t len) {
-  if (!p || (!data && len))
-    return -1;
-  for (size_t i = 0; i < len; i++) {
-    if (data[i] == '\n') {
-      sse_line(p);
-      clay_str_clear(&p->line);
-    } else {
-      if (p->line.len >= CODEX_SSE_LINE_LIMIT)
-        return -1;
-      clay_str_push_char(&p->line, data[i]);
-    }
-  }
-  return 0;
+  return clay_sse_feed(p, data, len);
 }
 void clay_openai_codex_sse_destroy(ClayCodexSseParser *p) {
-  if (!p)
-    return;
-  clay_str_free(&p->line);
-  clay_str_free(&p->event_data);
-  free(p);
+  clay_sse_destroy(p);
 }
 
 static int append_limited(ClayStr *out, const char *text, size_t n,
