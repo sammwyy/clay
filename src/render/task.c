@@ -17,6 +17,10 @@ static const char *SPINNER_FRAMES[CLAY_SPINNER_FRAME_COUNT] = {
     "\xe2\xa0\xb4", "\xe2\xa0\xa6", "\xe2\xa0\xa7", "\xe2\xa0\x87", "\xe2\xa0\x8f"
 };
 
+static pthread_mutex_t g_render_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_render_ready = PTHREAD_COND_INITIALIZER;
+static unsigned int g_render_pause_depth = 0;
+
 struct ClayTask {
     ClayStr label;
     struct timespec start;
@@ -32,6 +36,8 @@ static double elapsed_seconds(const struct timespec *start) {
 }
 
 static void render_line(const char *icon_color, const char *icon, const char *label, const char *suffix, int active) {
+    pthread_mutex_lock(&g_render_lock);
+    while (g_render_pause_depth > 0) pthread_cond_wait(&g_render_ready, &g_render_lock);
     clay_term_clear_line();
     printf("%s%s %slay%s  %s%s%s %s%s%s", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, CLAY_ICON_COMPLEX,
            clay_color(CLAY_RESET),
@@ -39,6 +45,20 @@ static void render_line(const char *icon_color, const char *icon, const char *la
     if (active) fputs("\xe2\x80\xa6", stdout);
     if (suffix) printf(" %s", suffix);
     fflush(stdout);
+    pthread_mutex_unlock(&g_render_lock);
+}
+
+void clay_task_render_pause(void) {
+    pthread_mutex_lock(&g_render_lock);
+    g_render_pause_depth++;
+    pthread_mutex_unlock(&g_render_lock);
+}
+
+void clay_task_render_resume(void) {
+    pthread_mutex_lock(&g_render_lock);
+    if (g_render_pause_depth > 0 && --g_render_pause_depth == 0)
+        pthread_cond_broadcast(&g_render_ready);
+    pthread_mutex_unlock(&g_render_lock);
 }
 
 static void *spinner_loop(void *arg) {

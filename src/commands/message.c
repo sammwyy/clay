@@ -1,4 +1,5 @@
 #include "context.h"
+#include "clay/shell.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -184,6 +185,70 @@ static ClayJson *edit_tool_checkpointed(const ClayJson *arguments,
   return result;
 }
 
+typedef struct {
+  ClayCommands *commands;
+} ShellAuthorization;
+
+static int blank_command(const char *text) {
+  while (*text) {
+    if (*text != ' ' && *text != '\t' && *text != '\n' && *text != '\r')
+      return 0;
+    text++;
+  }
+  return 1;
+}
+
+/* Tool results are model input, not terminal output. Remove CSI/OSC escape
+   sequences leaked by terminal UI buffering around a fork. */
+static void strip_terminal_escapes(ClayStr *text) {
+  ClayStr clean;
+  clay_str_init(&clean);
+  for (size_t i = 0; i < text->len; i++) {
+    unsigned char ch = (unsigned char)text->data[i];
+    if (ch == 0x1b && i + 1 < text->len) {
+      if (text->data[++i] == '[') {
+        while (i + 1 < text->len) {
+          unsigned char end = (unsigned char)text->data[++i];
+          if (end >= 0x40 && end <= 0x7e) break;
+        }
+      } else if (text->data[i] == ']') {
+        while (i + 1 < text->len) {
+          unsigned char end = (unsigned char)text->data[++i];
+          if (end == '\a' || (end == '\\' && i > 0 && text->data[i - 1] == 0x1b)) break;
+        }
+      }
+      continue;
+    }
+    if (ch >= 0x20 || ch == '\n' || ch == '\t' || ch == '\r')
+      clay_str_push_char(&clean, (char)ch);
+  }
+  clay_str_free(text);
+  *text = clean;
+}
+
+static int authorize_shell_command(char *const argv[], void *user_data) {
+  ShellAuthorization *authorization = user_data;
+  ClayCommands *commands = authorization->commands;
+  ClayStr detail;
+  clay_str_init(&detail);
+  for (size_t i = 0; argv[i]; i++)
+    clay_str_printf(&detail, "%s%s", i ? " " : "", argv[i]);
+  /* A shell AST tells us command boundaries, not the side effects of an
+     arbitrary executable. Plan mode therefore permits only the curated
+     read-only set; anything else needs Act mode and an explicit permission. */
+  if (commands->mode == CLAY_MODE_PLAN &&
+      !clay_permissions_is_safe_command(detail.data)) {
+    clay_str_free(&detail);
+    return 0;
+  }
+  ClayPermissionCategory category = clay_permissions_is_safe_command(detail.data)
+                                       ? CLAY_PERMISSION_EXEC_SAFE
+                                       : CLAY_PERMISSION_EXEC_ALL;
+  int allowed = clay_permissions_check(commands, category, "Run", detail.data);
+  clay_str_free(&detail);
+  return allowed;
+}
+
 static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
   ClayCommands *commands = userdata;
   const char *command =
@@ -191,7 +256,7 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
   const char *args =
       clay_json_string_value(clay_json_object_get(arguments, "args"));
   ClayJson *result = clay_json_object();
-  if (!*command) {
+  if (!*command || blank_command(command)) {
     clay_json_object_set(result, "ok", clay_json_bool(0));
     clay_json_object_set(result, "error",
                          clay_json_string("command is required"));
@@ -202,7 +267,21 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
   clay_str_push(&invocation, command);
   if (*args)
     clay_str_printf(&invocation, " %s", args);
-  if (commands->mode == CLAY_MODE_PLAN &&
+  int integrated_shell = commands->use_integrated_shell &&
+                         commands->sandbox_mode == CLAY_SANDBOX_MODE_SANDBOX;
+#ifdef _WIN32
+  integrated_shell = commands->use_integrated_shell;
+#endif
+  if (integrated_shell) {
+    ShellAuthorization authorization = {commands};
+    if (clay_shell_authorize(invocation.data, authorize_shell_command,
+                             &authorization) != 0) {
+      clay_json_free(result);
+      clay_str_free(&invocation);
+      return denied_result();
+    }
+  }
+  if (!integrated_shell && commands->mode == CLAY_MODE_PLAN &&
       clay_permissions_is_mutating_command(invocation.data)) {
     clay_json_free(result);
     ClayJson *blocked =
@@ -210,15 +289,17 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     clay_str_free(&invocation);
     return blocked;
   }
-  ClayPermissionCategory exec_category =
-      clay_permissions_is_safe_command(invocation.data)
-          ? CLAY_PERMISSION_EXEC_SAFE
-          : CLAY_PERMISSION_EXEC_ALL;
-  if (!clay_permissions_check(commands, exec_category, "Run",
-                              invocation.data)) {
-    clay_json_free(result);
-    clay_str_free(&invocation);
-    return denied_result();
+  if (!integrated_shell) {
+    ClayPermissionCategory exec_category =
+        clay_permissions_is_safe_command(invocation.data)
+            ? CLAY_PERMISSION_EXEC_SAFE
+            : CLAY_PERMISSION_EXEC_ALL;
+    if (!clay_permissions_check(commands, exec_category, "Run",
+                                invocation.data)) {
+      clay_json_free(result);
+      clay_str_free(&invocation);
+      return denied_result();
+    }
   }
   checkpoint_before(commands, invocation.data);
   ClayStr output;
@@ -227,16 +308,24 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
   int output_truncated = 0;
   char *workspace_dir = clay_term_cwd();
   char *scratch_dir = clay_chat_scratch_dir(commands->chat);
+  size_t readonly_mount_count = 0;
+  char **readonly_mounts = clay_config_sandbox_readonly_mounts(&readonly_mount_count);
   ClaySandboxConfig sandbox = {
       .mode = commands->sandbox_mode,
       .workspace_dir = workspace_dir,
       .scratch_dir = scratch_dir,
+      .use_integrated_shell = integrated_shell,
+      .readonly_mounts = (const char *const *)readonly_mounts,
+      .readonly_mount_count = readonly_mount_count,
   };
   int rc = clay_sandbox_exec(&sandbox, invocation.data, &output,
                              CLAY_SHELL_CAPTURE_LIMIT, &exit_code,
                              &output_truncated);
   free(workspace_dir);
   free(scratch_dir);
+  for (size_t i = 0; i < readonly_mount_count; i++) free(readonly_mounts[i]);
+  free(readonly_mounts);
+  strip_terminal_escapes(&output);
   clay_json_object_set(result, "command", clay_json_string(invocation.data));
   clay_json_object_set(result, "ok", clay_json_bool(rc == 0 && exit_code == 0));
   clay_json_object_set(result, "exit_code", clay_json_number(exit_code));

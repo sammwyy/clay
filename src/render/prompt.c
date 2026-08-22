@@ -502,6 +502,10 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
             if (!completion_apply(&completion, &buf, &blocks, &cursor, &history_pos)) break;
         } else if (key == CLAY_KEY_CLEAR_SCREEN) {
             clay_below_clear_screen();
+        } else if (key == CLAY_KEY_CYCLE_SANDBOX) {
+            ClayInput shortcut = {.kind = CLAY_INPUT_COMMAND,
+                                  .command = "__cycle_sandbox", .args = ""};
+            clay_command_dispatch(commands, &shortcut);
         } else if (key == CLAY_KEY_INTERRUPT) {
             clay_term_take_interrupt();
             if (buf.len == 0) {
@@ -949,4 +953,20 @@ int clay_prompt_choice(const char *question, const ClayChoice *choices, int coun
     }
 
     return result;
+}
+
+void clay_prompt_choice_compact_result(const char *result, int count, int allow_custom) {
+    if (!clay_term_is_interactive() || count <= 0) return;
+
+    int rows = count + (allow_custom ? 1 : 0);
+    /* choice() leaves the cursor on the row immediately below the widget. */
+    clay_term_cursor_up(rows + 1);
+    for (int row = 0; row <= rows; row++) {
+        clay_term_clear_line();
+        if (row < rows) clay_term_cursor_down(1);
+    }
+    clay_term_cursor_up(rows);
+    printf("%s%s%s %s\n", clay_color(CLAY_GREEN), CLAY_ICON_CHECK,
+           clay_color(CLAY_RESET), result ? result : "");
+    fflush(stdout);
 }

@@ -21,11 +21,20 @@ void clay_cmd_exec(const char *args, void *user_data) {
 
     char *workspace_dir = clay_term_cwd();
     char *scratch_dir = clay_chat_scratch_dir(commands->chat);
+    size_t readonly_mount_count = 0;
+    char **readonly_mounts = clay_config_sandbox_readonly_mounts(&readonly_mount_count);
     ClaySandboxConfig sandbox = {
         .mode = commands->sandbox_mode,
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
+        .use_integrated_shell = commands->use_integrated_shell &&
+                                commands->sandbox_mode == CLAY_SANDBOX_MODE_SANDBOX,
+        .readonly_mounts = (const char *const *)readonly_mounts,
+        .readonly_mount_count = readonly_mount_count,
     };
+#ifdef _WIN32
+    sandbox.use_integrated_shell = commands->use_integrated_shell;
+#endif
 
     ClayTask *task = clay_app_task_start(commands->app, "$ %s", args);
     ClayStr output;
@@ -35,6 +44,8 @@ void clay_cmd_exec(const char *args, void *user_data) {
     int rc = clay_sandbox_exec(&sandbox, args, &output, CLAY_EXEC_OUTPUT_LIMIT, &exit_code, &truncated);
     free(workspace_dir);
     free(scratch_dir);
+    for (size_t i = 0; i < readonly_mount_count; i++) free(readonly_mounts[i]);
+    free(readonly_mounts);
 
     if (rc != 0) clay_app_task_fail(commands->app, task, "failed to start");
     else if (exit_code == 0) clay_app_task_success(commands->app, task, "exit 0");

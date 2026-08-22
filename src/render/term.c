@@ -605,6 +605,8 @@ ClayKey clay_term_read_key(char *ch_out) {
       return CLAY_KEY_LEFT;
     case 77:
       return CLAY_KEY_RIGHT;
+    case 15:
+      return CLAY_KEY_CYCLE_SANDBOX;
     default:
       return CLAY_KEY_ESCAPE;
     }
@@ -631,38 +633,43 @@ ClayKey clay_term_read_key(char *ch_out) {
     return CLAY_KEY_HISTORY_SEARCH;
 
   if (c == 0x1b) {
-    unsigned char seq[2];
+    unsigned char seq[16];
+    size_t seq_len = 0;
     fd_set fds;
     struct timeval timeout = {0, 20000};
     FD_ZERO(&fds);
     FD_SET(STDIN_FILENO, &fds);
     if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &timeout) <= 0 ||
-        read(STDIN_FILENO, &seq[0], 1) <= 0) {
+        read(STDIN_FILENO, &seq[seq_len], 1) <= 0) {
       return CLAY_KEY_ESCAPE;
     }
+    seq_len++;
     if (seq[0] == 0x1b) {
       g_pending_escape = 1;
       return CLAY_KEY_ESCAPE;
     }
-    timeout.tv_usec = 20000;
-    FD_ZERO(&fds);
-    FD_SET(STDIN_FILENO, &fds);
-    if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &timeout) <= 0 ||
-        read(STDIN_FILENO, &seq[1], 1) <= 0) {
-      return CLAY_KEY_ESCAPE;
-    }
-    if (seq[0] == '[') {
-      switch (seq[1]) {
-      case 'A':
-        return CLAY_KEY_UP;
-      case 'B':
-        return CLAY_KEY_DOWN;
-      case 'C':
-        return CLAY_KEY_RIGHT;
-      case 'D':
-        return CLAY_KEY_LEFT;
+    while (seq_len < sizeof(seq) - 1) {
+      timeout.tv_usec = 20000;
+      FD_ZERO(&fds);
+      FD_SET(STDIN_FILENO, &fds);
+      if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &timeout) <= 0 ||
+          read(STDIN_FILENO, &seq[seq_len], 1) <= 0)
+        break;
+      if ((seq[seq_len] >= 'A' && seq[seq_len] <= 'Z') ||
+          (seq[seq_len] >= 'a' && seq[seq_len] <= 'z') || seq[seq_len] == '~') {
+        seq_len++;
+        break;
       }
+      seq_len++;
     }
+    seq[seq_len] = '\0';
+    if (strcmp((char *)seq, "[A") == 0) return CLAY_KEY_UP;
+    if (strcmp((char *)seq, "[B") == 0) return CLAY_KEY_DOWN;
+    if (strcmp((char *)seq, "[C") == 0) return CLAY_KEY_RIGHT;
+    if (strcmp((char *)seq, "[D") == 0) return CLAY_KEY_LEFT;
+    /* Shift+Tab is standardized as CSI Z by xterm-compatible terminals. */
+    if (strcmp((char *)seq, "[Z") == 0)
+      return CLAY_KEY_CYCLE_SANDBOX;
     return CLAY_KEY_ESCAPE;
   }
 

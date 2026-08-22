@@ -1,6 +1,8 @@
 #ifndef CLAY_CONFIG_H
 #define CLAY_CONFIG_H
 
+#include <stddef.h>
+
 /* One provider's saved connection, e.g. ~/.clay/providers/openai.json. */
 typedef struct {
   char *id;
@@ -48,11 +50,21 @@ int clay_config_set_reasoning_effort(const char *effort);
 /* Number of previous messages shown after /resume. Defaults to 4. */
 int clay_config_history_preview_count(void);
 
-/* "sandbox" (default) or "unleashed". Malloc'd. Doesn't know about
+/* "sandbox" (default), "auto", or "unleashed". Malloc'd. Doesn't know about
    ClaySandboxMode - callers map the string, same as PROVIDER_TYPES does
    for provider ids. */
 char *clay_config_sandbox_mode(void);
 int clay_config_set_sandbox_mode(const char *mode);
+
+/* Whether shell_exec uses Clay's parsed shell. Defaults to true. */
+int clay_config_use_integrated_shell(void);
+int clay_config_set_use_integrated_shell(int value);
+
+/* Absolute host paths made visible read-only inside Linux sandbox mode.
+   Returns a malloc'd array of malloc'd strings; caller frees every item and
+   the array. Invalid config entries are ignored. */
+char **clay_config_sandbox_readonly_mounts(size_t *count_out);
+int clay_config_set_sandbox_readonly_mounts(const char *const *paths, size_t count);
 
 /* Auto-approve toggles for tool categories. `category` is "read", "edit",
    "exec_safe", or "exec_all". */

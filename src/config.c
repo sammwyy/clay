@@ -331,6 +331,12 @@ static int set_string_field(const char *key, const char *value) {
   return save_selection_root(root);
 }
 
+static int set_bool_field(const char *key, int value) {
+  ClayJson *root = load_selection_root();
+  clay_json_object_set(root, key, clay_json_bool(value));
+  return save_selection_root(root);
+}
+
 char *clay_config_sandbox_mode(void) {
   ClayJson *root = load_selection_root();
   char *mode = string_field(root, "sandbox_mode", "sandbox");
@@ -340,6 +346,52 @@ char *clay_config_sandbox_mode(void) {
 
 int clay_config_set_sandbox_mode(const char *mode) {
   return set_string_field("sandbox_mode", mode);
+}
+
+int clay_config_use_integrated_shell(void) {
+  ClayJson *root = load_selection_root();
+  ClayJson *value = clay_json_object_get(root, "use_integrated_shell");
+  int enabled = clay_json_type(value) == CLAY_JSON_BOOL
+                    ? clay_json_bool_value(value)
+                    : 1;
+  clay_json_free(root);
+  return enabled;
+}
+
+int clay_config_set_use_integrated_shell(int value) {
+  return set_bool_field("use_integrated_shell", value);
+}
+
+static int valid_mount_path(const char *path) {
+  return path && path[0] == '/' && !strstr(path, "/../") &&
+         strcmp(path, "/..") != 0;
+}
+
+char **clay_config_sandbox_readonly_mounts(size_t *count_out) {
+  if (count_out) *count_out = 0;
+  ClayJson *root = load_selection_root();
+  ClayJson *array = clay_json_object_get(root, "sandbox_readonly_mounts");
+  size_t count = clay_json_array_count(array), kept = 0;
+  char **paths = count ? calloc(count, sizeof(char *)) : NULL;
+  for (size_t i = 0; i < count; i++) {
+    ClayJson *item = clay_json_array_get(array, i);
+    const char *path = clay_json_type(item) == CLAY_JSON_STRING
+                           ? clay_json_string_value(item)
+                           : NULL;
+    if (valid_mount_path(path)) paths[kept++] = strdup(path);
+  }
+  clay_json_free(root);
+  if (count_out) *count_out = kept;
+  return paths;
+}
+
+int clay_config_set_sandbox_readonly_mounts(const char *const *paths, size_t count) {
+  ClayJson *root = load_selection_root();
+  ClayJson *array = clay_json_array();
+  for (size_t i = 0; i < count; i++)
+    if (valid_mount_path(paths[i])) clay_json_array_push(array, clay_json_string(paths[i]));
+  clay_json_object_set(root, "sandbox_readonly_mounts", array);
+  return save_selection_root(root);
 }
 
 /* Reads and edits are low-risk (and edits are checkpointed, see

@@ -28,6 +28,7 @@ void clay_commands_register(ClayCommands *commands) {
     clay_command_register(registry, "logout", "Log out from a connected provider", clay_cmd_logout, commands);
     clay_command_register(registry, "sandbox", "Configure the shell sandbox (mode, outside-workspace access)",
                           clay_cmd_sandbox, commands);
+    clay_command_register_alias(registry, "__cycle_sandbox", clay_cmd_cycle_sandbox, commands);
     clay_command_register(registry, "exec", "Run a shell command through the sandbox directly", clay_cmd_exec,
                           commands);
     clay_command_register(registry, "checkpoints", "Browse and restore this chat's workspace checkpoints",

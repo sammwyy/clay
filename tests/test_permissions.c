@@ -14,6 +14,16 @@ int main(void) {
     assert(!clay_permissions_is_safe_command("git commit -m x"));
     assert(!clay_permissions_is_safe_command("npm install"));
 
+    /* shell_exec executes this string with a shell, so no expression with
+       shell syntax can inherit a first-word safe-command approval. */
+    assert(!clay_permissions_is_safe_command("ls; rm -rf build"));
+    assert(!clay_permissions_is_safe_command("ls && rm -rf build"));
+    assert(!clay_permissions_is_safe_command("ls | rm -rf build"));
+    assert(!clay_permissions_is_safe_command("ls `rm -rf build`"));
+    assert(!clay_permissions_is_safe_command("ls $(rm -rf build)"));
+    assert(!clay_permissions_is_safe_command("ls\nrm -rf build"));
+    assert(!clay_permissions_is_safe_command("ls > generated.txt"));
+
     assert(clay_permissions_is_mutating_command("rm -rf build"));
     assert(clay_permissions_is_mutating_command("mv a b"));
     assert(clay_permissions_is_mutating_command("cp a b"));
@@ -24,6 +34,13 @@ int main(void) {
     assert(!clay_permissions_is_mutating_command("git status"));
     assert(!clay_permissions_is_mutating_command("git diff"));
     assert(!clay_permissions_is_mutating_command("ls -la"));
+    assert(clay_permissions_is_mutating_command("ls; rm -rf build"));
+    assert(clay_permissions_is_mutating_command("ls && rm -rf build"));
+    assert(clay_permissions_is_mutating_command("ls | rm -rf build"));
+    assert(clay_permissions_is_mutating_command("ls `rm -rf build`"));
+    assert(clay_permissions_is_mutating_command("ls $(rm -rf build)"));
+    assert(clay_permissions_is_mutating_command("ls\nrm -rf build"));
+    assert(clay_permissions_is_mutating_command("ls > generated.txt"));
     /* Not on either list: allowed to run in Plan mode, just not auto-safe. */
     assert(!clay_permissions_is_mutating_command("npm test"));
     assert(!clay_permissions_is_safe_command("npm test"));

@@ -233,13 +233,9 @@ size_t clay_chat_message_count(const ClayChat *chat) {
 }
 
 char *clay_chat_scratch_dir(const ClayChat *chat) {
-    if (ensure_chat_dir(chat->id) != 0) return NULL;
-    char *dir = clay_dir();
-    if (!dir) return NULL;
     ClayStr path;
     clay_str_init(&path);
-    clay_str_printf(&path, "%s/chats/%s/scratch", dir, chat->id);
-    free(dir);
+    clay_str_printf(&path, "/tmp/clay-%s", chat->id);
     if (clay_term_mkdir(path.data) != 0) {
         clay_str_free(&path);
         return NULL;

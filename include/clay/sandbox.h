@@ -13,7 +13,10 @@ typedef enum {
 typedef struct {
     ClaySandboxMode mode;
     const char *workspace_dir; /* bound to /workspace */
-    const char *scratch_dir;   /* bound to /scratch; /tmp points at it too */
+    const char *scratch_dir;   /* bound at /tmp/<session>; /scratch aliases it */
+    int use_integrated_shell;
+    const char *const *readonly_mounts;
+    size_t readonly_mount_count;
 } ClaySandboxConfig;
 
 /* True if this platform can run CLAY_SANDBOX_MODE_SANDBOX. Linux only for

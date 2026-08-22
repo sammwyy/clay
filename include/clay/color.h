@@ -17,6 +17,7 @@
 #define CLAY_YELLOW "\x1b[38;2;230;190;80m"
 #define CLAY_CORAL  "\x1b[38;2;240;138;120m"
 #define CLAY_RED    "\x1b[38;2;225;95;95m"
+#define CLAY_PINK   "\x1b[38;2;238;130;190m"
 
 /* Icons (UTF-8) */
 #define CLAY_ICON_DIAMOND "\xe2\x97\x86" /* ◆ */

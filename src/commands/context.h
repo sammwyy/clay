@@ -80,6 +80,8 @@ struct ClayCommands {
   char *selected_model;
   int reasoning_effort_index;
   ClaySandboxMode sandbox_mode;
+  int sandbox_auto_approve;
+  int use_integrated_shell;
   int auto_approve[CLAY_PERMISSION_CATEGORY_COUNT];
   ClayArray
       remembered_patterns[CLAY_PERMISSION_CATEGORY_COUNT]; /* char*, approved
@@ -161,6 +163,9 @@ void clay_commands_print_history(ClayCommands *commands, size_t count);
 int clay_permissions_check(ClayCommands *commands,
                            ClayPermissionCategory category, const char *action,
                            const char *detail);
+void clay_commands_update_sandbox_below(ClayCommands *commands);
+void clay_commands_cycle_sandbox(ClayCommands *commands);
+void clay_cmd_cycle_sandbox(const char *args, void *user_data);
 /* True if `command`'s program name is on the curated read-only-ish
    whitelist (ls, cat, grep, git status, ...). */
 int clay_permissions_is_safe_command(const char *command);

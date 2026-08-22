@@ -15,10 +15,13 @@
   "it directly and are preferred over shell_exec's cat/sed/find/grep for "     \
   "that purpose. Reach for shell_exec "                                        \
   "for everything else (running builds/tests, git, other programs). It runs "  \
-  "in /workspace (the project "                                                \
-  "root); /scratch and /tmp are a temporary scratch area for this "            \
-  "conversation. Sandboxed commands cannot access "                            \
-  "paths outside those directories or the network. Prefer focused commands "   \
+  "in /workspace, the sandbox alias of the project working directory; do not " \
+  "try to discover its host path or inspect mounts. /scratch is an alias for " \
+  "this conversation's private directory under /tmp; use it for temporary "    \
+  "files. Sandboxed commands cannot "                                        \
+  "access host paths outside configured read-only mounts or the network. "      \
+  "Normal POSIX syntax (variables, command substitution, globs, and stderr "    \
+  "redirections) works, but may require an execution confirmation. Prefer focused commands "   \
   "and "                                                                       \
   "summarize results. The user can put you in Plan mode (/plan) to discuss "   \
   "an approach before any files "                                              \
@@ -1016,12 +1019,16 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   }
   free(saved_effort);
   char *sandbox_mode = clay_config_sandbox_mode();
+  commands->sandbox_auto_approve = strcmp(sandbox_mode, "auto") == 0;
   commands->sandbox_mode = strcmp(sandbox_mode, "unleashed") == 0
                                ? CLAY_SANDBOX_MODE_UNLEASHED
                                : CLAY_SANDBOX_MODE_SANDBOX;
   free(sandbox_mode);
-  if (!clay_sandbox_supported())
+  commands->use_integrated_shell = clay_config_use_integrated_shell();
+  if (!clay_sandbox_supported()) {
     commands->sandbox_mode = CLAY_SANDBOX_MODE_UNLEASHED;
+    commands->sandbox_auto_approve = 0;
+  }
   for (int i = 0; i < CLAY_PERMISSION_CATEGORY_COUNT; i++) {
     commands->auto_approve[i] = clay_config_auto_approve(
         clay_permissions_category_name((ClayPermissionCategory)i));
@@ -1044,8 +1051,10 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   clay_below_set_enabled("hint", 0);
   clay_below_add(4, "mode");
   clay_below_set_enabled("mode", 0);
+  clay_below_add(5, "sandbox");
   clay_commands_set_tokens_below(commands, 0, 0);
   clay_commands_update_selected_below(commands);
+  clay_commands_update_sandbox_below(commands);
   return commands;
 }
 

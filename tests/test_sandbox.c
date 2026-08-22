@@ -9,7 +9,7 @@
 
 static int run(ClaySandboxMode mode, const char *workspace, const char *scratch, const char *command, ClayStr *output,
                int *exit_code) {
-    ClaySandboxConfig config = {mode, workspace, scratch};
+    ClaySandboxConfig config = {.mode = mode, .workspace_dir = workspace, .scratch_dir = scratch};
     int truncated = 0;
     clay_str_clear(output);
     return clay_sandbox_exec(&config, command, output, 64 * 1024, exit_code, &truncated);
@@ -50,8 +50,16 @@ int main(void) {
     fclose(marker);
     clay_str_free(&marker_path);
 
-    assert(run(CLAY_SANDBOX_MODE_SANDBOX, workspace, scratch, "echo scratch-ok > /scratch/note && cat /tmp/note", &output,
-               &exit_code) == 0);
+    const char *scratch_name = strrchr(scratch, '/');
+    scratch_name = scratch_name ? scratch_name + 1 : scratch;
+    ClayStr scratch_command;
+    clay_str_init(&scratch_command);
+    clay_str_printf(&scratch_command,
+                    "echo scratch-ok > /scratch/note && test -f /tmp/%s/note && cat /tmp/%s/note && "
+                    "test \"$TMPDIR\" = /tmp/%s",
+                    scratch_name, scratch_name, scratch_name);
+    assert(run(CLAY_SANDBOX_MODE_SANDBOX, workspace, scratch, scratch_command.data, &output, &exit_code) == 0);
+    clay_str_free(&scratch_command);
     assert(exit_code == 0);
     assert(strstr(output.data, "scratch-ok") != NULL);
 

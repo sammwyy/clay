@@ -1,6 +1,7 @@
 #include "clay/app.h"
 
 #include "clay/list.h"
+#include "clay/task.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -127,14 +128,18 @@ void clay_app_task_fail(ClayApp *app, ClayTask *task, const char *fmt, ...) {
 int clay_app_select(ClayApp *app, const char *question, const ClayChoice *options, int count,
                      int default_index) {
     clay_app_set_state(app, CLAY_APP_PROMPTING);
+    clay_task_render_pause();
     int result = clay_prompt_select(question, options, count, default_index);
+    clay_task_render_resume();
     clay_app_set_state(app, CLAY_APP_IDLE);
     return result;
 }
 
 int clay_app_confirm(ClayApp *app, const char *question, int default_yes) {
     clay_app_set_state(app, CLAY_APP_PROMPTING);
+    clay_task_render_pause();
     int result = clay_prompt_confirm(question, default_yes);
+    clay_task_render_resume();
     clay_app_set_state(app, CLAY_APP_IDLE);
     return result;
 }
@@ -142,7 +147,9 @@ int clay_app_confirm(ClayApp *app, const char *question, int default_yes) {
 int clay_app_choice(ClayApp *app, const char *question, const ClayChoice *choices, int count,
                      int allow_custom, char **custom_out) {
     clay_app_set_state(app, CLAY_APP_PROMPTING);
+    clay_task_render_pause();
     int result = clay_prompt_choice(question, choices, count, allow_custom, custom_out);
+    clay_task_render_resume();
     clay_app_set_state(app, CLAY_APP_IDLE);
     return result;
 }

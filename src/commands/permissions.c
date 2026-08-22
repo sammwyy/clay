@@ -1,12 +1,15 @@
 #include "context.h"
 
+#include "clay/task.h"
+
 #include <stdlib.h>
 #include <string.h>
 
 static const char *const SAFE_COMMANDS[] = {
     "ls",  "cat",  "pwd",   "echo",  "grep",   "find",     "wc",     "head", "tail",
     "file", "which", "env", "date",  "whoami", "uname",    "du",     "df",   "ps",
-    "diff", "sort",  "uniq", "tree", "stat",   "basename", "dirname", "printf",
+    "diff", "sort",  "uniq", "tree", "stat",   "basename", "dirname", "printf", "true",
+    "false", "hostname", "realpath", "readlink", "test",
 };
 
 static const char *const SAFE_GIT_SUBCOMMANDS[] = {
@@ -21,6 +24,23 @@ static const char *const MUTATING_COMMANDS[] = {
 static int token_matches(const char *token, size_t token_len, const char *const *list, size_t list_count) {
     for (size_t i = 0; i < list_count; i++) {
         if (token_len == strlen(list[i]) && strncmp(token, list[i], token_len) == 0) return 1;
+    }
+    return 0;
+}
+
+/* shell_exec ultimately passes the complete invocation to a shell.  A
+   first-word allowlist is therefore only meaningful for a simple command:
+   `ls; rm -rf .` is not an ls invocation.  Until shell_exec has a real AST
+   policy, reject any syntax which can compose another command, redirect I/O,
+   or run a command substitution.  This is deliberately conservative: the
+   permission prompt is the safe fallback for legitimate shell expressions. */
+static int has_shell_syntax(const char *command) {
+    for (const unsigned char *p = (const unsigned char *)command; *p; p++) {
+        switch (*p) {
+            case ';': case '|': case '&': case '`': case '$':
+            case '(': case ')': case '<': case '>': case '\n': case '\r':
+                return 1;
+        }
     }
     return 0;
 }
@@ -48,6 +68,7 @@ static void split_program(const char *command, const char **name, size_t *name_l
 }
 
 int clay_permissions_is_safe_command(const char *command) {
+    if (has_shell_syntax(command)) return 0;
     const char *name;
     const char *sub;
     size_t name_len;
@@ -61,6 +82,8 @@ int clay_permissions_is_safe_command(const char *command) {
 }
 
 int clay_permissions_is_mutating_command(const char *command) {
+    /* Plan mode must not run an expression whose effects we cannot inspect. */
+    if (has_shell_syntax(command)) return 1;
     const char *name;
     const char *sub;
     size_t name_len;
@@ -114,7 +137,7 @@ static char *derive_pattern(ClayPermissionCategory category, const char *detail)
 
 int clay_permissions_check(ClayCommands *commands, ClayPermissionCategory category, const char *action,
                            const char *detail) {
-    if (commands->auto_approve[category]) return 1;
+    if (commands->sandbox_auto_approve || commands->auto_approve[category]) return 1;
 
     ClayArray *remembered = &commands->remembered_patterns[category];
     for (size_t i = 0; i < remembered->count; i++) {
@@ -131,6 +154,11 @@ int clay_permissions_check(ClayCommands *commands, ClayPermissionCategory catego
         {"Deny", "Skip this call and tell the model it was denied."},
     };
     int index = clay_app_choice(commands->app, question.data, OPTIONS, 3, 0, NULL);
+    const char *result = index == 0 ? "Allowed once" :
+                         index == 1 ? "Allowed for this session" : "Denied";
+    clay_task_render_pause();
+    clay_prompt_choice_compact_result(result, 3, 0);
+    clay_task_render_resume();
     clay_str_free(&question);
 
     if (index == 1) {

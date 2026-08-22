@@ -33,8 +33,8 @@ const char *clay_chat_system_prompt(const ClayChat *chat);
 const char *clay_chat_notes(const ClayChat *chat);
 int clay_chat_set_notes(ClayChat *chat, const char *notes); /* persists; 0 on success */
 
-/* ~/.clay/chats/<id>/scratch, created if missing. Malloc'd; NULL on
-   failure. */
+/* /tmp/clay-<id>, private to this chat and created if missing. Malloc'd; NULL
+   on failure. */
 char *clay_chat_scratch_dir(const ClayChat *chat);
 
 /* ~/.clay/chats/<id>/checkpoints - a bare git repo (see clay/checkpoint.h)

@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "clay/sandbox.h"
+#include "clay/shell.h"
 
 #include "clay/term.h"
 
@@ -90,6 +91,37 @@ static int bind_mount_under(const ClayStr *root, const char *sub, const char *so
     return rc;
 }
 
+static int optional_mount_allowed(const char *path) {
+    return path && path[0] == '/' && strncmp(path, "/workspace", 10) != 0 &&
+           strncmp(path, "/scratch", 8) != 0 && strncmp(path, "/proc", 5) != 0 &&
+           strncmp(path, "/tmp", 4) != 0 && !strstr(path, "/../");
+}
+
+static int mount_optional_readonly(const ClayStr *root, const char *source) {
+    if (!optional_mount_allowed(source)) return -1;
+    struct stat info;
+    if (stat(source, &info) != 0) return -1;
+    ClayStr target;
+    clay_str_init(&target);
+    clay_str_push(&target, root->data);
+    clay_str_push(&target, source);
+    char *slash = strrchr(target.data, '/');
+    if (!slash) { clay_str_free(&target); return -1; }
+    *slash = '\0';
+    int parents_ok = mkdir_p(target.data) == 0;
+    *slash = '/';
+    int target_ok;
+    if (S_ISDIR(info.st_mode)) target_ok = mkdir(target.data, 0755) == 0 || errno == EEXIST;
+    else {
+        int fd = open(target.data, O_CREAT | O_RDONLY, 0600);
+        target_ok = fd >= 0;
+        if (fd >= 0) close(fd);
+    }
+    int rc = parents_ok && target_ok ? bind_mount(source, target.data, 1) : -1;
+    clay_str_free(&target);
+    return rc;
+}
+
 static int setup_system_dirs(const ClayStr *root) {
     static const char *const SYSTEM_DIRS[] = {
         "/usr", "/bin", "/sbin", "/lib", "/lib64",
@@ -118,6 +150,25 @@ static int setup_system_dirs(const ClayStr *root) {
         } else {
             ok = 1;
         }
+        clay_str_free(&target);
+        if (!ok) return -1;
+    }
+    return 0;
+}
+
+static int setup_devices(const ClayStr *root) {
+    static const struct { const char *path; int readonly; } DEVICES[] = {
+        {"/dev/null", 0}, {"/dev/zero", 1}, {"/dev/urandom", 1},
+    };
+    if (make_dir_under(root, "/dev") != 0) return -1;
+    for (size_t i = 0; i < sizeof(DEVICES) / sizeof(DEVICES[0]); i++) {
+        ClayStr target;
+        clay_str_init(&target);
+        clay_str_push(&target, root->data);
+        clay_str_push(&target, DEVICES[i].path);
+        int fd = open(target.data, O_CREAT | O_RDONLY, 0600);
+        if (fd >= 0) close(fd);
+        int ok = fd >= 0 && bind_mount(DEVICES[i].path, target.data, DEVICES[i].readonly) == 0;
         clay_str_free(&target);
         if (!ok) return -1;
     }
@@ -205,25 +256,51 @@ static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int m
         clay_str_free(&root);
         return -1;
     }
+    if (setup_devices(&root) != 0) {
+        snprintf(diag, diag_len, "clay: sandbox device setup failed: %s\n", strerror(errno));
+        clay_str_free(&root);
+        return -1;
+    }
+    for (size_t i = 0; i < config->readonly_mount_count; i++) {
+        if (mount_optional_readonly(&root, config->readonly_mounts[i]) != 0) {
+            snprintf(diag, diag_len, "clay: sandbox readonly mount failed: %s\n",
+                     config->readonly_mounts[i]);
+            clay_str_free(&root);
+            return -1;
+        }
+    }
     if (make_dir_under(&root, "/proc") != 0 || make_dir_under(&root, "/workspace") != 0 ||
-        make_dir_under(&root, "/scratch") != 0) {
+        make_dir_under(&root, "/scratch") != 0 || make_dir_under(&root, "/tmp") != 0) {
         snprintf(diag, diag_len, "clay: sandbox mountpoint setup failed: %s\n", strerror(errno));
         clay_str_free(&root);
         return -1;
     }
-    if (bind_mount_under(&root, "/workspace", config->workspace_dir, 0) != 0 ||
-        bind_mount_under(&root, "/scratch", config->scratch_dir, 0) != 0) {
+    const char *scratch_name = strrchr(config->scratch_dir, '/');
+    scratch_name = scratch_name ? scratch_name + 1 : config->scratch_dir;
+    ClayStr sandbox_tmp;
+    clay_str_init(&sandbox_tmp);
+    clay_str_printf(&sandbox_tmp, "/tmp/%s", scratch_name);
+    if (make_dir_under(&root, sandbox_tmp.data) != 0 ||
+        bind_mount_under(&root, "/workspace", config->workspace_dir, 0) != 0 ||
+        bind_mount_under(&root, sandbox_tmp.data, config->scratch_dir, 0) != 0) {
         snprintf(diag, diag_len, "clay: sandbox workspace/scratch mount failed: %s\n", strerror(errno));
+        clay_str_free(&sandbox_tmp);
         clay_str_free(&root);
         return -1;
     }
 
-    ClayStr tmp_path;
-    clay_str_init(&tmp_path);
-    clay_str_push(&tmp_path, root.data);
-    clay_str_push(&tmp_path, "/tmp");
-    int tmp_ok = symlink("/scratch", tmp_path.data) == 0;
-    clay_str_free(&tmp_path);
+    ClayStr scratch_link;
+    clay_str_init(&scratch_link);
+    clay_str_push(&scratch_link, root.data);
+    clay_str_push(&scratch_link, "/scratch");
+    ClayStr scratch_target;
+    clay_str_init(&scratch_target);
+    clay_str_printf(&scratch_target, "/tmp/%s", scratch_name);
+    rmdir(scratch_link.data);
+    int tmp_ok = symlink(scratch_target.data, scratch_link.data) == 0;
+    clay_str_free(&scratch_target);
+    clay_str_free(&scratch_link);
+    clay_str_free(&sandbox_tmp);
     if (!tmp_ok) {
         snprintf(diag, diag_len, "clay: sandbox /tmp symlink failed: %s\n", strerror(errno));
         clay_str_free(&root);
@@ -267,6 +344,8 @@ static void run_child(const ClaySandboxConfig *config, const char *command, int 
         _exit(126);
     }
 
+    /* Do not duplicate buffered terminal/UI bytes into the child pipe. */
+    fflush(NULL);
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "clay: sandbox fork failed: %s\n", strerror(errno));
@@ -279,12 +358,20 @@ static void run_child(const ClaySandboxConfig *config, const char *command, int 
         }
         umount2("/.oldroot", MNT_DETACH);
         rmdir("/.oldroot");
-        if (clearenv() != 0 || setenv("HOME", "/scratch", 1) != 0 ||
-            setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0 ||
-            setenv("TMPDIR", "/scratch", 1) != 0) {
+        const char *scratch_name = strrchr(config->scratch_dir, '/');
+        scratch_name = scratch_name ? scratch_name + 1 : config->scratch_dir;
+        ClayStr tmpdir;
+        clay_str_init(&tmpdir);
+        clay_str_printf(&tmpdir, "/tmp/%s", scratch_name);
+        int environment_ok = clearenv() == 0 && setenv("HOME", "/scratch", 1) == 0 &&
+            setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) == 0 &&
+            setenv("TMPDIR", tmpdir.data, 1) == 0;
+        clay_str_free(&tmpdir);
+        if (!environment_ok) {
             fprintf(stderr, "clay: sandbox environment setup failed: %s\n", strerror(errno));
             _exit(126);
         }
+        if (config->use_integrated_shell) _exit(clay_shell_run_command(command));
         execl("/bin/bash", "bash", "-c", command, (char *)NULL);
         fprintf(stderr, "clay: sandbox exec failed: %s\n", strerror(errno));
         _exit(127);

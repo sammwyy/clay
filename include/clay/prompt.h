@@ -45,4 +45,8 @@ int clay_prompt_confirm(const char *question, int default_yes);
 int clay_prompt_choice(const char *question, const ClayChoice *choices, int count,
                         int allow_custom, char **custom_out);
 
+/* Replaces the most recently rendered interactive choice widget with one
+   compact result row. `count` and `allow_custom` must match that widget. */
+void clay_prompt_choice_compact_result(const char *result, int count, int allow_custom);
+
 #endif /* CLAY_PROMPT_H */

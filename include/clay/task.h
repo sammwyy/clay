@@ -3,6 +3,11 @@
 
 typedef struct ClayTask ClayTask;
 
+/* Temporarily prevents task spinners and task completion rows from drawing.
+   Modal prompts use this so background rendering cannot overwrite choices. */
+void clay_task_render_pause(void);
+void clay_task_render_resume(void);
+
 /* Starts a spinning task line: "◆ ℂlay  <label>… <spinner>", animated in
    yellow on a background thread. Stop it with clay_task_success/fail. */
 ClayTask *clay_task_start(const char *fmt, ...);
