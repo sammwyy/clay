@@ -117,6 +117,12 @@ void clay_commands_clear_todos(ClayCommands *commands);
 void clay_commands_connect_mcp_servers(ClayCommands *commands);
 void clay_cmd_mcp(const char *args, void *user_data);
 void clay_cmd_autotest(const char *args, void *user_data);
+void clay_cmd_compact(const char *args, void *user_data);
+/* Flattens `conversation` (skipping the system prompt at index 0) into a
+   plain-text transcript for /compact's summarization request: user/
+   assistant text verbatim, tool calls as "called name(args)", tool
+   results collapsed to a short preview. Malloc'd. */
+char *clay_commands_build_compact_transcript(ClayJson *conversation);
 void clay_commands_new_chat(ClayCommands *commands);
 const ClayReasoningEffort *clay_commands_reasoning_effort(const ClayCommands *commands);
 size_t clay_commands_reasoning_effort_count(void);

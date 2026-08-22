@@ -33,5 +33,7 @@ void clay_commands_register(ClayCommands *commands) {
     clay_command_register(registry, "autotest",
                           "Set the command to run after edits (/autotest <command>, /autotest clear)",
                           clay_cmd_autotest, commands);
+    clay_command_register(registry, "compact", "Replace the conversation with an LLM-written summary",
+                          clay_cmd_compact, commands);
     clay_command_register(registry, "demo_all", "Run the complete render demo sequence", clay_cmd_demo, commands);
 }
