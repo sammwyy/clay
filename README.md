@@ -195,6 +195,25 @@ make build
 ./bin/clay --help
 ```
 
+For a smaller Linux release binary without LTO, use the separate release
+profile. It enables `-Os`, section garbage collection, linker stripping, and
+keeps libcurl dynamically linked:
+
+```sh
+make release
+./bin-release/clay --help
+```
+
+For maximum executable compression, strip first and pack with UPX:
+
+```sh
+make compress-release
+```
+
+The regular `make compress` target applies the same strip-before-UPX sequence
+to `bin/clay`. UPX is optional and only affects on-disk size; it can increase
+startup time and trigger false positives in some antivirus products.
+
 Run the local unit-test suite (the network-backed OpenAI test remains an
 explicit integration target):
 

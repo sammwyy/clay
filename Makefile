@@ -2,6 +2,8 @@ CC      ?= cc
 STD     := -std=gnu11
 WARN    := -Wall -Wextra
 OPT     := -O2
+STRIP   ?= strip
+STRIP_WIN ?= x86_64-w64-mingw32-strip
 
 # CURL_LINK=dynamic (default) or =static. Static needs a real libcurl.a
 # plus its own static deps (openssl, zlib, ...), which Fedora's repos
@@ -29,6 +31,16 @@ SRC_NIX  := $(filter-out src/sandbox/win32.c,$(SRC))
 SRC_WIN  := $(filter-out src/sandbox/linux.c,$(SRC))
 OBJ      := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC_NIX))
 DEP      := $(OBJ:.o=.d)
+
+# Size-oriented release build. It deliberately disables LTO so it remains
+# portable across toolchains while still removing unreachable sections.
+BUILD_DIR_RELEASE := build-release
+BIN_DIR_RELEASE   := bin-release
+TARGET_RELEASE    := $(BIN_DIR_RELEASE)/clay
+OBJ_RELEASE       := $(patsubst src/%.c,$(BUILD_DIR_RELEASE)/%.o,$(SRC_NIX))
+DEP_RELEASE       := $(OBJ_RELEASE:.o=.d)
+RELEASE_CFLAGS    := $(STD) $(WARN) -Os -fno-lto -ffunction-sections -fdata-sections -Iinclude -MMD -MP $(CURL_CFLAGS)
+RELEASE_LDFLAGS   := -fno-lto -Wl,--gc-sections -Wl,--as-needed -s -lpthread $(CURL_LDFLAGS)
 
 TEST_SRC    := tests/test_openai.c
 TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(TEST_SRC))
@@ -141,11 +153,20 @@ UNIT_TEST_TARGETS := $(CLI_TEST_TARGET) $(COMMAND_TEST_TARGET) $(CHAT_TEST_TARGE
 	$(REPO_MAP_TEST_TARGET) $(ENV_BLOCK_TEST_TARGET) $(COMPACT_TEST_TARGET) \
 	$(CODEX_TEST_TARGET) $(GROK_TEST_TARGET) $(UNDO_TEST_TARGET) $(STORAGE_TEST_TARGET)
 
-.PHONY: all build build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact test-undo test-storage completions man-pages run compress compress-win clean debug
+.PHONY: all build release build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact test-undo test-storage completions man-pages run compress compress-release compress-win clean debug
 
 all: build
 
 build: $(TARGET)
+
+release: $(TARGET_RELEASE)
+
+$(TARGET_RELEASE): $(OBJ_RELEASE) | $(BIN_DIR_RELEASE)
+	$(CC) $(OBJ_RELEASE) -o $@ $(RELEASE_LDFLAGS)
+
+$(BUILD_DIR_RELEASE)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(RELEASE_CFLAGS) -c $< -o $@
 
 $(TARGET): $(OBJ) | $(BIN_DIR)
 	$(CC) $(OBJ) -o $@ $(LDFLAGS)
@@ -296,6 +317,9 @@ $(BUILD_DIR)/tests/%.o: tests/%.c
 $(BIN_DIR):
 	mkdir -p $@
 
+$(BIN_DIR_RELEASE):
+	mkdir -p $@
+
 COMPLETION_FILES := completions/clay.bash completions/clay.zsh completions/clay.fish
 
 completions: $(COMPLETION_FILES)
@@ -321,17 +345,25 @@ run: build
 
 compress: build
 	@upx -d $(TARGET) >/dev/null 2>&1 || true
+	$(STRIP) --strip-unneeded $(TARGET)
 	upx --best --lzma $(TARGET)
+
+compress-release: release
+	@upx -d $(TARGET_RELEASE) >/dev/null 2>&1 || true
+	$(STRIP) --strip-unneeded $(TARGET_RELEASE)
+	upx --best --lzma $(TARGET_RELEASE)
 
 compress-win: build-win
 	@upx -d $(TARGET_WIN) >/dev/null 2>&1 || true
+	$(STRIP_WIN) --strip-unneeded $(TARGET_WIN)
 	upx --best --lzma $(TARGET_WIN)
 
 debug: CFLAGS += -g -O0 -DDEBUG
 debug: clean build
 
 clean:
-	rm -rf $(BUILD_DIR) $(BIN_DIR) $(BUILD_DIR_WIN) $(BIN_DIR_WIN)
+	rm -rf $(BUILD_DIR) $(BIN_DIR) $(BUILD_DIR_WIN) $(BIN_DIR_WIN) $(BUILD_DIR_RELEASE) $(BIN_DIR_RELEASE)
 
 -include $(DEP)
 -include $(DEP_WIN)
+-include $(DEP_RELEASE)
