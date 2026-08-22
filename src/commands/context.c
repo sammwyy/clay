@@ -64,6 +64,10 @@ static const ClayProviderType PROVIDER_TYPES[] = {
     {"openai-codex", "OpenAI Codex", NULL},
     {"grok", "Grok", CLAY_GROK_API_URL},
     {"openrouter", "OpenRouter", "https://openrouter.ai/api/v1"},
+    {"groq", "Groq", "https://api.groq.com/openai/v1"},
+    {"deepseek", "DeepSeek", "https://api.deepseek.com"},
+    {"mistral", "Mistral", "https://api.mistral.ai/v1"},
+    {"together", "Together AI", "https://api.together.xyz/v1"},
     {"custom", "OpenAI Custom", NULL},
 };
 
@@ -124,6 +128,18 @@ static int apply_environment_credentials(const ClayProviderType *type,
   } else if (strcmp(type->id, "openrouter") == 0) {
     api_key = env_value("OPENROUTER_API_KEY", api_name);
     base_url = env_value("OPENROUTER_BASE_URL", base_name);
+  } else if (strcmp(type->id, "groq") == 0) {
+    api_key = env_value("GROQ_API_KEY", api_name);
+    base_url = env_value("GROQ_BASE_URL", base_name);
+  } else if (strcmp(type->id, "deepseek") == 0) {
+    api_key = env_value("DEEPSEEK_API_KEY", api_name);
+    base_url = env_value("DEEPSEEK_BASE_URL", base_name);
+  } else if (strcmp(type->id, "mistral") == 0) {
+    api_key = env_value("MISTRAL_API_KEY", api_name);
+    base_url = env_value("MISTRAL_BASE_URL", base_name);
+  } else if (strcmp(type->id, "together") == 0) {
+    api_key = env_value("TOGETHER_API_KEY", api_name);
+    base_url = env_value("TOGETHER_BASE_URL", base_name);
   } else if (strcmp(type->id, "grok") == 0) {
     api_key = env_value("XAI_API_KEY", "GROK_API_KEY");
     if (!api_key) api_key = getenv(api_name);
@@ -197,6 +213,13 @@ static const char *environment_provider(void) {
     return "openai-codex";
   if (env_value("OPENROUTER_API_KEY", "CLAY_OPENROUTER_API_KEY"))
     return "openrouter";
+  if (env_value("GROQ_API_KEY", "CLAY_GROQ_API_KEY")) return "groq";
+  if (env_value("DEEPSEEK_API_KEY", "CLAY_DEEPSEEK_API_KEY"))
+    return "deepseek";
+  if (env_value("MISTRAL_API_KEY", "CLAY_MISTRAL_API_KEY"))
+    return "mistral";
+  if (env_value("TOGETHER_API_KEY", "CLAY_TOGETHER_API_KEY"))
+    return "together";
   if (env_value("XAI_API_KEY", "GROK_API_KEY")) return "grok";
   if (env_value("OPENAI_API_KEY", "CLAY_OPENAI_API_KEY")) return "openai";
   if (env_value("CLAY_API_KEY", "CUSTOM_API_KEY")) return "custom";
@@ -208,6 +231,10 @@ static const char *environment_model(const char *provider) {
   if (model) return model;
   if (strcmp(provider, "openai") == 0) return getenv("OPENAI_MODEL");
   if (strcmp(provider, "openrouter") == 0) return getenv("OPENROUTER_MODEL");
+  if (strcmp(provider, "groq") == 0) return getenv("GROQ_MODEL");
+  if (strcmp(provider, "deepseek") == 0) return getenv("DEEPSEEK_MODEL");
+  if (strcmp(provider, "mistral") == 0) return getenv("MISTRAL_MODEL");
+  if (strcmp(provider, "together") == 0) return getenv("TOGETHER_MODEL");
   if (strcmp(provider, "grok") == 0) return env_value("GROK_MODEL", "XAI_MODEL");
   if (strcmp(provider, "openai-codex") == 0)
     return env_value("OPENAI_CODEX_MODEL", "CODEX_MODEL");
