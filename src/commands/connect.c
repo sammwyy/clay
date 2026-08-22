@@ -3,10 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int is_https_url(const char *url) {
-    return strncmp(url, "https://", 8) == 0 && url[8] != '\0';
-}
-
 static void connect_type(ClayCommands *commands, const ClayProviderType *type) {
     char *base_url;
     if (type->default_base_url) {
@@ -21,7 +17,7 @@ static void connect_type(ClayCommands *commands, const ClayProviderType *type) {
         free(base_url);
         return;
     }
-    if (!is_https_url(base_url)) {
+    if (!clay_openai_url_is_secure(base_url)) {
         clay_sayc(CLAY_RED, "Provider URLs must use HTTPS.");
         free(base_url);
         return;

@@ -84,6 +84,10 @@ const ClayProviderType *clay_commands_provider_types(size_t *count) {
 void clay_commands_load_provider(ClayCommands *commands, const ClayProviderType *type) {
     ClayProviderConfig *config = clay_config_load(type->id);
     if (!config) return;
+    if (!clay_openai_url_is_secure(config->base_url)) {
+        clay_config_free(config);
+        return;
+    }
 
     ClayConnectedProvider *existing = clay_commands_find_provider(commands, type->id);
     if (existing) {

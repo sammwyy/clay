@@ -10,6 +10,7 @@ typedef struct ClayOpenAI ClayOpenAI;
 
 /* `base_url` has no trailing slash, e.g. "https://api.openai.com/v1" -
    "/chat/completions" is appended to it. */
+int clay_openai_url_is_secure(const char *base_url);
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const char *model);
 void clay_openai_destroy(ClayOpenAI *client);
 /* NULL omits reasoning_effort from requests and uses the provider default. */

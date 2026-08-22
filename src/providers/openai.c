@@ -23,7 +23,12 @@ struct ClayOpenAI {
     char *reasoning_effort;
 };
 
+int clay_openai_url_is_secure(const char *base_url) {
+    return base_url && strncmp(base_url, "https://", 8) == 0 && base_url[8] != '\0';
+}
+
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const char *model) {
+    if (!clay_openai_url_is_secure(base_url)) return NULL;
     ClayOpenAI *client = malloc(sizeof(ClayOpenAI));
     client->base_url = strdup(base_url);
     client->api_key = strdup(api_key);
