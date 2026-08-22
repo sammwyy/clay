@@ -1,5 +1,7 @@
 #include "context.h"
 
+#include "clay/storage.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,7 +62,7 @@ int clay_fs_resolve_workspace_path(const char *workspace_dir, const char *path, 
 }
 
 static int write_whole_file(const char *path, const char *data, size_t len) {
-    return clay_term_write_file_atomic(path, data, len);
+    return clay_storage_write_atomic_private(path, data, len);
 }
 
 /* Creates every directory above `abs_path`'s final component. */
@@ -363,7 +365,7 @@ ClayJson *clay_fs_tool_edit(const ClayJson *arguments, void *userdata) {
     result = clay_json_object();
     clay_json_object_set(result, "path", clay_json_string(path));
     ClayStr content;
-    if (clay_term_read_file(abs.data, CLAY_FS_READ_LIMIT, &content) != 0) {
+    if (clay_storage_read_limited(abs.data, CLAY_FS_READ_LIMIT, &content) != 0) {
         clay_str_free(&abs);
         clay_json_object_set(result, "ok", clay_json_bool(0));
         clay_json_object_set(result, "error", clay_json_string(strerror(errno)));

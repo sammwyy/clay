@@ -2,58 +2,23 @@
 
 #include "clay/json.h"
 #include "clay/str.h"
-#include "clay/term.h"
+#include "clay/storage.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static char *config_dir(void) {
-  char *home = clay_term_home_dir();
-  if (!home)
-    return NULL;
-
-  ClayStr path;
-  clay_str_init(&path);
-  clay_str_printf(&path, "%s/.clay", home);
-  free(home);
-  return path.data;
-}
-
-static char *providers_dir(void) {
-  char *dir = config_dir();
-  if (!dir)
-    return NULL;
-
-  ClayStr path;
-  clay_str_init(&path);
-  clay_str_printf(&path, "%s/providers", dir);
-  free(dir);
-  return path.data;
-}
-
 static char *selection_path(void) {
-  char *dir = config_dir();
-  if (!dir)
-    return NULL;
-
-  ClayStr path;
-  clay_str_init(&path);
-  clay_str_printf(&path, "%s/config.json", dir);
-  free(dir);
-  return path.data;
+  return clay_storage_path("config.json");
 }
 
 static char *provider_path(const char *id) {
-  char *dir = providers_dir();
-  if (!dir)
-    return NULL;
-
   ClayStr path;
   clay_str_init(&path);
-  clay_str_printf(&path, "%s/%s.json", dir, id);
-  free(dir);
-  return path.data;
+  clay_str_printf(&path, "providers/%s.json", id);
+  char *full_path = clay_storage_path(path.data);
+  clay_str_free(&path);
+  return full_path;
 }
 
 int clay_config_exists(const char *id) {
@@ -85,7 +50,7 @@ static ClayJson *load_selection_root(void) {
   if (!path)
     return clay_json_object();
   ClayStr text;
-  int read_rc = clay_term_read_file(path, CLAY_CONFIG_FILE_LIMIT, &text);
+  int read_rc = clay_storage_read_limited(path, CLAY_CONFIG_FILE_LIMIT, &text);
   free(path);
   if (read_rc != 0)
     return clay_json_object();
@@ -99,25 +64,24 @@ static ClayJson *load_selection_root(void) {
 }
 
 static int save_selection_root(ClayJson *root) {
-  char *dir = config_dir();
-  if (!dir || clay_term_mkdir(dir) != 0) {
-    free(dir);
+  if (clay_storage_ensure_dir("") != 0) {
     clay_json_free(root);
     return -1;
   }
-  ClayStr path;
-  clay_str_init(&path);
-  clay_str_printf(&path, "%s/config.json", dir);
-  free(dir);
+  char *path = selection_path();
+  if (!path) {
+    clay_json_free(root);
+    return -1;
+  }
 
   ClayStr body;
   clay_str_init(&body);
   clay_json_stringify(root, &body);
   clay_json_free(root);
 
-  int rc = clay_term_write_file_atomic(path.data, body.data, body.len);
+  int rc = clay_storage_write_atomic_private(path, body.data, body.len);
 
-  clay_str_free(&path);
+  free(path);
   clay_str_free(&body);
   return rc;
 }
@@ -128,7 +92,7 @@ ClayProviderConfig *clay_config_load(const char *id) {
     return NULL;
 
   ClayStr text;
-  int read_rc = clay_term_read_file(path, CLAY_CONFIG_FILE_LIMIT, &text);
+  int read_rc = clay_storage_read_limited(path, CLAY_CONFIG_FILE_LIMIT, &text);
   free(path);
   if (read_rc != 0)
     return NULL;
@@ -157,25 +121,10 @@ ClayProviderConfig *clay_config_load(const char *id) {
 }
 
 int clay_config_save(const ClayProviderConfig *config) {
-  char *dir = config_dir();
-  if (!dir || clay_term_mkdir(dir) != 0) {
-    free(dir);
+  if (!config || !config->id || clay_storage_ensure_dir("providers") != 0)
     return -1;
-  }
-
-  ClayStr providers;
-  clay_str_init(&providers);
-  clay_str_printf(&providers, "%s/providers", dir);
-  free(dir);
-  if (clay_term_mkdir(providers.data) != 0) {
-    clay_str_free(&providers);
-    return -1;
-  }
-
-  ClayStr path;
-  clay_str_init(&path);
-  clay_str_printf(&path, "%s/%s.json", providers.data, config->id);
-  clay_str_free(&providers);
+  char *path = provider_path(config->id);
+  if (!path) return -1;
 
   ClayJson *root = clay_json_object();
   clay_json_object_set(root, "id", clay_json_string(config->id));
@@ -207,9 +156,9 @@ int clay_config_save(const ClayProviderConfig *config) {
   clay_json_stringify(root, &body);
   clay_json_free(root);
 
-  int rc = clay_term_write_file_atomic(path.data, body.data, body.len);
+  int rc = clay_storage_write_atomic_private(path, body.data, body.len);
 
-  clay_str_free(&path);
+  free(path);
   clay_str_free(&body);
   return rc;
 }

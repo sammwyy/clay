@@ -1,6 +1,7 @@
 #include "clay/mcp.h"
 
 #include "clay/str.h"
+#include "clay/storage.h"
 #include "clay/term.h"
 #include "clay/time.h"
 
@@ -200,13 +201,7 @@ ClayJson *clay_mcp_tool_call_fn(const ClayJson *arguments, void *userdata) {
 }
 
 static char *config_path(void) {
-    char *home = clay_term_home_dir();
-    if (!home) return NULL;
-    ClayStr path;
-    clay_str_init(&path);
-    clay_str_printf(&path, "%s/.clay/mcp_servers.json", home);
-    free(home);
-    return path.data;
+    return clay_storage_path("mcp_servers.json");
 }
 
 #define CLAY_MCP_CONFIG_FILE_LIMIT (4 * 1024 * 1024)
@@ -215,7 +210,7 @@ static char *config_path(void) {
 static ClayJson *load_config_root(void) {
     char *path = config_path();
     ClayStr text;
-    int read_rc = path ? clay_term_read_file(path, CLAY_MCP_CONFIG_FILE_LIMIT, &text) : -1;
+    int read_rc = path ? clay_storage_read_limited(path, CLAY_MCP_CONFIG_FILE_LIMIT, &text) : -1;
     free(path);
     ClayJson *root = read_rc == 0 ? clay_json_parse(text.data, NULL) : NULL;
     if (read_rc == 0) clay_str_free(&text);
@@ -228,29 +223,22 @@ static ClayJson *load_config_root(void) {
 
 /* Takes ownership of root. 0 on success. */
 static int save_config_root(ClayJson *root) {
-    char *home = clay_term_home_dir();
-    if (!home) {
+    if (clay_storage_ensure_dir("") != 0) {
         clay_json_free(root);
         return -1;
     }
-    ClayStr dir;
-    clay_str_init(&dir);
-    clay_str_printf(&dir, "%s/.clay", home);
-    free(home);
-    clay_term_mkdir(dir.data);
-    ClayStr path;
-    clay_str_init(&path);
-    clay_str_printf(&path, "%s/mcp_servers.json", dir.data);
-    clay_str_free(&dir);
+    char *path = config_path();
+    if (!path) {
+        clay_json_free(root);
+        return -1;
+    }
 
     ClayStr body;
     clay_str_init(&body);
     clay_json_stringify(root, &body);
     clay_json_free(root);
-    FILE *file = fopen(path.data, "w");
-    int ok = file && fwrite(body.data, 1, body.len, file) == body.len;
-    if (file) fclose(file);
-    clay_str_free(&path);
+    int ok = clay_storage_write_atomic_private(path, body.data, body.len) == 0;
+    free(path);
     clay_str_free(&body);
     return ok ? 0 : -1;
 }

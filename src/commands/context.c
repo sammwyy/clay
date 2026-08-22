@@ -1,5 +1,7 @@
 #include "context.h"
 
+#include "clay/storage.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -493,14 +495,7 @@ void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens,
 }
 
 static char *system_prompt_cache_path(void) {
-  char *home = clay_term_home_dir();
-  if (!home)
-    return NULL;
-  ClayStr path;
-  clay_str_init(&path);
-  clay_str_printf(&path, "%s/.clay/system_prompt.json", home);
-  free(home);
-  return path.data;
+  return clay_storage_path("system_prompt.json");
 }
 
 /* 0 with text_out/last_used_out/cwd_out set on a hit, -1 on a miss. */
@@ -510,7 +505,7 @@ static int load_system_prompt_cache(char **text_out, long long *last_used_out,
   if (!path)
     return -1;
   ClayStr body;
-  int read_rc = clay_term_read_file(path, 4 * 1024 * 1024, &body);
+  int read_rc = clay_storage_read_limited(path, 4 * 1024 * 1024, &body);
   free(path);
   if (read_rc != 0)
     return -1;
@@ -535,30 +530,24 @@ static int load_system_prompt_cache(char **text_out, long long *last_used_out,
 
 static void save_system_prompt_cache(const char *text, long long last_used_at,
                                      const char *cwd) {
-  char *home = clay_term_home_dir();
-  if (!home)
+  if (clay_storage_ensure_dir("") != 0)
     return;
-  ClayStr dir;
-  clay_str_init(&dir);
-  clay_str_printf(&dir, "%s/.clay", home);
-  free(home);
-  clay_term_mkdir(dir.data);
   ClayJson *root = clay_json_object();
   clay_json_object_set(root, "text", clay_json_string(text));
   clay_json_object_set(root, "last_used_at",
                        clay_json_number((double)last_used_at));
   clay_json_object_set(root, "cwd", clay_json_string(cwd));
-  ClayStr path;
-  clay_str_init(&path);
-  clay_str_printf(&path, "%s/system_prompt.json", dir.data);
-  clay_str_free(&dir);
   ClayStr body;
   clay_str_init(&body);
   clay_json_stringify(root, &body);
   clay_json_free(root);
-  clay_term_write_file_atomic(path.data, body.data, body.len);
-  clay_term_restrict_file(path.data);
-  clay_str_free(&path);
+  char *path = clay_storage_path("system_prompt.json");
+  if (!path) {
+    clay_str_free(&body);
+    return;
+  }
+  clay_storage_write_atomic_private(path, body.data, body.len);
+  free(path);
   clay_str_free(&body);
 }
 
@@ -566,7 +555,7 @@ static void save_system_prompt_cache(const char *text, long long last_used_at,
 
 static char *read_file_if_exists(const char *path) {
   ClayStr text;
-  if (clay_term_read_file(path, 4 * 1024 * 1024, &text) != 0) return NULL;
+  if (clay_storage_read_limited(path, 4 * 1024 * 1024, &text) != 0) return NULL;
   return text.data;
 }
 

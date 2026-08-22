@@ -2,46 +2,19 @@
 
 #include "clay/json.h"
 #include "clay/str.h"
-#include "clay/term.h"
+#include "clay/storage.h"
 #include "clay/time.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static char *clay_dir(void) {
-    char *home = clay_term_home_dir();
-    if (!home) return NULL;
-    ClayStr path;
-    clay_str_init(&path);
-    clay_str_printf(&path, "%s/.clay", home);
-    free(home);
-    return path.data;
-}
-
 static char *memory_dir(void) {
-    char *dir = clay_dir();
-    if (!dir) return NULL;
-    ClayStr path;
-    clay_str_init(&path);
-    clay_str_printf(&path, "%s/memory", dir);
-    free(dir);
-    return path.data;
+    return clay_storage_path("memory");
 }
 
 static int ensure_memory_dir(void) {
-    char *dir = clay_dir();
-    if (!dir || clay_term_mkdir(dir) != 0) {
-        free(dir);
-        return -1;
-    }
-    ClayStr mem;
-    clay_str_init(&mem);
-    clay_str_printf(&mem, "%s/memory", dir);
-    free(dir);
-    int rc = clay_term_mkdir(mem.data);
-    clay_str_free(&mem);
-    return rc;
+    return clay_storage_ensure_dir("memory");
 }
 
 static char *entry_path(const char *slug) {
@@ -68,7 +41,7 @@ static char *index_path(void) {
 
 static char *read_file(const char *path) {
     ClayStr text;
-    if (clay_term_read_file(path, CLAY_MEMORY_FILE_LIMIT, &text) != 0) return NULL;
+    if (clay_storage_read_limited(path, CLAY_MEMORY_FILE_LIMIT, &text) != 0) return NULL;
     return text.data;
 }
 
@@ -98,7 +71,7 @@ static int save_manifest(ClayJson *root) {
     clay_str_init(&body);
     clay_json_stringify(root, &body);
     clay_json_free(root);
-    int ok = clay_term_write_file_atomic(path, body.data, body.len) == 0;
+    int ok = clay_storage_write_atomic_private(path, body.data, body.len) == 0;
     free(path);
     clay_str_free(&body);
     return ok ? 0 : -1;
@@ -121,7 +94,7 @@ int clay_memory_write(const char *slug, const char *type, const char *summary, c
     if (!path) return -1;
     const char *body = content ? content : "";
     size_t len = strlen(body);
-    int rc = clay_term_write_file_atomic(path, body, len);
+    int rc = clay_storage_write_atomic_private(path, body, len);
     free(path);
     if (rc != 0) return -1;
 

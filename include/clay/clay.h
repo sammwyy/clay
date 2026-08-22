@@ -22,6 +22,7 @@
 #include "clay/prompt.h"
 #include "clay/render.h"
 #include "clay/sse.h"
+#include "clay/storage.h"
 #include "clay/task.h"
 #include "clay/term.h"
 #include "clay/time.h"

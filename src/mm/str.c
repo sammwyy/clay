@@ -29,9 +29,10 @@ void clay_str_clear(ClayStr *s) {
 }
 
 static int str_reserve(ClayStr *s, size_t extra) {
+    if (!s) return 0;
     if (s->len == SIZE_MAX || extra > SIZE_MAX - s->len - 1) return 0;
     size_t needed = s->len + extra + 1;
-    if (needed <= s->cap) return 1;
+    if (needed <= s->cap && s->data) return 1;
     size_t new_cap = s->cap ? s->cap : CLAY_STR_INITIAL_CAP;
     while (new_cap < needed) {
         if (new_cap > SIZE_MAX / 2) {
@@ -48,24 +49,25 @@ static int str_reserve(ClayStr *s, size_t extra) {
 }
 
 void clay_str_push_n(ClayStr *s, const char *text, size_t len) {
-    if (!str_reserve(s, len)) return;
+    if ((!text && len > 0) || !str_reserve(s, len)) return;
     memcpy(s->data + s->len, text, len);
     s->len += len;
     s->data[s->len] = '\0';
 }
 
 void clay_str_push(ClayStr *s, const char *text) {
+    if (!text) return;
     clay_str_push_n(s, text, strlen(text));
 }
 
 void clay_str_push_char(ClayStr *s, char c) {
-    str_reserve(s, 1);
+    if (!str_reserve(s, 1)) return;
     s->data[s->len++] = c;
     s->data[s->len] = '\0';
 }
 
 void clay_str_insert_n(ClayStr *s, size_t at, const char *text, size_t len) {
-    if (at > s->len || !str_reserve(s, len)) return;
+    if (!s || at > s->len || (!text && len > 0) || !str_reserve(s, len)) return;
     memmove(s->data + at + len, s->data + at, s->len - at + 1); /* +1 carries the NUL */
     memcpy(s->data + at, text, len);
     s->len += len;

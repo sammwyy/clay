@@ -1,5 +1,7 @@
 #include "context.h"
 
+#include "clay/storage.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +22,7 @@ static void undo_entry_free(ClayUndoEntry *entry) {
    or oversized file. A missing file is represented by exists == 0. */
 static int read_snapshot(const char *path, char **data, size_t *len, int *exists) {
     ClayStr body;
-    if (clay_term_read_file(path, CLAY_UNDO_FILE_LIMIT, &body) == 0) {
+    if (clay_storage_read_limited(path, CLAY_UNDO_FILE_LIMIT, &body) == 0) {
         *data = body.data;
         *len = body.len;
         *exists = 1;
@@ -138,8 +140,8 @@ void clay_cmd_undo(const char *args, void *user_data) {
 
     int rc;
     if (entry->before_exists) {
-        rc = clay_term_write_file_atomic(entry->path, entry->before,
-                                         entry->before_len);
+        rc = clay_storage_write_atomic_private(entry->path, entry->before,
+                                               entry->before_len);
     } else {
         rc = remove(entry->path);
     }

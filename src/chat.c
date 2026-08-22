@@ -1,6 +1,7 @@
 #include "clay/chat.h"
 
 #include "clay/str.h"
+#include "clay/storage.h"
 #include "clay/term.h"
 #include "clay/time.h"
 #include "clay/uuid.h"
@@ -23,62 +24,31 @@ struct ClayChat {
     long next_turn_id;
 };
 
-static char *clay_dir(void) {
-    char *home = clay_term_home_dir();
-    if (!home) return NULL;
-    ClayStr path;
-    clay_str_init(&path);
-    clay_str_printf(&path, "%s/.clay", home);
-    free(home);
-    return path.data;
-}
-
 static char *chat_path(const char *id) {
-    char *dir = clay_dir();
-    if (!dir) return NULL;
     ClayStr path;
     clay_str_init(&path);
-    clay_str_printf(&path, "%s/chats/%s/chat.json", dir, id);
-    free(dir);
-    return path.data;
+    clay_str_printf(&path, "chats/%s/chat.json", id);
+    char *full_path = clay_storage_path(path.data);
+    clay_str_free(&path);
+    return full_path;
 }
 
 static char *chat_index_path(void) {
-    char *dir = clay_dir();
-    if (!dir) return NULL;
-    ClayStr path;
-    clay_str_init(&path);
-    clay_str_printf(&path, "%s/chats/index.json", dir);
-    free(dir);
-    return path.data;
+    return clay_storage_path("chats/index.json");
 }
 
 static int ensure_chat_dir(const char *id) {
-    char *dir = clay_dir();
-    if (!dir || clay_term_mkdir(dir) != 0) {
-        free(dir);
-        return -1;
-    }
-    ClayStr chats;
-    clay_str_init(&chats);
-    clay_str_printf(&chats, "%s/chats", dir);
-    free(dir);
-    if (clay_term_mkdir(chats.data) != 0) {
-        clay_str_free(&chats);
-        return -1;
-    }
-    ClayStr chat;
-    clay_str_init(&chat);
-    clay_str_printf(&chat, "%s/%s", chats.data, id);
-    clay_str_free(&chats);
-    int rc = clay_term_mkdir(chat.data);
-    clay_str_free(&chat);
+    ClayStr relative;
+    clay_str_init(&relative);
+    clay_str_printf(&relative, "chats/%s", id);
+    int rc = clay_storage_ensure_dir(relative.data);
+    clay_str_free(&relative);
     return rc;
 }
 
 static char *read_file(const char *path) {
     ClayStr text;
-    if (clay_term_read_file(path, CLAY_CHAT_FILE_LIMIT, &text) != 0) return NULL;
+    if (clay_storage_read_limited(path, CLAY_CHAT_FILE_LIMIT, &text) != 0) return NULL;
     return text.data;
 }
 
@@ -162,7 +132,7 @@ static int chat_index_load(ClayArray *summaries) {
     char *path = chat_index_path();
     if (!path) return -1;
     ClayStr text;
-    int rc = clay_term_read_file(path, CLAY_CHAT_INDEX_FILE_LIMIT, &text);
+    int rc = clay_storage_read_limited(path, CLAY_CHAT_INDEX_FILE_LIMIT, &text);
     free(path);
     if (rc != 0) return -1;
     ClayJson *root = clay_json_parse(text.data, NULL);
@@ -214,25 +184,21 @@ static int chat_index_save(const ClayArray *summaries) {
     clay_str_init(&body);
     clay_json_stringify(root, &body);
     clay_json_free(root);
-    int rc = clay_term_write_file_atomic(path, body.data, body.len);
+    int rc = clay_storage_write_atomic_private(path, body.data, body.len);
     clay_str_free(&body);
     free(path);
     return rc;
 }
 
 static void chat_index_update(const ClayChat *chat) {
-    char *root = clay_dir();
-    if (!root) return;
-    ClayStr directory;
-    clay_str_init(&directory);
-    clay_str_printf(&directory, "%s/chats", root);
-    free(root);
+    char *directory_path = clay_storage_path("chats");
+    if (!directory_path) return;
     ClayArray names;
-    if (clay_term_list_dir(directory.data, &names) != 0) {
-        clay_str_free(&directory);
+    if (clay_term_list_dir(directory_path, &names) != 0) {
+        free(directory_path);
         return;
     }
-    clay_str_free(&directory);
+    free(directory_path);
     /* A single chat is cheap to discover and keeping no sidecar preserves the
        simple on-disk layout used by older installations. */
     if (names.count <= 1) {
@@ -281,7 +247,7 @@ static int save(ClayChat *chat) {
     ClayStr body;
     clay_str_init(&body);
     clay_json_stringify(chat->journal, &body);
-    int ok = clay_term_write_file_atomic(chat->path, body.data, body.len) == 0;
+    int ok = clay_storage_write_atomic_private(chat->path, body.data, body.len) == 0;
     clay_str_free(&body);
     if (ok) chat_index_update(chat);
     return ok ? 0 : -1;
@@ -432,13 +398,12 @@ char *clay_chat_scratch_dir(const ClayChat *chat) {
 
 char *clay_chat_checkpoints_dir(const ClayChat *chat) {
     if (ensure_chat_dir(chat->id) != 0) return NULL;
-    char *dir = clay_dir();
-    if (!dir) return NULL;
     ClayStr path;
     clay_str_init(&path);
-    clay_str_printf(&path, "%s/chats/%s/checkpoints", dir, chat->id);
-    free(dir);
-    return path.data;
+    clay_str_printf(&path, "chats/%s/checkpoints", chat->id);
+    char *full_path = clay_storage_path(path.data);
+    clay_str_free(&path);
+    return full_path;
 }
 
 char *clay_chat_dump_scratch(const ClayChat *chat, const char *prefix, const char *content) {
@@ -476,15 +441,11 @@ void clay_chat_list_free(ClayArray *summaries) {
 
 int clay_chat_list(ClayArray *summaries) {
     clay_array_init(summaries, sizeof(ClayChatSummary));
-    char *root = clay_dir();
-    if (!root) return -1;
-    ClayStr directory;
-    clay_str_init(&directory);
-    clay_str_printf(&directory, "%s/chats", root);
-    free(root);
+    char *directory_path = clay_storage_path("chats");
+    if (!directory_path) return -1;
     ClayArray names;
-    int rc = clay_term_list_dir(directory.data, &names);
-    clay_str_free(&directory);
+    int rc = clay_term_list_dir(directory_path, &names);
+    free(directory_path);
     if (rc != 0) return rc;
     if (names.count > 1 && chat_index_load(summaries) == 0 &&
         summaries->count == names.count) {

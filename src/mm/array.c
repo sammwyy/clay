@@ -26,6 +26,7 @@ void clay_array_clear(ClayArray *a) {
 }
 
 static int array_grow(ClayArray *a) {
+    if (!a || a->elem_size == 0 || a->count > a->cap) return 0;
     size_t new_cap = a->cap ? a->cap : CLAY_ARRAY_INITIAL_CAP;
     if (new_cap > SIZE_MAX / 2) return 0;
     new_cap *= 2;
@@ -39,7 +40,8 @@ static int array_grow(ClayArray *a) {
 
 void *clay_array_push(ClayArray *a) {
     if (!a || a->elem_size == 0) return NULL;
-    if (a->count == a->cap && !array_grow(a)) return NULL;
+    if (a->count >= a->cap && !array_grow(a)) return NULL;
+    if (!a->data) return NULL;
     if (a->count > SIZE_MAX / a->elem_size) return NULL;
     void *slot = (unsigned char *)a->data + a->count * a->elem_size;
     a->count++;
