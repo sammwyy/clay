@@ -14,7 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y upx-ucl
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libcurl4-openssl-dev upx-ucl
       - run: make compress
       - run: cp bin/clay clay-linux-x86_64
       - uses: actions/upload-artifact@v4

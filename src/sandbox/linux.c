@@ -319,7 +319,10 @@ static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int m
         return -1;
     }
 
-    chdir("/");
+    if (chdir("/") != 0) {
+        snprintf(diag, diag_len, "clay: sandbox chdir / failed: %s\n", strerror(errno));
+        return -1;
+    }
     /* /.oldroot stays mounted - the kernel refuses a fresh /proc mount
        once it's gone. run_child detaches it right after that mount. */
     if (chdir("/workspace") != 0) {
