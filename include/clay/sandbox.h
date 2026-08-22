@@ -10,14 +10,8 @@ typedef enum {
     CLAY_SANDBOX_MODE_UNLEASHED,
 } ClaySandboxMode;
 
-typedef enum {
-    CLAY_SANDBOX_ACCESS_READONLY,
-    CLAY_SANDBOX_ACCESS_WRITABLE,
-} ClaySandboxAccess;
-
 typedef struct {
     ClaySandboxMode mode;
-    ClaySandboxAccess access;
     const char *workspace_dir; /* bound to /workspace */
     const char *scratch_dir;   /* bound to /scratch; /tmp points at it too */
 } ClaySandboxConfig;

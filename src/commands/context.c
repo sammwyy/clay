@@ -10,8 +10,8 @@
     "Use read/write/edit/glob/grep for inspecting or changing files in the workspace - they are scoped to "         \
     "it directly and are preferred over shell_exec's cat/sed/find/grep for that purpose. Reach for shell_exec "      \
     "for everything else (running builds/tests, git, other programs). It runs in /workspace (the project "           \
-    "root); /scratch and /tmp are a temporary scratch area for this conversation. Depending on the user's "          \
-    "/sandbox settings, paths outside those may be read-only or unavailable. Prefer focused commands and "           \
+    "root); /scratch and /tmp are a temporary scratch area for this conversation. Sandboxed commands cannot access " \
+    "paths outside those directories or the network. Prefer focused commands and "                                  \
     "summarize results. The user can put you in Plan mode (/plan) to discuss an approach before any files "          \
     "change - write/edit are refused and mutating shell commands are blocked there; a blocked tool result "         \
     "means explain the plan in words instead of retrying the call.\n\n"                                              \
@@ -570,10 +570,6 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     commands->sandbox_mode = strcmp(sandbox_mode, "unleashed") == 0 ? CLAY_SANDBOX_MODE_UNLEASHED : CLAY_SANDBOX_MODE_SANDBOX;
     free(sandbox_mode);
     if (!clay_sandbox_supported()) commands->sandbox_mode = CLAY_SANDBOX_MODE_UNLEASHED;
-    char *sandbox_access = clay_config_sandbox_access();
-    commands->sandbox_access =
-        strcmp(sandbox_access, "writable") == 0 ? CLAY_SANDBOX_ACCESS_WRITABLE : CLAY_SANDBOX_ACCESS_READONLY;
-    free(sandbox_access);
     for (int i = 0; i < CLAY_PERMISSION_CATEGORY_COUNT; i++) {
         commands->auto_approve[i] = clay_config_auto_approve(clay_permissions_category_name((ClayPermissionCategory)i));
         clay_array_init(&commands->remembered_patterns[i], sizeof(char *));

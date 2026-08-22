@@ -7,17 +7,27 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#define CLAY_SANDBOX_TIMEOUT_SECONDS 120
+#define CLAY_SANDBOX_CPU_SECONDS 60
+#define CLAY_SANDBOX_ADDRESS_SPACE_LIMIT (1024ULL * 1024 * 1024)
+#define CLAY_SANDBOX_PROCESS_LIMIT 64
+#define CLAY_SANDBOX_FILE_SIZE_LIMIT (512ULL * 1024 * 1024)
 
 /* Creates every directory component of an absolute path, ignoring
    components that already exist. */
@@ -80,14 +90,10 @@ static int bind_mount_under(const ClayStr *root, const char *sub, const char *so
     return rc;
 }
 
-/* Preserves the shell's system binaries/config: symlinked top-level
-   dirs (e.g. /bin -> usr/bin) are recreated as symlinks, real
-   directories are bind-mounted. Missing entries are skipped. */
-static int setup_system_dirs(const ClayStr *root, ClaySandboxAccess access) {
+static int setup_system_dirs(const ClayStr *root) {
     static const char *const SYSTEM_DIRS[] = {
-        "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/var", "/run", "/opt", "/dev",
+        "/usr", "/bin", "/sbin", "/lib", "/lib64",
     };
-    int readonly = access == CLAY_SANDBOX_ACCESS_READONLY;
     for (size_t i = 0; i < sizeof(SYSTEM_DIRS) / sizeof(SYSTEM_DIRS[0]); i++) {
         const char *host_path = SYSTEM_DIRS[i];
         struct stat st;
@@ -108,7 +114,7 @@ static int setup_system_dirs(const ClayStr *root, ClaySandboxAccess access) {
                 ok = symlink(link, target.data) == 0;
             }
         } else if (S_ISDIR(st.st_mode)) {
-            ok = mkdir(target.data, 0755) == 0 && bind_mount(host_path, target.data, readonly) == 0;
+            ok = mkdir(target.data, 0755) == 0 && bind_mount(host_path, target.data, 1) == 0;
         } else {
             ok = 1;
         }
@@ -116,6 +122,28 @@ static int setup_system_dirs(const ClayStr *root, ClaySandboxAccess access) {
         if (!ok) return -1;
     }
     return 0;
+}
+
+static int apply_limits(char *diag, size_t diag_len) {
+    struct rlimit limit;
+
+    limit.rlim_cur = CLAY_SANDBOX_CPU_SECONDS;
+    limit.rlim_max = CLAY_SANDBOX_CPU_SECONDS + 1;
+    if (setrlimit(RLIMIT_CPU, &limit) != 0) goto fail;
+    limit.rlim_cur = CLAY_SANDBOX_ADDRESS_SPACE_LIMIT;
+    limit.rlim_max = CLAY_SANDBOX_ADDRESS_SPACE_LIMIT;
+    if (setrlimit(RLIMIT_AS, &limit) != 0) goto fail;
+    limit.rlim_cur = CLAY_SANDBOX_PROCESS_LIMIT;
+    limit.rlim_max = CLAY_SANDBOX_PROCESS_LIMIT;
+    if (setrlimit(RLIMIT_NPROC, &limit) != 0) goto fail;
+    limit.rlim_cur = CLAY_SANDBOX_FILE_SIZE_LIMIT;
+    limit.rlim_max = CLAY_SANDBOX_FILE_SIZE_LIMIT;
+    if (setrlimit(RLIMIT_FSIZE, &limit) != 0) goto fail;
+    return 0;
+
+fail:
+    snprintf(diag, diag_len, "clay: sandbox resource limit failed: %s\n", strerror(errno));
+    return -1;
 }
 
 /* newuidmap/newgidmap: some distros deny a direct uid_map/gid_map write. */
@@ -140,7 +168,7 @@ static int run_id_mapper(const char *tool, pid_t pid, unsigned id) {
    back to running the command unsandboxed. */
 static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int mapped_fd, char *diag,
                          size_t diag_len) {
-    if (unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS) != 0) {
+    if (unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS | CLONE_NEWNET) != 0) {
         snprintf(diag, diag_len, "clay: sandbox unshare failed: %s\n", strerror(errno));
         return -1;
     }
@@ -172,7 +200,7 @@ static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int m
         clay_str_free(&root);
         return -1;
     }
-    if (setup_system_dirs(&root, config->access) != 0) {
+    if (setup_system_dirs(&root) != 0) {
         snprintf(diag, diag_len, "clay: sandbox system mount failed: %s\n", strerror(errno));
         clay_str_free(&root);
         return -1;
@@ -202,22 +230,6 @@ static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int m
         return -1;
     }
 
-    char *sandbox_home = clay_term_home_dir();
-    if (sandbox_home) {
-        ClayStr home_in_root;
-        clay_str_init(&home_in_root);
-        clay_str_push(&home_in_root, root.data);
-        clay_str_push(&home_in_root, sandbox_home);
-        int home_ok = mkdir_p(home_in_root.data) == 0 && bind_mount(sandbox_home, home_in_root.data, 1) == 0;
-        clay_str_free(&home_in_root);
-        free(sandbox_home);
-        if (!home_ok) {
-            snprintf(diag, diag_len, "clay: sandbox home mount failed: %s\n", strerror(errno));
-            clay_str_free(&root);
-            return -1;
-        }
-    }
-
     ClayStr oldroot;
     clay_str_init(&oldroot);
     clay_str_push(&oldroot, root.data);
@@ -242,8 +254,16 @@ static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int m
 
 static void run_child(const ClaySandboxConfig *config, const char *command, int unshared_fd, int mapped_fd) {
     char diag[256] = "";
+    if (setpgid(0, 0) != 0) {
+        fprintf(stderr, "clay: sandbox process group failed: %s\n", strerror(errno));
+        _exit(126);
+    }
     if (setup_sandbox(config, unshared_fd, mapped_fd, diag, sizeof(diag)) != 0) {
         if (*diag) fputs(diag, stderr);
+        _exit(126);
+    }
+    if (apply_limits(diag, sizeof(diag)) != 0) {
+        fputs(diag, stderr);
         _exit(126);
     }
 
@@ -259,6 +279,12 @@ static void run_child(const ClaySandboxConfig *config, const char *command, int 
         }
         umount2("/.oldroot", MNT_DETACH);
         rmdir("/.oldroot");
+        if (clearenv() != 0 || setenv("HOME", "/scratch", 1) != 0 ||
+            setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) != 0 ||
+            setenv("TMPDIR", "/scratch", 1) != 0) {
+            fprintf(stderr, "clay: sandbox environment setup failed: %s\n", strerror(errno));
+            _exit(126);
+        }
         execl("/bin/bash", "bash", "-c", command, (char *)NULL);
         fprintf(stderr, "clay: sandbox exec failed: %s\n", strerror(errno));
         _exit(127);
@@ -267,6 +293,27 @@ static void run_child(const ClaySandboxConfig *config, const char *command, int 
     int status = 0;
     waitpid(pid, &status, 0);
     _exit(WIFEXITED(status) ? WEXITSTATUS(status) : 128);
+}
+
+static long long monotonic_milliseconds(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static void append_output(ClayStr *output, size_t output_limit, const char *data, size_t len, int *truncated) {
+    if (output->len >= output_limit) {
+        *truncated = 1;
+        return;
+    }
+    size_t kept = output_limit - output->len;
+    if (kept > len) kept = len;
+    clay_str_push_n(output, data, kept);
+    if (kept != len) *truncated = 1;
+}
+
+static void stop_process_group(pid_t pid) {
+    if (kill(-pid, SIGKILL) != 0) kill(pid, SIGKILL);
 }
 
 static void cleanup_stage_dir(pid_t pid) {
@@ -335,21 +382,70 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
     }
     close(mapped_fds[1]);
 
-    FILE *pipe_read = fdopen(fds[0], "r");
     int truncated = 0;
-    int character;
-    while ((character = fgetc(pipe_read)) != EOF) {
-        if (output->len < output_limit) {
-            clay_str_push_char(output, character == '\0' ? '?' : (char)character);
-        } else {
-            truncated = 1;
+    int status = 0;
+    int child_done = 0;
+    int pipe_open = 1;
+    int timed_out = 0;
+    int flags = fcntl(fds[0], F_GETFL);
+    if (flags < 0 || fcntl(fds[0], F_SETFL, flags | O_NONBLOCK) != 0) {
+        close(fds[0]);
+        stop_process_group(pid);
+        waitpid(pid, NULL, 0);
+        cleanup_stage_dir(pid);
+        return -1;
+    }
+
+    long long deadline = monotonic_milliseconds() + (long long)CLAY_SANDBOX_TIMEOUT_SECONDS * 1000;
+    while (pipe_open || !child_done) {
+        if (!child_done && waitpid(pid, &status, WNOHANG) == pid) child_done = 1;
+        if (!child_done && !timed_out && monotonic_milliseconds() >= deadline) {
+            stop_process_group(pid);
+            timed_out = 1;
+        }
+
+        struct pollfd poll_fd = {fds[0], POLLIN | POLLHUP, 0};
+        int polled = pipe_open ? poll(&poll_fd, 1, child_done ? 0 : 100) : poll(NULL, 0, 100);
+        if (polled < 0) {
+            if (errno == EINTR) continue;
+            close(fds[0]);
+            stop_process_group(pid);
+            waitpid(pid, NULL, 0);
+            cleanup_stage_dir(pid);
+            return -1;
+        }
+        if (polled == 0) continue;
+
+        for (;;) {
+            char buffer[4096];
+            ssize_t read_count = read(fds[0], buffer, sizeof(buffer));
+            if (read_count > 0) {
+                for (ssize_t i = 0; i < read_count; i++) {
+                    if (buffer[i] == '\0') buffer[i] = '?';
+                }
+                append_output(output, output_limit, buffer, (size_t)read_count, &truncated);
+                continue;
+            }
+            if (read_count == 0) {
+                close(fds[0]);
+                pipe_open = 0;
+            }
+            if (read_count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                close(fds[0]);
+                stop_process_group(pid);
+                waitpid(pid, NULL, 0);
+                cleanup_stage_dir(pid);
+                return -1;
+            }
+            break;
         }
     }
-    fclose(pipe_read);
 
-    int status = 0;
-    waitpid(pid, &status, 0);
-    if (exit_code) *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    if (timed_out) {
+        static const char timeout_message[] = "\nclay: sandbox command timed out\n";
+        append_output(output, output_limit, timeout_message, sizeof(timeout_message) - 1, &truncated);
+    }
+    if (exit_code) *exit_code = timed_out ? 124 : (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
     if (output_truncated) *output_truncated = truncated;
     cleanup_stage_dir(pid);
     return 0;

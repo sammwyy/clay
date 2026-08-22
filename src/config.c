@@ -248,17 +248,6 @@ int clay_config_set_sandbox_mode(const char *mode) {
     return set_string_field("sandbox_mode", mode);
 }
 
-char *clay_config_sandbox_access(void) {
-    ClayJson *root = load_selection_root();
-    char *access = string_field(root, "sandbox_access", "readonly");
-    clay_json_free(root);
-    return access;
-}
-
-int clay_config_set_sandbox_access(const char *access) {
-    return set_string_field("sandbox_access", access);
-}
-
 /* Reads and edits are low-risk (and edits are checkpointed, see
    clay/checkpoint.h) so they default to on; running arbitrary commands
    defaults to off, with a curated safe subset defaulting on. */

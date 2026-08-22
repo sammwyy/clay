@@ -33,7 +33,7 @@ No giant framework to learn. No crowded dashboard. A single self-contained binar
 | --- | --- |
 | **Your models, your choice** | Connect OpenAI, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider's models without leaving the terminal. |
 | **Dedicated file tools** | `read`, `write`, `edit`, `glob`, `grep` operate directly on the workspace — `edit` requires an exact, unique text match (no fuzzy diffing), and every path is checked against escaping the workspace root. |
-| **Sandboxed by default** | On Linux, shell commands run in their own namespaced filesystem — `/workspace` is your project, `/scratch`/`/tmp` is conversation scratch space, your home is read-only. Opt out with `/sandbox`. |
+| **Sandboxed by default** | On Linux, shell commands run with an isolated filesystem, no network, and resource limits — `/workspace` is your project and `/scratch`/`/tmp` is conversation scratch space. Opt out with `/sandbox`. |
 | **Permissions & Plan mode** | `/permissions` sets which tool categories (read, edit, safe commands, all commands) run without asking; anything else prompts once, with an "always this session" option. `/plan` goes further and refuses writes/edits and mutating shell commands outright, so you can discuss an approach before anything changes. |
 | **Checkpoints, not just trust** | Every `write`/`edit`/`shell_exec` call snapshots the workspace into a real git repo behind the scenes first (no libgit2 — `git` is shelled out). `/checkpoints` lists them and restores any point, even if your project isn't a git repo itself. |
 | **Memory that lasts** | Long-term memory (`/memory`) survives across every chat; a short-term scratchpad rides along with the active conversation as it grows. |
@@ -77,7 +77,7 @@ make build
 
 **Your workspace is part of the conversation.** When the model needs evidence, it reads, searches, and edits files directly instead of guessing — `shell_exec` is still there for everything else (builds, tests, git, other programs).
 
-**Isolated by default, unleashed when you want.** On Linux, `shell_exec` runs inside its own user/mount/pid namespace: `/workspace` maps to your project, `/scratch` and `/tmp` are a per-conversation scratch dir, and your home is mounted read-only so `.bashrc` and your own binaries still work. `/sandbox` switches to Unleashed (no sandbox) or toggles whether paths outside the workspace are writable. Windows runs Unleashed only, for now.
+**Isolated by default, unleashed when you want.** On Linux, `shell_exec` runs in its own user/mount/pid/network namespaces: `/workspace` maps to your project, `/scratch` and `/tmp` are a per-conversation scratch dir, host paths and inherited environment variables are unavailable, and CPU, memory, process, file-size, and wall-clock limits apply. `/sandbox` switches to Unleashed (no sandbox). Windows runs Unleashed only, for now.
 
 **Explicit consent, not endless prompts.** Reads, edits, and a curated set of safe commands (`ls`, `cat`, `git status`, ...) are approved by default; anything else — arbitrary shell commands, mainly — asks the first time and can be remembered for the rest of the session via `/permissions`. `/plan` is the stricter mode: no writes, no edits, and a blocklist keeps `rm`/`mv`/`cp` and mutating `git` subcommands from running at all, regardless of what `/permissions` allows.
 
@@ -99,7 +99,7 @@ make build
 
 | Command | What it does |
 | --- | --- |
-| `/sandbox` | Switch between Sandbox and Unleashed execution, and set access outside the workspace. |
+| `/sandbox` | Switch between restricted Sandbox and Unleashed execution. |
 | `/permissions` | Toggle auto-approval for read / edit / safe-command / all-command tool calls. |
 | `/plan` | Toggle Plan mode (blocks writes/edits and mutating shell commands) vs. Act mode. |
 | `/checkpoints` | Browse and restore this chat's workspace checkpoints. |

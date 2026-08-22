@@ -610,7 +610,6 @@ ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata) {
     char *scratch_dir = clay_chat_scratch_dir(commands->chat);
     ClaySandboxConfig sandbox = {
         .mode = commands->sandbox_mode,
-        .access = commands->sandbox_access,
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
     };

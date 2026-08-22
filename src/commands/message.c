@@ -64,7 +64,6 @@ static void run_auto_test(ClayCommands *commands, ClayJson *result) {
     char *scratch_dir = clay_chat_scratch_dir(commands->chat);
     ClaySandboxConfig sandbox = {
         .mode = commands->sandbox_mode,
-        .access = commands->sandbox_access,
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
     };
@@ -188,7 +187,6 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     char *scratch_dir = clay_chat_scratch_dir(commands->chat);
     ClaySandboxConfig sandbox = {
         .mode = commands->sandbox_mode,
-        .access = commands->sandbox_access,
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
     };

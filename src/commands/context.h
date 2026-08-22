@@ -73,7 +73,6 @@ struct ClayCommands {
     char *selected_model;
     int reasoning_effort_index;
     ClaySandboxMode sandbox_mode;
-    ClaySandboxAccess sandbox_access;
     int auto_approve[CLAY_PERMISSION_CATEGORY_COUNT];
     ClayArray remembered_patterns[CLAY_PERMISSION_CATEGORY_COUNT]; /* char*, approved for this session only */
     ClayCommandsMode mode;

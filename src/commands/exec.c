@@ -23,7 +23,6 @@ void clay_cmd_exec(const char *args, void *user_data) {
     char *scratch_dir = clay_chat_scratch_dir(commands->chat);
     ClaySandboxConfig sandbox = {
         .mode = commands->sandbox_mode,
-        .access = commands->sandbox_access,
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
     };

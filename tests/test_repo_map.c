@@ -60,7 +60,6 @@ int main(void) {
     memset(&commands, 0, sizeof(commands));
     commands.chat = chat;
     commands.sandbox_mode = CLAY_SANDBOX_MODE_UNLEASHED;
-    commands.sandbox_access = CLAY_SANDBOX_ACCESS_READONLY;
 
     /* Path 1: with ctags on PATH (whatever the host has installed). */
     char *original_path = getenv("PATH");
