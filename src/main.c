@@ -6,6 +6,15 @@
 
 #define CLAY_VERSION "0.0.0"
 
+static int require_provider(ClayCommands *commands) {
+    clay_sayc(CLAY_YELLOW, "Connect a provider to continue.");
+    while (!clay_commands_has_provider(commands)) {
+        clay_commands_connect(commands);
+        if (!clay_term_is_interactive() && !clay_commands_has_provider(commands)) return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int cli_status = clay_cli_startup(argc, argv, CLAY_VERSION);
     if (cli_status != 0) return cli_status < 0 ? 1 : 0;
@@ -15,11 +24,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to initialize HTTP.\n");
         return 1;
     }
-    clay_banner("clay", CLAY_VERSION);
+    clay_banner(CLAY_VERSION);
 
     ClayApp *app = clay_app_create();
     ClayCommands *commands = clay_commands_create(app);
     clay_commands_register(commands);
+    if (!clay_commands_has_provider(commands) && require_provider(commands) != 0) {
+        clay_commands_destroy(commands);
+        clay_app_destroy(app);
+        clay_http_cleanup();
+        return 1;
+    }
 
     int interrupted = 0;
     while (clay_commands_running(commands)) {

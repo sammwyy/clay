@@ -191,6 +191,14 @@ int clay_config_save(const ClayProviderConfig *config) {
     return 0;
 }
 
+int clay_config_remove(const char *id) {
+    char *path = provider_path(id);
+    if (!path) return -1;
+    int rc = remove(path);
+    free(path);
+    return rc == 0 ? 0 : -1;
+}
+
 void clay_config_free(ClayProviderConfig *config) {
     if (!config) return;
     free(config->id);

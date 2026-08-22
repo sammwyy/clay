@@ -17,6 +17,9 @@ ClayProviderConfig *clay_config_load(const char *id);
    providers/ subdirectory as needed. 0 on success. */
 int clay_config_save(const ClayProviderConfig *config);
 
+/* Removes a saved provider config. 0 on success. */
+int clay_config_remove(const char *id);
+
 void clay_config_free(ClayProviderConfig *config);
 
 /* Loads the selected provider/model from ~/.clay/config.json. Missing or

@@ -14,7 +14,7 @@ Bring your own model. Stay in your flow. Ship better work.
 </div>
 
 ```text
-clay v0.0.0  Type /help for view available commands.
+◆ ℂlay · v0.0.0 · Type /help for commands.
 
 > review this project and find the rough edges
 ◆ ℂlay  I’ll inspect the structure and trace the main flows first.
@@ -90,6 +90,7 @@ make build
 | Command | What it does |
 | --- | --- |
 | `/connect [openai\|openrouter\|custom]` | Connect a provider and enter its API key. |
+| `/logout` | Choose a connected provider and remove its saved session. |
 | `/model [id]` | Browse models by provider, or set an id directly. |
 | `/effort` | Set the model reasoning effort when supported. |
 

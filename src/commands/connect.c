@@ -38,18 +38,8 @@ static void connect_type(ClayCommands *commands, const ClayProviderType *type) {
     free(base_url);
 }
 
-void clay_cmd_connect(const char *args, void *user_data) {
-    ClayCommands *commands = user_data;
-    if (args && *args) {
-        const ClayProviderType *type = clay_commands_find_provider_type(args);
-        if (!type) {
-            clay_sayc(CLAY_RED, "Unknown provider type: %s", args);
-            return;
-        }
-        connect_type(commands, type);
-        return;
-    }
-
+int clay_commands_connect(ClayCommands *commands) {
+    size_t provider_count = commands->providers.count;
     size_t count;
     const ClayProviderType *types = clay_commands_provider_types(&count);
     ClayChoice choices[count];
@@ -67,7 +57,23 @@ void clay_cmd_connect(const char *args, void *user_data) {
     for (size_t i = 0; i < count; i++) clay_str_free(&titles[i]);
     if (index < 0) {
         clay_sayc(CLAY_RED, "Cancelled.");
-        return;
+        return 0;
     }
     connect_type(commands, &types[index]);
+    return commands->providers.count > provider_count;
+}
+
+void clay_cmd_connect(const char *args, void *user_data) {
+    ClayCommands *commands = user_data;
+    if (args && *args) {
+        const ClayProviderType *type = clay_commands_find_provider_type(args);
+        if (!type) {
+            clay_sayc(CLAY_RED, "Unknown provider type: %s", args);
+            return;
+        }
+        connect_type(commands, type);
+        return;
+    }
+
+    clay_commands_connect(commands);
 }

@@ -110,6 +110,29 @@ void clay_commands_load_provider(ClayCommands *commands, const ClayProviderType 
     clay_array_push_val(&commands->providers, &provider);
 }
 
+int clay_commands_logout_provider(ClayCommands *commands, const char *id) {
+    for (size_t i = 0; i < commands->providers.count; i++) {
+        ClayConnectedProvider *provider = clay_array_get(&commands->providers, i);
+        if (strcmp(provider->type->id, id) != 0) continue;
+
+        int selected = commands->selected_provider && strcmp(commands->selected_provider, id) == 0;
+        if (selected && clay_config_selection_save(NULL, NULL) != 0) return -1;
+        if (clay_config_remove(provider->config->id) != 0) return -1;
+
+        provider_free(provider);
+        clay_array_remove(&commands->providers, i);
+        if (selected) {
+            free(commands->selected_provider);
+            free(commands->selected_model);
+            commands->selected_provider = NULL;
+            commands->selected_model = NULL;
+            clay_commands_update_selected_below(commands);
+        }
+        return 0;
+    }
+    return -1;
+}
+
 void clay_commands_update_selected_below(ClayCommands *commands) {
     ClayStr text;
     clay_str_init(&text);
@@ -630,6 +653,10 @@ void clay_commands_destroy(ClayCommands *commands) {
 
 int clay_commands_running(const ClayCommands *commands) {
     return commands->running;
+}
+
+int clay_commands_has_provider(const ClayCommands *commands) {
+    return commands->providers.count > 0;
 }
 
 void clay_commands_print_session_summary(const ClayCommands *commands) {

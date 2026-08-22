@@ -127,6 +127,7 @@ const ClayReasoningEffort *clay_commands_reasoning_effort(const ClayCommands *co
 size_t clay_commands_reasoning_effort_count(void);
 const ClayReasoningEffort *clay_commands_reasoning_efforts(void);
 void clay_commands_load_provider(ClayCommands *commands, const ClayProviderType *type);
+int clay_commands_logout_provider(ClayCommands *commands, const char *id);
 void clay_commands_print_history(ClayCommands *commands, size_t count);
 
 /* Approval gate (src/commands/permissions.c). `action` is a short present-
@@ -153,6 +154,7 @@ void clay_cmd_select(const char *args, void *user_data);
 void clay_cmd_choice(const char *args, void *user_data);
 void clay_cmd_below(const char *args, void *user_data);
 void clay_cmd_connect(const char *args, void *user_data);
+void clay_cmd_logout(const char *args, void *user_data);
 void clay_cmd_model(const char *args, void *user_data);
 void clay_cmd_effort(const char *args, void *user_data);
 void clay_cmd_resume(const char *args, void *user_data);

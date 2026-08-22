@@ -8,6 +8,8 @@ ClayCommands *clay_commands_create(ClayApp *app);
 void clay_commands_destroy(ClayCommands *commands);
 void clay_commands_register(ClayCommands *commands);
 int clay_commands_running(const ClayCommands *commands);
+int clay_commands_has_provider(const ClayCommands *commands);
+int clay_commands_connect(ClayCommands *commands);
 int clay_commands_run_message(ClayCommands *commands, const char *input);
 void clay_commands_print_session_summary(const ClayCommands *commands);
 
