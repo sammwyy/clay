@@ -125,7 +125,15 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact run compress compress-win clean debug
+UNIT_TEST_TARGETS := $(CLI_TEST_TARGET) $(COMMAND_TEST_TARGET) $(CHAT_TEST_TARGET) \
+	$(UUID_TEST_TARGET) $(MEMORY_TEST_TARGET) $(SANDBOX_TEST_TARGET) \
+	$(FS_TOOLS_TEST_TARGET) $(CHECKPOINT_TEST_TARGET) $(PERMISSIONS_TEST_TARGET) \
+	$(CONTEXT_COMPACT_TEST_TARGET) $(PROJECT_INSTRUCTIONS_TEST_TARGET) \
+	$(TODOWRITE_TEST_TARGET) $(PROCESS_TEST_TARGET) $(MCP_TEST_TARGET) \
+	$(REPO_MAP_TEST_TARGET) $(ENV_BLOCK_TEST_TARGET) $(COMPACT_TEST_TARGET) \
+	$(CODEX_TEST_TARGET) $(GROK_TEST_TARGET)
+
+.PHONY: all build build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact run compress compress-win clean debug
 
 all: build
 
@@ -134,11 +142,17 @@ build: $(TARGET)
 $(TARGET): $(OBJ) | $(BIN_DIR)
 	$(CC) $(OBJ) -o $@ $(LDFLAGS)
 
+test: $(UNIT_TEST_TARGETS)
+	@set -e; for test_binary in $^; do ./$$test_binary; done
+
 test-openai: $(TEST_TARGET)
+	@./$<
 
 test-openai-codex: $(CODEX_TEST_TARGET)
+	@./$<
 
 test-grok: $(GROK_TEST_TARGET)
+	@./$<
 
 $(CODEX_TEST_TARGET): $(LIB_OBJ) $(CODEX_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CODEX_TEST_OBJ) -o $@ $(LDFLAGS)
@@ -150,86 +164,103 @@ $(TEST_TARGET): $(LIB_OBJ) $(TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-cli: $(CLI_TEST_TARGET)
+	@./$<
 
 $(CLI_TEST_TARGET): $(LIB_OBJ) $(CLI_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CLI_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-command: $(COMMAND_TEST_TARGET)
+	@./$<
 
 $(COMMAND_TEST_TARGET): $(LIB_OBJ) $(COMMAND_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(COMMAND_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-chat: $(CHAT_TEST_TARGET)
+	@./$<
 
 $(CHAT_TEST_TARGET): $(LIB_OBJ) $(CHAT_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CHAT_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-uuid: $(UUID_TEST_TARGET)
+	@./$<
 
 $(UUID_TEST_TARGET): $(LIB_OBJ) $(UUID_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(UUID_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-memory: $(MEMORY_TEST_TARGET)
+	@./$<
 
 $(MEMORY_TEST_TARGET): $(LIB_OBJ) $(MEMORY_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(MEMORY_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-sandbox: $(SANDBOX_TEST_TARGET)
+	@./$<
 
 $(SANDBOX_TEST_TARGET): $(LIB_OBJ) $(SANDBOX_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(SANDBOX_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-fs-tools: $(FS_TOOLS_TEST_TARGET)
+	@./$<
 
 $(FS_TOOLS_TEST_TARGET): $(LIB_OBJ) $(FS_TOOLS_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(FS_TOOLS_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-checkpoint: $(CHECKPOINT_TEST_TARGET)
+	@./$<
 
 $(CHECKPOINT_TEST_TARGET): $(LIB_OBJ) $(CHECKPOINT_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CHECKPOINT_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-permissions: $(PERMISSIONS_TEST_TARGET)
+	@./$<
 
 $(PERMISSIONS_TEST_TARGET): $(LIB_OBJ) $(PERMISSIONS_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(PERMISSIONS_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-context-compact: $(CONTEXT_COMPACT_TEST_TARGET)
+	@./$<
 
 $(CONTEXT_COMPACT_TEST_TARGET): $(LIB_OBJ) $(CONTEXT_COMPACT_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(CONTEXT_COMPACT_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-project-instructions: $(PROJECT_INSTRUCTIONS_TEST_TARGET)
+	@./$<
 
 $(PROJECT_INSTRUCTIONS_TEST_TARGET): $(LIB_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-todowrite: $(TODOWRITE_TEST_TARGET)
+	@./$<
 
 $(TODOWRITE_TEST_TARGET): $(LIB_OBJ) $(TODOWRITE_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(TODOWRITE_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-process: $(PROCESS_TEST_TARGET)
+	@./$<
 
 $(PROCESS_TEST_TARGET): $(LIB_OBJ) $(PROCESS_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(PROCESS_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-mcp: $(MCP_TEST_TARGET)
+	@./$<
 
 $(MCP_TEST_TARGET): $(LIB_OBJ) $(MCP_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(MCP_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-repo-map: $(REPO_MAP_TEST_TARGET)
+	@./$<
 
 $(REPO_MAP_TEST_TARGET): $(LIB_OBJ) $(REPO_MAP_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(REPO_MAP_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-environment-block: $(ENV_BLOCK_TEST_TARGET)
+	@./$<
 
 $(ENV_BLOCK_TEST_TARGET): $(LIB_OBJ) $(ENV_BLOCK_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(ENV_BLOCK_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-compact: $(COMPACT_TEST_TARGET)
+	@./$<
 
 $(COMPACT_TEST_TARGET): $(LIB_OBJ) $(COMPACT_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(COMPACT_TEST_OBJ) -o $@ $(LDFLAGS)

@@ -40,6 +40,9 @@ int clay_term_width(void);
 int clay_term_supports_color(
     void); /* terminal capability: isatty + not "dumb" */
 int clay_term_is_interactive(void); /* stdin and stdout are both a real tty */
+/* Forces interactive terminal behavior off for one-shot/scripted runs,
+   even when the process itself is attached to a tty. */
+void clay_term_set_noninteractive(int noninteractive);
 
 /* On/off switch for clay_color(). Starts enabled unless NO_COLOR is set. */
 void clay_term_set_color_enabled(int enabled);
@@ -70,6 +73,8 @@ typedef enum {
   CLAY_KEY_DOWN,
   CLAY_KEY_LEFT,
   CLAY_KEY_RIGHT,
+  CLAY_KEY_CLEAR_SCREEN,
+  CLAY_KEY_HISTORY_SEARCH,
   CLAY_KEY_ESCAPE,
   CLAY_KEY_INTERRUPT,
   CLAY_KEY_EOF

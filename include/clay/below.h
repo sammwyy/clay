@@ -41,6 +41,10 @@ void clay_below_set_overlay(const char *const *rows, size_t count);
    towards the column). Thread-safe. */
 void clay_below_render(const char *input, size_t cursor);
 
+/* Clears the terminal and resets the row tracker before the next prompt
+   redraw. Thread-safe. */
+void clay_below_clear_screen(void);
+
 /* Renders only the enabled modules on the current row, without a prompt.
    Used for live status below streamed output. */
 void clay_below_render_status(void);

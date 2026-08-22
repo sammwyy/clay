@@ -47,6 +47,7 @@ struct ClayTermHttpServer {
 
 static volatile sig_atomic_t g_interrupted = 0;
 static int g_pending_escape = 0;
+static int g_noninteractive = 0;
 
 #ifndef _WIN32
 static void handle_sigint(int signal_number) {
@@ -429,11 +430,17 @@ int clay_term_supports_color(void) {
 }
 
 int clay_term_is_interactive(void) {
+  if (g_noninteractive)
+    return 0;
 #ifdef _WIN32
   return _isatty(_fileno(stdin)) && _isatty(_fileno(stdout));
 #else
   return isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
 #endif
+}
+
+void clay_term_set_noninteractive(int noninteractive) {
+  g_noninteractive = noninteractive != 0;
 }
 
 static int g_color_enabled = 1;
@@ -581,6 +588,10 @@ ClayKey clay_term_read_key(char *ch_out) {
     return CLAY_KEY_BACKSPACE;
   if (c == 3)
     return CLAY_KEY_INTERRUPT;
+  if (c == 0x0c)
+    return CLAY_KEY_CLEAR_SCREEN;
+  if (c == 0x12)
+    return CLAY_KEY_HISTORY_SEARCH;
   if (c == 27)
     return CLAY_KEY_ESCAPE;
   if (c == 0 || c == 0xE0) {
@@ -614,6 +625,10 @@ ClayKey clay_term_read_key(char *ch_out) {
     return CLAY_KEY_BACKSPACE;
   if (c == 3)
     return CLAY_KEY_INTERRUPT;
+  if (c == 0x0c)
+    return CLAY_KEY_CLEAR_SCREEN;
+  if (c == 0x12)
+    return CLAY_KEY_HISTORY_SEARCH;
 
   if (c == 0x1b) {
     unsigned char seq[2];

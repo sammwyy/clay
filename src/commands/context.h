@@ -19,6 +19,7 @@ typedef struct {
   ClayOpenAI *client;
   ClayOpenAICodex *codex_client;
   ClayGrok *grok_client;
+  int environment_override;
   ClayArray models;
   int models_fetched;
   int models_rc;

@@ -235,6 +235,10 @@ static const char *type_hint(ClayCliValueType type) {
     }
 }
 
+static const char *option_prefix(const ClayCliOption *option) {
+    return strlen(option->name) == 1 ? "-" : "--";
+}
+
 void clay_cli_print_help(const ClayCli *cli) {
     printf("Usage: %s [options] [command] [arguments...]\n", cli->program);
     if (*cli->description) printf("\n%s\n", cli->description);
@@ -243,15 +247,18 @@ void clay_cli_print_help(const ClayCli *cli) {
     size_t width = 0;
     for (size_t i = 0; i < cli->options.count; i++) {
         ClayCliOption *option = clay_array_get((ClayArray *)&cli->options, i);
-        size_t current = strlen(option->name) + 2 + strlen(type_hint(option->type));
+        size_t current = strlen(option_prefix(option)) + strlen(option->name) +
+                         strlen(type_hint(option->type));
         if (current > width) width = current;
     }
 
     printf("\nOptions:\n");
     for (size_t i = 0; i < cli->options.count; i++) {
         ClayCliOption *option = clay_array_get((ClayArray *)&cli->options, i);
-        printf("  --%s%s", option->name, type_hint(option->type));
-        size_t current = strlen(option->name) + 2 + strlen(type_hint(option->type));
+        printf("  %s%s%s", option_prefix(option), option->name,
+               type_hint(option->type));
+        size_t current = strlen(option_prefix(option)) + strlen(option->name) +
+                         strlen(type_hint(option->type));
         for (size_t pad = current; pad < width + 2; pad++) fputc(' ', stdout);
         printf("%s\n", option->description);
     }

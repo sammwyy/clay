@@ -16,24 +16,45 @@ static int require_provider(ClayCommands *commands) {
 }
 
 int main(int argc, char **argv) {
-    int cli_status = clay_cli_startup(argc, argv, CLAY_VERSION);
+    char *one_shot_prompt = NULL;
+    int cli_status = clay_cli_startup_with_prompt(argc, argv, CLAY_VERSION,
+                                                  &one_shot_prompt);
     if (cli_status != 0) return cli_status < 0 ? 1 : 0;
 
     clay_term_init();
+    if (one_shot_prompt) {
+        clay_term_set_noninteractive(1);
+        clay_term_set_color_enabled(0);
+    }
     if (clay_http_init() != 0) {
         fprintf(stderr, "Failed to initialize HTTP.\n");
         return 1;
     }
-    clay_banner(CLAY_VERSION);
+    if (!one_shot_prompt) clay_banner(CLAY_VERSION);
 
     ClayApp *app = clay_app_create();
     ClayCommands *commands = clay_commands_create(app);
     clay_commands_register(commands);
-    if (!clay_commands_has_provider(commands) && require_provider(commands) != 0) {
+    if (!clay_commands_has_provider(commands) &&
+        (one_shot_prompt || require_provider(commands) != 0)) {
+        if (one_shot_prompt)
+            fprintf(stderr, "Error: no provider is configured for --prompt. "
+                            "Set provider credentials in the environment or "
+                            "run /connect interactively.\n");
         clay_commands_destroy(commands);
         clay_app_destroy(app);
         clay_http_cleanup();
+        free(one_shot_prompt);
         return 1;
+    }
+
+    if (one_shot_prompt) {
+        int ok = clay_commands_run_message(commands, one_shot_prompt);
+        free(one_shot_prompt);
+        clay_commands_destroy(commands);
+        clay_app_destroy(app);
+        clay_http_cleanup();
+        return ok ? 0 : 1;
     }
 
     int interrupted = 0;

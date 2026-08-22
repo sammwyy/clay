@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #define CLAY_SYSTEM_PROMPT_BASE                                                \
   "You are clay, a helpful AI coding assistant. Be concise, accurate, and "    \
@@ -73,6 +74,144 @@ static const ClayReasoningEffort REASONING_EFFORTS[] = {
     {"xhigh", "XHigh", "Use the highest reasoning level when supported."},
 };
 
+static const char *env_value(const char *first, const char *second) {
+  const char *value = first ? getenv(first) : NULL;
+  if (value && *value) return value;
+  value = second ? getenv(second) : NULL;
+  return value && *value ? value : NULL;
+}
+
+static void replace_string(char **field, const char *value) {
+  if (!value) return;
+  free(*field);
+  *field = strdup(value);
+}
+
+static void uppercase_provider_id(const char *id, char *out, size_t out_size) {
+  size_t i = 0;
+  for (; id[i] && i + 1 < out_size; i++) {
+    char ch = id[i];
+    out[i] = (char)(ch == '-' ? '_' : toupper((unsigned char)ch));
+  }
+  out[i] = '\0';
+}
+
+/* Environment credentials are deliberately an in-memory override: they make
+   CI and ephemeral shells usable without copying secrets into ~/.clay. */
+static int apply_environment_credentials(const ClayProviderType *type,
+                                         ClayProviderConfig **config_ptr) {
+  const char *api_key = NULL;
+  const char *base_url = NULL;
+  const char *access_token = NULL;
+  const char *refresh_token = NULL;
+  const char *id_token = NULL;
+  const char *account_id = NULL;
+  const char *expires_at = NULL;
+  char provider_name[64];
+  char api_name[80];
+  char base_name[80];
+
+  uppercase_provider_id(type->id, provider_name, sizeof(provider_name));
+  snprintf(api_name, sizeof(api_name), "CLAY_%s_API_KEY", provider_name);
+  snprintf(base_name, sizeof(base_name), "CLAY_%s_BASE_URL", provider_name);
+
+  if (strcmp(type->id, "openai") == 0) {
+    api_key = env_value("OPENAI_API_KEY", api_name);
+    base_url = env_value("OPENAI_BASE_URL", base_name);
+  } else if (strcmp(type->id, "openrouter") == 0) {
+    api_key = env_value("OPENROUTER_API_KEY", api_name);
+    base_url = env_value("OPENROUTER_BASE_URL", base_name);
+  } else if (strcmp(type->id, "grok") == 0) {
+    api_key = env_value("XAI_API_KEY", "GROK_API_KEY");
+    if (!api_key) api_key = getenv(api_name);
+    base_url = env_value("GROK_BASE_URL", base_name);
+    access_token = env_value("GROK_ACCESS_TOKEN", "CLAY_GROK_ACCESS_TOKEN");
+    refresh_token = env_value("GROK_REFRESH_TOKEN", "CLAY_GROK_REFRESH_TOKEN");
+    id_token = env_value("GROK_ID_TOKEN", "CLAY_GROK_ID_TOKEN");
+    account_id = env_value("GROK_ACCOUNT_ID", "CLAY_GROK_ACCOUNT_ID");
+    expires_at = env_value("GROK_EXPIRES_AT", "CLAY_GROK_EXPIRES_AT");
+  } else if (strcmp(type->id, "openai-codex") == 0) {
+    access_token = env_value("OPENAI_CODEX_ACCESS_TOKEN",
+                             "CLAY_CODEX_ACCESS_TOKEN");
+    refresh_token = env_value("OPENAI_CODEX_REFRESH_TOKEN",
+                              "CLAY_CODEX_REFRESH_TOKEN");
+    id_token = env_value("OPENAI_CODEX_ID_TOKEN", "CLAY_CODEX_ID_TOKEN");
+    account_id = env_value("OPENAI_CODEX_ACCOUNT_ID",
+                           "CLAY_CODEX_ACCOUNT_ID");
+    expires_at = env_value("OPENAI_CODEX_EXPIRES_AT",
+                           "CLAY_CODEX_EXPIRES_AT");
+  } else if (strcmp(type->id, "custom") == 0) {
+    api_key = env_value("CLAY_API_KEY", "CUSTOM_API_KEY");
+    base_url = env_value("CLAY_BASE_URL", "CUSTOM_BASE_URL");
+  } else {
+    api_key = getenv(api_name);
+    base_url = getenv(base_name);
+  }
+
+  int has_override = api_key || base_url || access_token || refresh_token ||
+                     id_token || account_id || expires_at;
+  if (!has_override) return 0;
+
+  ClayProviderConfig *config = *config_ptr;
+  if (!config) {
+    config = calloc(1, sizeof(*config));
+    if (!config) return -1;
+    config->id = strdup(type->id);
+    if (type->default_base_url) config->base_url = strdup(type->default_base_url);
+    *config_ptr = config;
+  }
+
+  if (api_key) replace_string(&config->apikey, api_key);
+  if (base_url) replace_string(&config->base_url, base_url);
+  if (strcmp(type->id, "grok") == 0 && api_key) {
+    replace_string(&config->base_url, base_url ? base_url : CLAY_GROK_API_URL);
+    replace_string(&config->auth_mode, "api_key");
+  }
+  if (access_token) replace_string(&config->access_token, access_token);
+  if (refresh_token) replace_string(&config->refresh_token, refresh_token);
+  if (id_token) replace_string(&config->id_token, id_token);
+  if (account_id) replace_string(&config->account_id, account_id);
+  if (access_token || refresh_token) {
+    if (strcmp(type->id, "grok") == 0) {
+      replace_string(&config->auth_mode, "subscription");
+      replace_string(&config->base_url, CLAY_GROK_SUBSCRIPTION_URL);
+    }
+  }
+  if (expires_at) {
+    char *end = NULL;
+    long long value = strtoll(expires_at, &end, 10);
+    if (end && *end == '\0' && value > 0) config->expires_at = value;
+  }
+  if (strcmp(type->id, "openai-codex") == 0 && !config->base_url)
+    config->base_url = strdup("");
+  return 1;
+}
+
+static const char *environment_provider(void) {
+  const char *provider = env_value("CLAY_PROVIDER", NULL);
+  if (provider) return provider;
+  if (env_value("OPENAI_CODEX_ACCESS_TOKEN", "CLAY_CODEX_ACCESS_TOKEN"))
+    return "openai-codex";
+  if (env_value("OPENROUTER_API_KEY", "CLAY_OPENROUTER_API_KEY"))
+    return "openrouter";
+  if (env_value("XAI_API_KEY", "GROK_API_KEY")) return "grok";
+  if (env_value("OPENAI_API_KEY", "CLAY_OPENAI_API_KEY")) return "openai";
+  if (env_value("CLAY_API_KEY", "CUSTOM_API_KEY")) return "custom";
+  return NULL;
+}
+
+static const char *environment_model(const char *provider) {
+  const char *model = env_value("CLAY_MODEL", NULL);
+  if (model) return model;
+  if (strcmp(provider, "openai") == 0) return getenv("OPENAI_MODEL");
+  if (strcmp(provider, "openrouter") == 0) return getenv("OPENROUTER_MODEL");
+  if (strcmp(provider, "grok") == 0) return env_value("GROK_MODEL", "XAI_MODEL");
+  if (strcmp(provider, "openai-codex") == 0)
+    return env_value("OPENAI_CODEX_MODEL", "CODEX_MODEL");
+  if (strcmp(provider, "custom") == 0) return getenv("CUSTOM_MODEL");
+  return NULL;
+}
+
 static void provider_models_free(ClayConnectedProvider *provider) {
   for (size_t i = 0; i < provider->models.count; i++)
     free(*(char **)clay_array_get(&provider->models, i));
@@ -114,6 +253,11 @@ const ClayProviderType *clay_commands_provider_types(size_t *count) {
 void clay_commands_load_provider(ClayCommands *commands,
                                  const ClayProviderType *type) {
   ClayProviderConfig *config = clay_config_load(type->id);
+  int environment_override = apply_environment_credentials(type, &config);
+  if (environment_override < 0) {
+    clay_config_free(config);
+    return;
+  }
   if (!config)
     return;
   int is_codex = strcmp(type->id, "openai-codex") == 0;
@@ -143,6 +287,7 @@ void clay_commands_load_provider(ClayCommands *commands,
     clay_config_free(existing->config);
     provider_models_free(existing);
     existing->config = config;
+    existing->environment_override = environment_override;
     existing->client = (is_codex || is_grok_subscription)
                            ? NULL
                            : clay_openai_create(config->base_url, config->apikey,
@@ -168,6 +313,7 @@ void clay_commands_load_provider(ClayCommands *commands,
   ClayConnectedProvider provider = {0};
   provider.type = type;
   provider.config = config;
+  provider.environment_override = environment_override;
   provider.client = (is_codex || is_grok_subscription)
                         ? NULL
                         : clay_openai_create(config->base_url, config->apikey,
@@ -193,7 +339,9 @@ int clay_commands_save_grok_credentials(ClayConnectedProvider *provider,
   if (!provider || !provider->config || !client)
     return -1;
   if (clay_grok_authentication_invalid(client)) {
-    int rc = clay_config_remove(provider->config->id);
+    int rc = provider->environment_override
+                 ? 0
+                 : clay_config_remove(provider->config->id);
     free(provider->config->access_token);
     free(provider->config->refresh_token);
     free(provider->config->id_token);
@@ -216,7 +364,9 @@ int clay_commands_save_grok_credentials(ClayConnectedProvider *provider,
   provider->config->refresh_token = credentials.refresh_token;
   provider->config->id_token = credentials.id_token;
   provider->config->expires_at = credentials.expires_at;
-  int rc = clay_config_save(provider->config);
+  int rc = provider->environment_override
+               ? 0
+               : clay_config_save(provider->config);
   /* Message requests use a short-lived Grok client. Keep the session's
      model-picker client synchronized when a refresh token rotated. */
   if (rc == 0 && provider->grok_client != client) {
@@ -234,8 +384,11 @@ int clay_commands_save_codex_credentials(ClayConnectedProvider *provider,
                                          const ClayOpenAICodex *client) {
   if (!provider || !provider->config || !client)
     return -1;
-  if (clay_openai_codex_authentication_invalid(client))
-    return clay_config_remove(provider->config->id);
+  if (clay_openai_codex_authentication_invalid(client)) {
+    if (!provider->environment_override)
+      return clay_config_remove(provider->config->id);
+    return 0;
+  }
   ClayCodexCredentials credentials = {0};
   clay_openai_codex_copy_credentials(client, &credentials);
   free(provider->config->access_token);
@@ -247,6 +400,7 @@ int clay_commands_save_codex_credentials(ClayConnectedProvider *provider,
   provider->config->id_token = credentials.id_token;
   provider->config->account_id = credentials.account_id;
   provider->config->expires_at = credentials.expires_at;
+  if (provider->environment_override) return 0;
   return clay_config_save(provider->config);
 }
 
@@ -828,6 +982,30 @@ ClayCommands *clay_commands_create(ClayApp *app) {
     clay_commands_load_provider(commands, &types[i]);
   clay_config_selection_load(&commands->selected_provider,
                              &commands->selected_model);
+  int environment_selection = 0;
+  const char *forced_provider = environment_provider();
+  if (forced_provider && clay_commands_find_provider(commands, forced_provider)) {
+    if (!commands->selected_provider ||
+        strcmp(commands->selected_provider, forced_provider) != 0) {
+      free(commands->selected_provider);
+      commands->selected_provider = strdup(forced_provider);
+      free(commands->selected_model);
+      commands->selected_model = NULL;
+      environment_selection = 1;
+    }
+  } else if (!commands->selected_provider && commands->providers.count == 1) {
+    ClayConnectedProvider *only =
+        clay_array_get(&commands->providers, 0);
+    commands->selected_provider = strdup(only->type->id);
+  }
+  if (commands->selected_provider) {
+    const char *model = environment_model(commands->selected_provider);
+    if (model && *model) {
+      free(commands->selected_model);
+      commands->selected_model = strdup(model);
+      environment_selection = 1;
+    }
+  }
   char *saved_effort = clay_config_reasoning_effort();
   if (saved_effort) {
     for (size_t i = 1; i < clay_commands_reasoning_effort_count(); i++)
@@ -855,8 +1033,9 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   commands->auto_test_command = clay_config_auto_test_command();
   commands->auto_test_choice = CLAY_AUTO_TEST_UNASKED;
   clay_commands_reset_conversation(commands);
-  clay_config_selection_save(commands->selected_provider,
-                             commands->selected_model);
+  if (!environment_selection)
+    clay_config_selection_save(commands->selected_provider,
+                               commands->selected_model);
   clay_below_add(0, "status");
   clay_below_set_enabled("status", 0);
   clay_below_add(1, "model");

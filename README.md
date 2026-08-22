@@ -9,7 +9,7 @@ Bring your own model. Stay in your flow. Ship better work.
 [![Release](https://img.shields.io/github/v/release/sammwyy/clay?style=flat-square&color=orange&label=release&sort=semver)](https://github.com/sammwyy/clay/releases/latest)
 ![Language](https://img.shields.io/badge/language-C11-blue?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational?style=flat-square)
-![Size](https://img.shields.io/badge/binary-~70%20KB%20compressed-success?style=flat-square)
+![Size](https://img.shields.io/badge/binary-~90%20KB%20compressed-success?style=flat-square)
 
 </div>
 
@@ -29,7 +29,7 @@ No giant framework to learn. No crowded dashboard. A single self-contained binar
 
 | | |
 | --- | --- |
-| **Your models, your choice** | Connect OpenAI, Grok, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider's models without leaving the terminal. |
+| **Your models, your choice** | Connect OpenAI, OpenAI Codex (ChatGPT Plus/Pro), Grok, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider's models without leaving the terminal. |
 | **Dedicated file tools** | `read`, `write`, `edit`, `glob`, `grep` operate directly on the workspace — `edit` requires an exact, unique text match (no fuzzy diffing), and every path is checked against escaping the workspace root. |
 | **Sandboxed by default** | On Linux, shell commands run with an isolated filesystem, no network, and resource limits — `/workspace` is your project and `/scratch`/`/tmp` is conversation scratch space. Opt out with `/sandbox`. |
 | **Permissions & Plan mode** | `/permissions` sets which tool categories (read, edit, safe commands, all commands) run without asking; anything else prompts once, with an "always this session" option. `/plan` goes further and refuses writes/edits and mutating shell commands outright, so you can discuss an approach before anything changes. |
@@ -67,6 +67,33 @@ make build
 ./bin/clay --cwd /path/to/your/project
 ```
 
+For CI and scripting, send one prompt and exit without opening the interactive
+prompt or attempting an OAuth login:
+
+```sh
+OPENAI_API_KEY=... OPENAI_MODEL=gpt-4o-mini \
+  ./bin/clay --prompt "Run the test suite and summarize failures"
+# -p is an alias for --prompt
+```
+
+The environment is an in-memory override; API keys are not written to
+`~/.clay`. `CLAY_PROVIDER` and `CLAY_MODEL` can be used for explicit provider
+and model selection. Provider-specific credentials are:
+
+| Provider | Variables |
+| --- | --- |
+| OpenAI | `OPENAI_API_KEY`, optional `OPENAI_BASE_URL`, `OPENAI_MODEL` |
+| OpenRouter | `OPENROUTER_API_KEY`, optional `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL` |
+| xAI/Grok API | `XAI_API_KEY` (or `GROK_API_KEY`), `GROK_MODEL` |
+| Custom OpenAI-compatible | `CLAY_PROVIDER=custom`, `CLAY_API_KEY`, `CLAY_BASE_URL`, `CUSTOM_MODEL` |
+
+When there is no saved provider selection, Clay infers the provider from the
+credential variable. All provider URLs must use HTTPS. A saved OpenAI Codex
+session can be used by `-p` as-is; headless Codex sessions may provide
+`OPENAI_CODEX_ACCESS_TOKEN`, `OPENAI_CODEX_REFRESH_TOKEN`,
+`OPENAI_CODEX_ACCOUNT_ID`, optional `OPENAI_CODEX_ID_TOKEN` and
+`OPENAI_CODEX_EXPIRES_AT` instead.
+
 ## Designed around the terminal
 
 **A model picker that respects your time.** Connected providers become tabs. Clay retrieves a provider's models when you open it, then keeps that list available for the rest of the session.
@@ -89,7 +116,7 @@ make build
 
 | Command | What it does |
 | --- | --- |
-| `/connect [openai\|grok\|openrouter\|custom]` (`/login`, `/provider`, `/providers`) | Connect a provider. Grok offers xAI API-key or account/subscription sign-in. |
+| `/connect [openai\|openai-codex\|grok\|openrouter\|custom]` (`/login`, `/provider`, `/providers`) | Connect a provider. OpenAI Codex uses ChatGPT Plus/Pro OAuth; Grok offers xAI API-key or account/subscription sign-in. |
 | `/logout` | Choose a connected provider and remove its saved session. |
 | `/model [id]` (`/models`) | Browse models by provider, or set an id directly. |
 | `/effort` | Set the model reasoning effort when supported. |
@@ -135,6 +162,8 @@ make build
 | --- | --- |
 | `Ctrl-C` with text | Clear the current input. |
 | `Ctrl-C` on an empty prompt | Exit Clay cleanly. |
+| `Ctrl-L` | Clear the terminal and redraw the current prompt. |
+| `Ctrl-R` | Search backward through prompt history; press again for older matches. |
 | `Esc` or `Ctrl-C` while generating | Cancel the active response. |
 | `Esc`, then `Esc` again | Clear the current input. |
 
@@ -155,6 +184,13 @@ Clay needs `make`, a C compiler, and libcurl. `ctags` is optional — `repo_map`
 ```sh
 make build
 ./bin/clay --help
+```
+
+Run the local unit-test suite (the network-backed OpenAI test remains an
+explicit integration target):
+
+```sh
+make test
 ```
 
 ## For contributors

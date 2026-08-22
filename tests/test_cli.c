@@ -1,6 +1,7 @@
 #include "clay/cli.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(void) {
@@ -21,5 +22,16 @@ int main(void) {
         fputs("cli test failed\n", stderr);
         return 1;
     }
+
+    char *prompt = NULL;
+    char *prompt_argv[] = {"clay", "-p", "review this"};
+    if (clay_cli_startup_with_prompt(3, prompt_argv, "test", &prompt) != 0 ||
+        !prompt || strcmp(prompt, "review this") != 0) {
+        free(prompt);
+        fputs("cli prompt test failed\n", stderr);
+        return 1;
+    }
+    free(prompt);
+
     return 0;
 }

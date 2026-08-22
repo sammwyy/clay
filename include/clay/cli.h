@@ -44,4 +44,9 @@ void clay_cli_print_help(const ClayCli *cli);
    the agent should start, 1 after a successful early exit, or -1 on error. */
 int clay_cli_startup(int argc, char **argv, const char *version);
 
+/* As above, also returns a malloc'd one-shot prompt when -p/--prompt was
+   supplied. The caller owns *prompt_out. */
+int clay_cli_startup_with_prompt(int argc, char **argv, const char *version,
+                                 char **prompt_out);
+
 #endif /* CLAY_CLI_H */

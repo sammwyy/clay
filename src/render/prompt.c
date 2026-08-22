@@ -62,6 +62,14 @@ static void push_history(const char *line) {
     clay_array_push_val(&g_history, &copy);
 }
 
+static int reverse_history_find(const char *query, int before) {
+    for (int i = before - 1; i >= 0; i--) {
+        const char *entry = clay_prompt_history_get((size_t)i);
+        if (entry && (!query[0] || strstr(entry, query))) return i;
+    }
+    return -1;
+}
+
 size_t clay_prompt_history_count(void) {
     ensure_history();
     return g_history.count;
@@ -451,6 +459,10 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
     int got_eof = 0;
     int interrupted = 0;
     int clear_armed = 0;
+    int reverse_search_active = 0;
+    int reverse_search_before = -1;
+    ClayStr reverse_search_query;
+    clay_str_init(&reverse_search_query);
 
     ClayCommandCompletion completion;
     clay_array_init(&completion.matches, sizeof(ClayCommandCompletionItem));
@@ -488,6 +500,8 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
 
         if (key == CLAY_KEY_ENTER) {
             if (!completion_apply(&completion, &buf, &blocks, &cursor, &history_pos)) break;
+        } else if (key == CLAY_KEY_CLEAR_SCREEN) {
+            clay_below_clear_screen();
         } else if (key == CLAY_KEY_INTERRUPT) {
             clay_term_take_interrupt();
             if (buf.len == 0) {
@@ -500,6 +514,28 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
             history_pos = -1;
             clear_armed = 0;
             clay_below_set_enabled("hint", 0);
+            reverse_search_active = 0;
+        } else if (key == CLAY_KEY_HISTORY_SEARCH) {
+            if (!reverse_search_active) {
+                clay_str_clear(&reverse_search_query);
+                clay_str_push(&reverse_search_query, buf.data);
+                reverse_search_before = (int)clay_prompt_history_count();
+                reverse_search_active = 1;
+            }
+            int match = reverse_history_find(reverse_search_query.data,
+                                             reverse_search_before);
+            if (match >= 0) {
+                clay_str_clear(&buf);
+                clay_str_push(&buf, clay_prompt_history_get((size_t)match));
+                paste_blocks_free(&blocks);
+                cursor = buf.len;
+                history_pos = -1;
+                reverse_search_before = match;
+                clay_below_set_enabled("hint", 0);
+            } else {
+                clay_below_set_text("hint", "(no matching history)");
+                clay_below_set_enabled("hint", 1);
+            }
         } else if (key == CLAY_KEY_EOF) {
             got_eof = 1;
             break;
@@ -520,11 +556,15 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
         } else if (key == CLAY_KEY_BACKSPACE) {
             prompt_backspace(&buf, &blocks, &cursor);
             history_pos = -1;
+            reverse_search_active = 0;
         } else if (key == CLAY_KEY_LEFT) {
             prompt_cursor_left(&buf, &blocks, &cursor);
+            reverse_search_active = 0;
         } else if (key == CLAY_KEY_RIGHT) {
             prompt_cursor_right(&buf, &blocks, &cursor);
+            reverse_search_active = 0;
         } else if (key == CLAY_KEY_UP) {
+            reverse_search_active = 0;
             if (completion.matches.count > 0) {
                 completion.selected = completion.selected == 0 ? completion.matches.count - 1 : completion.selected - 1;
             } else {
@@ -538,6 +578,7 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
                 }
             }
         } else if (key == CLAY_KEY_DOWN) {
+            reverse_search_active = 0;
             if (completion.matches.count > 0) {
                 completion.selected = (completion.selected + 1) % completion.matches.count;
             } else if (history_pos != -1) {
@@ -554,6 +595,8 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
                 cursor = buf.len;
             }
         } else if (key == CLAY_KEY_CHAR) {
+            reverse_search_active = 0;
+            clay_below_set_enabled("hint", 0);
             ClayStr burst;
             clay_str_init(&burst);
             clay_str_push_char(&burst, ch);
@@ -598,6 +641,7 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
     }
     if (interrupted || (got_eof && buf.len == 0)) {
         clay_str_free(&buf);
+        clay_str_free(&reverse_search_query);
         paste_blocks_free(&blocks);
         clay_array_free(&blocks);
         return NULL;
@@ -605,6 +649,7 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
 
     char *result = paste_blocks_resolve(&buf, &blocks);
     clay_str_free(&buf);
+    clay_str_free(&reverse_search_query);
     paste_blocks_free(&blocks);
     clay_array_free(&blocks);
 

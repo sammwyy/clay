@@ -362,6 +362,16 @@ void clay_below_render(const char *input, size_t cursor) {
     pthread_mutex_unlock(&g_lock);
 }
 
+void clay_below_clear_screen(void) {
+    pthread_mutex_lock(&g_lock);
+    fputs("\x1b[2J\x1b[H", stdout);
+    g_last_line_count = 0;
+    g_max_rows_established = 1;
+    g_status_only = 0;
+    fflush(stdout);
+    pthread_mutex_unlock(&g_lock);
+}
+
 void clay_below_render_status(void) {
     pthread_mutex_lock(&g_lock);
     g_status_only = 1;
