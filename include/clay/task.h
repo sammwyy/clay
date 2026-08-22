@@ -3,7 +3,7 @@
 
 typedef struct ClayTask ClayTask;
 
-/* Starts a spinning task line: "◆ clay  <label>… <spinner>", animated in
+/* Starts a spinning task line: "◆ ℂlay  <label>… <spinner>", animated in
    yellow on a background thread. Stop it with clay_task_success/fail. */
 ClayTask *clay_task_start(const char *fmt, ...);
 

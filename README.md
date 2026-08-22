@@ -19,7 +19,7 @@ Bring your own model. Stay in your flow. Ship better work.
   └────────────────────────────────────┘
 
 > review this project and find the rough edges
-◆ clay  I’ll inspect the structure and trace the main flows first.
+◆ ℂlay  I’ll inspect the structure and trace the main flows first.
   ✓ 1.2s · your-model (your-provider) · ↑ 842  ↓ 126
 ```
 

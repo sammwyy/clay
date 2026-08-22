@@ -6,11 +6,11 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-/* Aligns continuation lines under the text of a "◆ clay  " prefix. */
+/* Aligns continuation lines under the text of a "◆ ℂlay  " prefix. */
 #define CLAY_INDENT "         "
 
 static void print_prefix(void) {
-    printf("%s%s clay%s  ", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, clay_color(CLAY_RESET));
+    printf("%s%s %slay%s  ", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, CLAY_ICON_COMPLEX, clay_color(CLAY_RESET));
 }
 
 void clay_segments_println(const ClaySegment *segments, int count) {
@@ -61,7 +61,7 @@ void clay_response_end(void) {
 }
 
 int clay_response_prefix_width(void) {
-    return (int)clay_utf8_width("\xe2\x97\x86 clay  ");
+    return (int)clay_utf8_width("\xe2\x97\x86 \xe2\x84\x82lay  ");
 }
 
 void clay_list_header(const char *fmt, ...) {

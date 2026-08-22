@@ -20,6 +20,7 @@
 
 /* Icons (UTF-8) */
 #define CLAY_ICON_DIAMOND "\xe2\x97\x86" /* ◆ */
+#define CLAY_ICON_COMPLEX  "\xe2\x84\x82" /* ℂ */
 #define CLAY_ICON_CHECK   "\xe2\x9c\x93" /* ✓ */
 #define CLAY_ICON_CROSS   "\xe2\x9c\x97" /* ✗ */
 #define CLAY_ICON_DOT     "\xc2\xb7"     /* · */
