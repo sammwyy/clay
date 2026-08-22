@@ -3,9 +3,16 @@
 
 /* One provider's saved connection, e.g. ~/.clay/providers/openai.json. */
 typedef struct {
-    char *id;
-    char *apikey;
-    char *base_url;
+  char *id;
+  char *apikey;
+  char *base_url;
+  /* Present only for the OpenAI Codex subscription provider.  Provider
+     files are owner-only, just like the existing API-key field. */
+  char *access_token;
+  char *refresh_token;
+  char *id_token;
+  char *account_id;
+  long long expires_at;
 } ClayProviderConfig;
 
 int clay_config_exists(const char *id);
@@ -29,6 +36,11 @@ int clay_config_selection_load(char **provider_out, char **model_out);
 /* Saves the selected provider/model to ~/.clay/config.json. NULL values
    are written as JSON null. 0 on success. */
 int clay_config_selection_save(const char *provider, const char *model);
+
+/* The selected reasoning effort (`low`, `medium`, etc.). NULL means use the
+   provider/model default. Caller frees the returned string. */
+char *clay_config_reasoning_effort(void);
+int clay_config_set_reasoning_effort(const char *effort);
 
 /* Number of previous messages shown after /resume. Defaults to 4. */
 int clay_config_history_preview_count(void);

@@ -1,8 +1,8 @@
 #ifndef CLAY_TERM_H
 #define CLAY_TERM_H
 
-#include "clay/str.h"
 #include "clay/array.h"
+#include "clay/str.h"
 
 #include <stddef.h>
 
@@ -20,7 +20,8 @@ void clay_term_sleep_ms(int ms);
 
 /* Runs a shell command in the current directory, appending combined
    stdout/stderr to output up to output_limit. */
-int clay_term_shell_exec(const char *command, ClayStr *output, size_t output_limit, int *exit_code,
+int clay_term_shell_exec(const char *command, ClayStr *output,
+                         size_t output_limit, int *exit_code,
                          int *output_truncated);
 int clay_term_change_dir(const char *path);
 
@@ -36,7 +37,8 @@ void clay_term_shell_quote(ClayStr *out, const char *value);
 void clay_term_setenv(const char *name, const char *value);
 
 int clay_term_width(void);
-int clay_term_supports_color(void); /* terminal capability: isatty + not "dumb" */
+int clay_term_supports_color(
+    void); /* terminal capability: isatty + not "dumb" */
 int clay_term_is_interactive(void); /* stdin and stdout are both a real tty */
 
 /* On/off switch for clay_color(). Starts enabled unless NO_COLOR is set. */
@@ -60,17 +62,17 @@ void clay_term_hyperlink(const char *url, const char *text);
 void clay_term_hyperlink_file(const char *path);
 
 typedef enum {
-    CLAY_KEY_NONE,
-    CLAY_KEY_CHAR,
-    CLAY_KEY_ENTER,
-    CLAY_KEY_BACKSPACE,
-    CLAY_KEY_UP,
-    CLAY_KEY_DOWN,
-    CLAY_KEY_LEFT,
-    CLAY_KEY_RIGHT,
-    CLAY_KEY_ESCAPE,
-    CLAY_KEY_INTERRUPT,
-    CLAY_KEY_EOF
+  CLAY_KEY_NONE,
+  CLAY_KEY_CHAR,
+  CLAY_KEY_ENTER,
+  CLAY_KEY_BACKSPACE,
+  CLAY_KEY_UP,
+  CLAY_KEY_DOWN,
+  CLAY_KEY_LEFT,
+  CLAY_KEY_RIGHT,
+  CLAY_KEY_ESCAPE,
+  CLAY_KEY_INTERRUPT,
+  CLAY_KEY_EOF
 } ClayKey;
 
 /* Raw mode: no line buffering, no echo. Pair enable/disable around raw
@@ -136,11 +138,29 @@ char *clay_term_cwd(void);
 /* Creates one directory level (not recursive). 0 on success or if it
    already exists, nonzero on failure. */
 int clay_term_mkdir(const char *path);
-int clay_term_list_dir(const char *path, ClayArray *names); /* char *, caller frees entries; dirs only */
-int clay_term_list_entries(const char *path, ClayArray *names); /* char *, caller frees entries; files and dirs */
+int clay_term_list_dir(
+    const char *path,
+    ClayArray *names); /* char *, caller frees entries; dirs only */
+int clay_term_list_entries(
+    const char *path,
+    ClayArray *names); /* char *, caller frees entries; files and dirs */
 int clay_term_is_dir(const char *path);
 long long clay_term_file_modified_at(const char *path);
 int clay_term_random_bytes(unsigned char *bytes, size_t count);
+
+/* Opens a URL using the operating system's normal browser association.
+   This never routes through a shell. */
+int clay_term_open_browser(const char *url);
+
+/* A tiny loopback-only HTTP listener for short-lived OAuth callbacks. */
+typedef struct ClayTermHttpServer ClayTermHttpServer;
+ClayTermHttpServer *clay_term_http_server_create(unsigned short port);
+/* 1 = request received, 0 = timed out, -1 = listener error. */
+int clay_term_http_server_receive(ClayTermHttpServer *server, ClayStr *request,
+                                  int timeout_ms);
+int clay_term_http_server_reply(ClayTermHttpServer *server, int status,
+                                const char *body);
+void clay_term_http_server_destroy(ClayTermHttpServer *server);
 
 /* Restricts `path` to owner-only access (POSIX chmod 0600); no-op on
    Windows. For files holding secrets. */

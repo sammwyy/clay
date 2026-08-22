@@ -100,11 +100,15 @@ COMPACT_TEST_SRC    := tests/test_compact.c
 COMPACT_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(COMPACT_TEST_SRC))
 COMPACT_TEST_TARGET := $(BIN_DIR)/test_compact
 
+CODEX_TEST_SRC    := tests/test_openai_codex.c
+CODEX_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(CODEX_TEST_SRC))
+CODEX_TEST_TARGET := $(BIN_DIR)/test_openai_codex
+
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
 CFLAGS_WIN  := $(STD) $(WARN) $(OPT) -Iinclude -MMD -MP $(CURL_CFLAGS)
-LDFLAGS_WIN := -lpthread $(CURL_LDFLAGS)
+LDFLAGS_WIN := -lpthread -lws2_32 -lshell32 $(CURL_LDFLAGS)
 
 BUILD_DIR_WIN := build-win
 BIN_DIR_WIN   := bin-win
@@ -113,7 +117,7 @@ TARGET_WIN    := $(BIN_DIR_WIN)/clay.exe
 OBJ_WIN := $(patsubst src/%.c,$(BUILD_DIR_WIN)/%.o,$(SRC_WIN))
 DEP_WIN := $(OBJ_WIN:.o=.d)
 
-.PHONY: all build build-win build_win test-openai test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact run compress compress-win clean debug
+.PHONY: all build build-win build_win test-openai test-openai-codex test-cli test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact run compress compress-win clean debug
 
 all: build
 
@@ -123,6 +127,11 @@ $(TARGET): $(OBJ) | $(BIN_DIR)
 	$(CC) $(OBJ) -o $@ $(LDFLAGS)
 
 test-openai: $(TEST_TARGET)
+
+test-openai-codex: $(CODEX_TEST_TARGET)
+
+$(CODEX_TEST_TARGET): $(LIB_OBJ) $(CODEX_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(CODEX_TEST_OBJ) -o $@ $(LDFLAGS)
 
 $(TEST_TARGET): $(LIB_OBJ) $(TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(TEST_OBJ) -o $@ $(LDFLAGS)
