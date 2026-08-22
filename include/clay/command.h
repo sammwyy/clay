@@ -12,6 +12,9 @@ void clay_command_registry_destroy(ClayCommandRegistry *reg);
 /* `user_data` is handed back to `handler` untouched on every call. */
 void clay_command_register(ClayCommandRegistry *reg, const char *name, const char *description,
                             ClayCommandHandler handler, void *user_data);
+/* Registers another name for an existing command without listing it in /help. */
+void clay_command_register_alias(ClayCommandRegistry *reg, const char *alias, ClayCommandHandler handler,
+                                 void *user_data);
 void clay_command_foreach(ClayCommandRegistry *reg, ClayCommandVisitor visitor, void *ctx);
 
 typedef enum {

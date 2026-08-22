@@ -19,12 +19,14 @@ typedef struct {
 struct ClayCommandRegistry {
     ClayMap *by_name;
     ClayArray order; /* ClayCommandEntry*, kept in registration order for listings */
+    ClayArray aliases; /* ClayCommandEntry*, omitted from listings */
 };
 
 ClayCommandRegistry *clay_command_registry_create(void) {
     ClayCommandRegistry *reg = malloc(sizeof(ClayCommandRegistry));
     reg->by_name = clay_map_create();
     clay_array_init(&reg->order, sizeof(ClayCommandEntry *));
+    clay_array_init(&reg->aliases, sizeof(ClayCommandEntry *));
     return reg;
 }
 
@@ -38,6 +40,13 @@ void clay_command_registry_destroy(ClayCommandRegistry *reg) {
         free(entry);
     }
     clay_array_free(&reg->order);
+    for (size_t i = 0; i < reg->aliases.count; i++) {
+        ClayCommandEntry *entry = *(ClayCommandEntry **)clay_array_get(&reg->aliases, i);
+        free(entry->name);
+        free(entry->description);
+        free(entry);
+    }
+    clay_array_free(&reg->aliases);
     clay_map_destroy(reg->by_name);
     free(reg);
 }
@@ -52,6 +61,18 @@ void clay_command_register(ClayCommandRegistry *reg, const char *name, const cha
 
     clay_map_set(reg->by_name, name, entry);
     clay_array_push_val(&reg->order, &entry);
+}
+
+void clay_command_register_alias(ClayCommandRegistry *reg, const char *alias, ClayCommandHandler handler,
+                                 void *user_data) {
+    ClayCommandEntry *entry = malloc(sizeof(ClayCommandEntry));
+    entry->name = strdup(alias);
+    entry->description = strdup("");
+    entry->handler = handler;
+    entry->user_data = user_data;
+
+    clay_map_set(reg->by_name, alias, entry);
+    clay_array_push_val(&reg->aliases, &entry);
 }
 
 void clay_command_foreach(ClayCommandRegistry *reg, ClayCommandVisitor visitor, void *ctx) {
