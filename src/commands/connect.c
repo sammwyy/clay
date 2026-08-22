@@ -39,6 +39,74 @@ static void connect_type(ClayCommands *commands, const ClayProviderType *type) {
     clay_str_free(&error);
     return;
   }
+  if (strcmp(type->id, "grok") == 0) {
+    ClayChoice choices[] = {
+        {"Sign in with Grok", "Use an eligible Grok account or subscription."},
+        {"Use xAI API key", "Connect to the public xAI API."},
+    };
+    int mode = clay_app_choice(commands->app, "Authentication:", choices, 2,
+                               0, NULL);
+    if (mode < 0) {
+      clay_sayc(CLAY_RED, "Cancelled.");
+      return;
+    }
+    if (mode == 0) {
+      clay_app_say(commands->app, "Starting Grok authentication...");
+      clay_app_say(commands->app, "Opening browser...");
+      clay_app_say(commands->app, "Waiting for authorization...");
+      ClayGrokCredentials credentials = {0};
+      ClayStr error;
+      clay_str_init(&error);
+      int rc = clay_grok_authenticate(&credentials, &error);
+      if (rc != 0) {
+        clay_sayc(CLAY_RED, "Grok authentication failed: %s", error.data);
+        clay_str_free(&error);
+        return;
+      }
+      ClayProviderConfig config = {0};
+      config.id = strdup(type->id);
+      config.auth_mode = strdup("subscription");
+      config.base_url = strdup(CLAY_GROK_SUBSCRIPTION_URL);
+      config.access_token = credentials.access_token;
+      config.refresh_token = credentials.refresh_token;
+      config.id_token = credentials.id_token;
+      config.expires_at = credentials.expires_at;
+      int ok = clay_config_save(&config) == 0;
+      clay_sayc(ok ? CLAY_GREEN : CLAY_RED,
+                ok ? "Grok authentication successful."
+                   : "Failed to save Grok authentication.");
+      if (ok)
+        clay_commands_load_provider(commands, type);
+      free(config.id);
+      free(config.auth_mode);
+      free(config.base_url);
+      free(config.access_token);
+      free(config.refresh_token);
+      free(config.id_token);
+      clay_str_free(&error);
+      return;
+    }
+    char *apikey = clay_prompt_secret("xAI API key:");
+    if (!apikey || !*apikey) {
+      clay_sayc(CLAY_RED, "Cancelled.");
+      free(apikey);
+      return;
+    }
+    ClayProviderConfig config = {.id = strdup(type->id),
+                                 .apikey = apikey,
+                                 .base_url = strdup(CLAY_GROK_API_URL),
+                                 .auth_mode = strdup("api_key")};
+    int ok = clay_config_save(&config) == 0;
+    clay_sayc(ok ? CLAY_GREEN : CLAY_RED,
+              ok ? "Connected Grok." : "Failed to save config for Grok.");
+    if (ok)
+      clay_commands_load_provider(commands, type);
+    free(config.id);
+    free(config.apikey);
+    free(config.base_url);
+    free(config.auth_mode);
+    return;
+  }
   char *base_url;
   if (type->default_base_url) {
     base_url = strdup(type->default_base_url);

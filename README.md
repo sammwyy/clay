@@ -29,7 +29,7 @@ No giant framework to learn. No crowded dashboard. A single self-contained binar
 
 | | |
 | --- | --- |
-| **Your models, your choice** | Connect OpenAI, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider's models without leaving the terminal. |
+| **Your models, your choice** | Connect OpenAI, Grok, OpenRouter, or any OpenAI-compatible endpoint. Browse each provider's models without leaving the terminal. |
 | **Dedicated file tools** | `read`, `write`, `edit`, `glob`, `grep` operate directly on the workspace — `edit` requires an exact, unique text match (no fuzzy diffing), and every path is checked against escaping the workspace root. |
 | **Sandboxed by default** | On Linux, shell commands run with an isolated filesystem, no network, and resource limits — `/workspace` is your project and `/scratch`/`/tmp` is conversation scratch space. Opt out with `/sandbox`. |
 | **Permissions & Plan mode** | `/permissions` sets which tool categories (read, edit, safe commands, all commands) run without asking; anything else prompts once, with an "always this session" option. `/plan` goes further and refuses writes/edits and mutating shell commands outright, so you can discuss an approach before anything changes. |
@@ -89,7 +89,7 @@ make build
 
 | Command | What it does |
 | --- | --- |
-| `/connect [openai\|openrouter\|custom]` | Connect a provider and enter its API key. |
+| `/connect [openai\|grok\|openrouter\|custom]` | Connect a provider. Grok offers xAI API-key or account/subscription sign-in. |
 | `/logout` | Choose a connected provider and remove its saved session. |
 | `/model [id]` | Browse models by provider, or set an id directly. |
 | `/effort` | Set the model reasoning effort when supported. |

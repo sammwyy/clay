@@ -42,6 +42,7 @@ A thin wrapper over libcurl's easy interface - the only place in the project tha
 ### `src/providers/` — LLM provider clients
 
 - `openai.c` — talks to any OpenAI-compatible endpoint: `GET /models` returns every model id for the connected account, while `/chat/completions` handles streaming responses (SSE, parsed line-by-line as chunks arrive in `on_http_chunk`, since a chunk boundary can land mid-line), final input/output token usage when supplied by the provider, JSON tool calls (accumulated across streamed deltas by their `index`, since the API sends id/name/argument-fragments as separate events), and the tool-call loop (`clay_openai_run` appends the assistant's tool-call message and each tool's result to `messages`, then resends the conversation, up to `max_rounds`, until the model answers with plain content and no further tool calls).
+- `grok.c` — keeps Grok account OAuth and the Build subscription proxy compatibility headers isolated. xAI API-key mode remains the ordinary `openai.c` client pointed at `https://api.x.ai/v1`.
 
 `tests/test_openai.c` is a standalone binary (`bin/test_openai`, the Makefile's `test-openai` target) that exercises streaming and tool calls against a real endpoint. It reads `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`OPENAI_MODEL` from the environment so a token never ends up in argv or committed code. Test sources are outside the production source tree and are never linked into the main `clay` binary.
 

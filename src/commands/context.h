@@ -4,6 +4,7 @@
 #include "clay/clay.h"
 #include "clay/providers/openai.h"
 #include "clay/providers/openai_codex.h"
+#include "clay/providers/grok.h"
 #include "clay/sandbox.h"
 
 typedef struct {
@@ -17,6 +18,7 @@ typedef struct {
   ClayProviderConfig *config;
   ClayOpenAI *client;
   ClayOpenAICodex *codex_client;
+  ClayGrok *grok_client;
   ClayArray models;
   int models_fetched;
   int models_rc;
@@ -146,6 +148,8 @@ int clay_commands_logout_provider(ClayCommands *commands, const char *id);
    owner-only provider config and saves them. */
 int clay_commands_save_codex_credentials(ClayConnectedProvider *provider,
                                          const ClayOpenAICodex *client);
+int clay_commands_save_grok_credentials(ClayConnectedProvider *provider,
+                                        const ClayGrok *client);
 void clay_commands_print_history(ClayCommands *commands, size_t count);
 
 /* Approval gate (src/commands/permissions.c). `action` is a short present-

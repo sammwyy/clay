@@ -42,6 +42,7 @@ struct ClayTermHttpServer {
   int listener;
   int peer;
 #endif
+  unsigned short port;
 };
 
 static volatile sig_atomic_t g_interrupted = 0;
@@ -952,10 +953,23 @@ ClayTermHttpServer *clay_term_http_server_create(unsigned short port) {
           0 ||
       listen(server->listener, 1) != 0)
     goto failed;
+#ifdef _WIN32
+  int address_len = sizeof(address);
+#else
+  socklen_t address_len = sizeof(address);
+#endif
+  if (getsockname(server->listener, (struct sockaddr *)&address,
+                  &address_len) != 0)
+    goto failed;
+  server->port = ntohs(address.sin_port);
   return server;
 failed:
   clay_term_http_server_destroy(server);
   return NULL;
+}
+
+unsigned short clay_term_http_server_port(const ClayTermHttpServer *server) {
+  return server ? server->port : 0;
 }
 
 int clay_term_http_server_receive(ClayTermHttpServer *server, ClayStr *request,
@@ -971,6 +985,18 @@ int clay_term_http_server_receive(ClayTermHttpServer *server, ClayStr *request,
     return 0;
   if (rc < 0)
     return -1;
+  /* A preflight can arrive before the real callback. */
+#ifdef _WIN32
+  if (server->peer != INVALID_SOCKET) {
+    closesocket(server->peer);
+    server->peer = INVALID_SOCKET;
+  }
+#else
+  if (server->peer >= 0) {
+    close(server->peer);
+    server->peer = -1;
+  }
+#endif
   server->peer = accept(server->listener, NULL, NULL);
 #ifdef _WIN32
   if (server->peer == INVALID_SOCKET)
@@ -986,7 +1012,8 @@ int clay_term_http_server_receive(ClayTermHttpServer *server, ClayStr *request,
     if (received <= 0)
       return -1;
     clay_str_push_n(request, chunk, (size_t)received);
-    if (strstr(request->data, "\r\n") || strchr(request->data, '\n'))
+    if (strstr(request->data, "\r\n\r\n") ||
+        strstr(request->data, "\n\n"))
       return 1;
     if (request->len > 16384)
       return -1;
@@ -995,6 +1022,12 @@ int clay_term_http_server_receive(ClayTermHttpServer *server, ClayStr *request,
 
 int clay_term_http_server_reply(ClayTermHttpServer *server, int status,
                                 const char *body) {
+  return clay_term_http_server_reply_with_headers(server, status, body, NULL);
+}
+
+int clay_term_http_server_reply_with_headers(ClayTermHttpServer *server,
+                                             int status, const char *body,
+                                             const char *extra_headers) {
   if (!server || !body)
     return -1;
 #ifdef _WIN32
@@ -1009,8 +1042,9 @@ int clay_term_http_server_reply(ClayTermHttpServer *server, int status,
   clay_str_printf(
       &response,
       "HTTP/1.1 %d %s\r\nContent-Type: text/html; "
-      "charset=utf-8\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",
-      status, status == 200 ? "OK" : "Bad Request", strlen(body), body);
+      "charset=utf-8\r\nContent-Length: %zu\r\n%sConnection: close\r\n\r\n%s",
+      status, status == 200 ? "OK" : (status == 204 ? "No Content" : "Bad Request"),
+      strlen(body), extra_headers ? extra_headers : "", body);
   size_t sent = 0;
   while (sent < response.len) {
     int count =

@@ -892,8 +892,11 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   size_t turn_start = clay_json_array_count(messages);
   clay_json_array_push(messages, clay_openai_message("user", input));
   int is_codex = strcmp(provider->type->id, "openai-codex") == 0;
+  int is_grok_subscription = strcmp(provider->type->id, "grok") == 0 &&
+                             provider->grok_client != NULL;
   ClayOpenAI *client = NULL;
   ClayOpenAICodex *codex = NULL;
+  ClayGrok *grok = NULL;
   if (is_codex) {
     ClayCodexCredentials credentials = {
         provider->config->access_token, provider->config->refresh_token,
@@ -902,6 +905,14 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     codex = clay_openai_codex_create(&credentials, commands->selected_model);
     clay_openai_codex_set_reasoning_effort(
         codex, clay_commands_reasoning_effort(commands)->id);
+  } else if (is_grok_subscription) {
+    ClayGrokCredentials credentials = {provider->config->access_token,
+                                       provider->config->refresh_token,
+                                       provider->config->id_token,
+                                       provider->config->expires_at};
+    grok = clay_grok_create(&credentials, commands->selected_model);
+    clay_grok_set_reasoning_effort(
+        grok, clay_commands_reasoning_effort(commands)->id);
   } else {
     client =
         clay_openai_create(provider->config->base_url, provider->config->apikey,
@@ -909,7 +920,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_openai_set_reasoning_effort(
         client, clay_commands_reasoning_effort(commands)->id);
   }
-  if (!client && !codex) {
+  if (!client && !codex && !grok) {
     clay_json_free(messages);
     clay_sayc(CLAY_RED, "Provider authentication is unavailable. Connect it "
                         "again with /connect.");
@@ -1007,8 +1018,11 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_term_raw_enable();
   int rc = is_codex ? clay_openai_codex_run(codex, messages, tool_list.data,
                                             tool_list.count, 8, &callbacks)
-                    : clay_openai_run(client, messages, tool_list.data,
-                                      tool_list.count, 8, &callbacks);
+                    : is_grok_subscription
+                          ? clay_grok_run(grok, messages, tool_list.data,
+                                          tool_list.count, 8, &callbacks)
+                          : clay_openai_run(client, messages, tool_list.data,
+                                            tool_list.count, 8, &callbacks);
   if (clay_term_is_interactive())
     clay_term_raw_disable();
   clay_array_free(&tool_list);
@@ -1029,6 +1043,10 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
      * client. */
     clay_commands_save_codex_credentials(provider, codex);
     clay_openai_codex_destroy(codex);
+  }
+  if (grok) {
+    clay_commands_save_grok_credentials(provider, grok);
+    clay_grok_destroy(grok);
   }
   struct timespec finished_at;
   clock_gettime(CLOCK_MONOTONIC, &finished_at);

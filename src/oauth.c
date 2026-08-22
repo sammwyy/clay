@@ -8,14 +8,16 @@
 #include <string.h>
 
 int clay_oauth_pkce_create(ClayOAuthPkce *out) {
-  unsigned char verifier[48], state[32], digest[32];
+  unsigned char verifier[48], state[32], nonce[32], digest[32];
   if (!out || clay_term_random_bytes(verifier, sizeof(verifier)) ||
-      clay_term_random_bytes(state, sizeof(state)))
+      clay_term_random_bytes(state, sizeof(state)) ||
+      clay_term_random_bytes(nonce, sizeof(nonce)))
     return -1;
   memset(out, 0, sizeof(*out));
   out->verifier = clay_base64url_encode(verifier, sizeof(verifier));
   out->state = clay_base64url_encode(state, sizeof(state));
-  if (!out->verifier || !out->state)
+  out->nonce = clay_base64url_encode(nonce, sizeof(nonce));
+  if (!out->verifier || !out->state || !out->nonce)
     goto fail;
   clay_sha256(out->verifier, strlen(out->verifier), digest);
   out->challenge = clay_base64url_encode(digest, sizeof(digest));
@@ -31,6 +33,7 @@ void clay_oauth_pkce_free(ClayOAuthPkce *pkce) {
   free(pkce->verifier);
   free(pkce->challenge);
   free(pkce->state);
+  free(pkce->nonce);
   memset(pkce, 0, sizeof(*pkce));
 }
 char *clay_oauth_pkce_challenge(const char *verifier) {

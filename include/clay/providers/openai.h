@@ -8,11 +8,25 @@
 
 typedef struct ClayOpenAI ClayOpenAI;
 
+/* Extra headers are for small OpenAI-compatible proxy variations. Their
+   strings are copied by clay_openai_create_with_headers. */
+typedef struct {
+    const char *name;
+    const char *value;
+} ClayOpenAIHeader;
+
 /* `base_url` has no trailing slash, e.g. "https://api.openai.com/v1" -
    "/chat/completions" is appended to it. */
 int clay_openai_url_is_secure(const char *base_url);
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const char *model);
+ClayOpenAI *clay_openai_create_with_headers(const char *base_url,
+                                             const char *api_key,
+                                             const char *model,
+                                             const ClayOpenAIHeader *headers,
+                                             size_t header_count);
 void clay_openai_destroy(ClayOpenAI *client);
+void clay_openai_set_api_key(ClayOpenAI *client, const char *api_key);
+long clay_openai_last_status(const ClayOpenAI *client);
 /* NULL omits reasoning_effort from requests and uses the provider default. */
 void clay_openai_set_reasoning_effort(ClayOpenAI *client, const char *effort);
 

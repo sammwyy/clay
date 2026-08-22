@@ -7,6 +7,7 @@ typedef struct {
   char *verifier;
   char *challenge;
   char *state;
+  char *nonce;
 } ClayOAuthPkce;
 
 typedef struct {

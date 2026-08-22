@@ -160,6 +160,7 @@ ClayProviderConfig *clay_config_load(const char *id) {
   config->id = json_optional_string(root, "id");
   config->apikey = json_optional_string(root, "apikey");
   config->base_url = json_optional_string(root, "base_url");
+  config->auth_mode = json_optional_string(root, "auth_mode");
   config->access_token = json_optional_string(root, "access_token");
   config->refresh_token = json_optional_string(root, "refresh_token");
   config->id_token = json_optional_string(root, "id_token");
@@ -203,6 +204,8 @@ int clay_config_save(const ClayProviderConfig *config) {
   clay_json_object_set(
       root, "base_url",
       clay_json_string(config->base_url ? config->base_url : ""));
+  if (config->auth_mode)
+    clay_json_object_set(root, "auth_mode", clay_json_string(config->auth_mode));
   if (config->access_token)
     clay_json_object_set(root, "access_token",
                          clay_json_string(config->access_token));
@@ -253,6 +256,7 @@ void clay_config_free(ClayProviderConfig *config) {
   free(config->id);
   free(config->apikey);
   free(config->base_url);
+  free(config->auth_mode);
   free(config->access_token);
   free(config->refresh_token);
   free(config->id_token);

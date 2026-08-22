@@ -155,11 +155,18 @@ int clay_term_open_browser(const char *url);
 /* A tiny loopback-only HTTP listener for short-lived OAuth callbacks. */
 typedef struct ClayTermHttpServer ClayTermHttpServer;
 ClayTermHttpServer *clay_term_http_server_create(unsigned short port);
+/* The bound port (useful when create(0) asks the OS for an ephemeral port). */
+unsigned short clay_term_http_server_port(const ClayTermHttpServer *server);
 /* 1 = request received, 0 = timed out, -1 = listener error. */
 int clay_term_http_server_receive(ClayTermHttpServer *server, ClayStr *request,
                                   int timeout_ms);
 int clay_term_http_server_reply(ClayTermHttpServer *server, int status,
                                 const char *body);
+/* `extra_headers` must contain complete CRLF-terminated header lines and is
+   intended for fixed, trusted headers such as a narrow OAuth CORS policy. */
+int clay_term_http_server_reply_with_headers(ClayTermHttpServer *server,
+                                             int status, const char *body,
+                                             const char *extra_headers);
 void clay_term_http_server_destroy(ClayTermHttpServer *server);
 
 /* Restricts `path` to owner-only access (POSIX chmod 0600); no-op on

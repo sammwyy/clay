@@ -16,12 +16,16 @@
 #define CLAY_OPENAI_CONTENT_LIMIT (4 * 1024 * 1024)
 #define CLAY_OPENAI_TOOL_CALLS_LIMIT 128
 #define CLAY_OPENAI_TOOL_FIELD_LIMIT (1024 * 1024)
+#define CLAY_OPENAI_EXTRA_HEADERS_LIMIT 8
 
 struct ClayOpenAI {
   char *base_url;
   char *api_key;
   char *model;
   char *reasoning_effort;
+  ClayOpenAIHeader extra_headers[CLAY_OPENAI_EXTRA_HEADERS_LIMIT];
+  size_t extra_header_count;
+  long last_status;
 };
 
 int clay_openai_url_is_secure(const char *base_url) {
@@ -31,13 +35,35 @@ int clay_openai_url_is_secure(const char *base_url) {
 
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key,
                                const char *model) {
+  return clay_openai_create_with_headers(base_url, api_key, model, NULL, 0);
+}
+
+ClayOpenAI *clay_openai_create_with_headers(
+    const char *base_url, const char *api_key, const char *model,
+    const ClayOpenAIHeader *headers, size_t header_count) {
   if (!clay_openai_url_is_secure(base_url))
     return NULL;
-  ClayOpenAI *client = malloc(sizeof(ClayOpenAI));
+  if (header_count > CLAY_OPENAI_EXTRA_HEADERS_LIMIT)
+    return NULL;
+  ClayOpenAI *client = calloc(1, sizeof(ClayOpenAI));
+  if (!client)
+    return NULL;
   client->base_url = strdup(base_url);
-  client->api_key = strdup(api_key);
+  client->api_key = strdup(api_key ? api_key : "");
   client->model = strdup(model ? model : "");
-  client->reasoning_effort = NULL;
+  for (size_t i = 0; i < header_count; i++) {
+    if (!headers[i].name || !headers[i].value) {
+      clay_openai_destroy(client);
+      return NULL;
+    }
+    client->extra_headers[i].name = strdup(headers[i].name);
+    client->extra_headers[i].value = strdup(headers[i].value);
+    if (!client->extra_headers[i].name || !client->extra_headers[i].value) {
+      clay_openai_destroy(client);
+      return NULL;
+    }
+  }
+  client->extra_header_count = header_count;
   return client;
 }
 
@@ -48,7 +74,25 @@ void clay_openai_destroy(ClayOpenAI *client) {
   free(client->api_key);
   free(client->model);
   free(client->reasoning_effort);
+  for (size_t i = 0; i < client->extra_header_count; i++) {
+    free((char *)client->extra_headers[i].name);
+    free((char *)client->extra_headers[i].value);
+  }
   free(client);
+}
+
+void clay_openai_set_api_key(ClayOpenAI *client, const char *api_key) {
+  if (!client)
+    return;
+  char *copy = strdup(api_key ? api_key : "");
+  if (!copy)
+    return;
+  free(client->api_key);
+  client->api_key = copy;
+}
+
+long clay_openai_last_status(const ClayOpenAI *client) {
+  return client ? client->last_status : 0;
 }
 
 void clay_openai_set_reasoning_effort(ClayOpenAI *client, const char *effort) {
@@ -65,19 +109,22 @@ int clay_openai_list_models(ClayOpenAI *client, ClayArray *models) {
   clay_str_init(&auth);
   clay_str_printf(&auth, "Bearer %s", client->api_key);
 
-  ClayHttpHeader headers[] = {
-      {"Authorization", auth.data},
-  };
+  ClayHttpHeader headers[1 + CLAY_OPENAI_EXTRA_HEADERS_LIMIT];
+  headers[0] = (ClayHttpHeader){"Authorization", auth.data};
+  for (size_t i = 0; i < client->extra_header_count; i++)
+    headers[i + 1] = (ClayHttpHeader){client->extra_headers[i].name,
+                                      client->extra_headers[i].value};
   ClayHttpRequest req = {0};
   req.method = "GET";
   req.url = url.data;
   req.headers = headers;
-  req.header_count = sizeof(headers) / sizeof(headers[0]);
+  req.header_count = 1 + client->extra_header_count;
   req.timeout_seconds = 30;
   req.max_response_bytes = CLAY_OPENAI_MODELS_RESPONSE_LIMIT;
 
   ClayHttpResponse resp;
   int rc = clay_http_request(&req, &resp);
+  client->last_status = resp.status;
   clay_str_free(&url);
   clay_str_free(&auth);
   if (rc != 0 || resp.status < 200 || resp.status >= 300) {
@@ -431,11 +478,13 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages,
     clay_str_init(&auth);
     clay_str_printf(&auth, "Bearer %s", client->api_key);
 
-    ClayHttpHeader headers[] = {
-        {"Authorization", auth.data},
-        {"Content-Type", "application/json"},
-        {"Accept", "text/event-stream"},
-    };
+    ClayHttpHeader headers[3 + CLAY_OPENAI_EXTRA_HEADERS_LIMIT];
+    headers[0] = (ClayHttpHeader){"Authorization", auth.data};
+    headers[1] = (ClayHttpHeader){"Content-Type", "application/json"};
+    headers[2] = (ClayHttpHeader){"Accept", "text/event-stream"};
+    for (size_t i = 0; i < client->extra_header_count; i++)
+      headers[i + 3] = (ClayHttpHeader){client->extra_headers[i].name,
+                                        client->extra_headers[i].value};
 
     ClayStreamState st;
     stream_state_init(&st, callbacks);
@@ -444,7 +493,7 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages,
     req.method = "POST";
     req.url = url.data;
     req.headers = headers;
-    req.header_count = sizeof(headers) / sizeof(headers[0]);
+    req.header_count = 3 + client->extra_header_count;
     req.body = body.data;
     req.body_len = body.len;
     req.on_chunk = on_http_chunk;
@@ -455,6 +504,7 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages,
 
     ClayHttpResponse resp;
     int rc = clay_http_request(&req, &resp);
+    client->last_status = resp.status;
 
     clay_str_free(&url);
     clay_str_free(&auth);

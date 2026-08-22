@@ -6,6 +6,9 @@ typedef struct {
   char *id;
   char *apikey;
   char *base_url;
+  /* Provider-specific authentication kind, e.g. "api_key" or
+     "subscription" for Grok. NULL preserves older provider configs. */
+  char *auth_mode;
   /* Present only for the OpenAI Codex subscription provider.  Provider
      files are owner-only, just like the existing API-key field. */
   char *access_token;
