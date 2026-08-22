@@ -3,6 +3,7 @@
 #include "clay/str.h"
 
 #include <curl/curl.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,6 +11,8 @@ typedef struct {
     ClayHttpResponse *response;
     ClayHttpChunkFn on_chunk;
     void *userdata;
+    size_t received;
+    size_t max_response_bytes;
 } ClayHttpWriteCtx;
 
 static int progress_cb(void *userdata, curl_off_t total_download, curl_off_t downloaded,
@@ -26,11 +29,19 @@ static size_t write_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
     ClayHttpWriteCtx *ctx = userdata;
     size_t len = size * nmemb;
 
+    if (size != 0 && len / size != nmemb) return 0;
+    if (ctx->max_response_bytes > 0 &&
+        (ctx->received > ctx->max_response_bytes || len > ctx->max_response_bytes - ctx->received)) {
+        return 0;
+    }
+    ctx->received += len;
+
     if (ctx->on_chunk) {
         return ctx->on_chunk(ptr, len, ctx->userdata) ? 0 : len;
     }
 
     ClayHttpResponse *r = ctx->response;
+    if (len > SIZE_MAX - r->body_len - 1) return 0;
     char *grown = realloc(r->body, r->body_len + len + 1);
     if (!grown) return 0;
     r->body = grown;
@@ -63,7 +74,7 @@ int clay_http_request(const ClayHttpRequest *req, ClayHttpResponse *response) {
         clay_str_free(&line);
     }
 
-    ClayHttpWriteCtx ctx = {response, req->on_chunk, req->userdata};
+    ClayHttpWriteCtx ctx = {response, req->on_chunk, req->userdata, 0, req->max_response_bytes};
 
     curl_easy_setopt(curl, CURLOPT_URL, req->url);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);

@@ -7,6 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define CLAY_OPENAI_MODELS_RESPONSE_LIMIT (2 * 1024 * 1024)
+#define CLAY_OPENAI_MODELS_LIMIT 10000
+#define CLAY_OPENAI_STREAM_RESPONSE_LIMIT (16 * 1024 * 1024)
+#define CLAY_OPENAI_ERROR_SAMPLE_LIMIT (64 * 1024)
+#define CLAY_OPENAI_SSE_LINE_LIMIT (256 * 1024)
+#define CLAY_OPENAI_CONTENT_LIMIT (4 * 1024 * 1024)
+#define CLAY_OPENAI_TOOL_CALLS_LIMIT 128
+#define CLAY_OPENAI_TOOL_FIELD_LIMIT (1024 * 1024)
+
 struct ClayOpenAI {
     char *base_url;
     char *api_key;
@@ -55,6 +64,7 @@ int clay_openai_list_models(ClayOpenAI *client, ClayArray *models) {
     req.headers = headers;
     req.header_count = sizeof(headers) / sizeof(headers[0]);
     req.timeout_seconds = 30;
+    req.max_response_bytes = CLAY_OPENAI_MODELS_RESPONSE_LIMIT;
 
     ClayHttpResponse resp;
     int rc = clay_http_request(&req, &resp);
@@ -76,6 +86,10 @@ int clay_openai_list_models(ClayOpenAI *client, ClayArray *models) {
     }
 
     size_t count = clay_json_array_count(data);
+    if (count > CLAY_OPENAI_MODELS_LIMIT) {
+        clay_json_free(root);
+        return -1;
+    }
     for (size_t i = 0; i < count; i++) {
         ClayJson *entry = clay_json_array_get(data, i);
         ClayJson *id = clay_json_object_get(entry, "id");
@@ -111,6 +125,7 @@ typedef struct {
     ClayArray tool_calls; /* ClayToolCallAccum */
     const ClayOpenAICallbacks *callbacks;
     int cancelled;
+    int limit_exceeded;
 } ClayStreamState;
 
 static void stream_state_init(ClayStreamState *st, const ClayOpenAICallbacks *callbacks) {
@@ -120,6 +135,7 @@ static void stream_state_init(ClayStreamState *st, const ClayOpenAICallbacks *ca
     clay_array_init(&st->tool_calls, sizeof(ClayToolCallAccum));
     st->callbacks = callbacks;
     st->cancelled = 0;
+    st->limit_exceeded = 0;
 }
 
 static void stream_state_free(ClayStreamState *st) {
@@ -141,6 +157,8 @@ static ClayToolCallAccum *tool_call_at(ClayArray *calls, size_t index) {
         if (tc->index == index) return tc;
     }
 
+    if (calls->count == CLAY_OPENAI_TOOL_CALLS_LIMIT) return NULL;
+
     ClayToolCallAccum tc;
     tc.index = index;
     clay_str_init(&tc.id);
@@ -150,13 +168,19 @@ static ClayToolCallAccum *tool_call_at(ClayArray *calls, size_t index) {
     return clay_array_get(calls, calls->count - 1);
 }
 
+static int append_limited(ClayStr *out, const char *data, size_t len, size_t limit) {
+    if (out->len > limit || len > limit - out->len) return -1;
+    clay_str_push_n(out, data, len);
+    return 0;
+}
+
 /* Applies one `data: {...}` payload (already stripped of the prefix) to
    the accumulating stream state. */
-static void process_sse_data(const char *json_text, ClayStreamState *st) {
-    if (strcmp(json_text, "[DONE]") == 0) return;
+static int process_sse_data(const char *json_text, ClayStreamState *st) {
+    if (strcmp(json_text, "[DONE]") == 0) return 0;
 
     ClayJson *root = clay_json_parse(json_text, NULL);
-    if (!root) return;
+    if (!root) return 0;
 
     ClayJson *usage = clay_json_object_get(root, "usage");
     if (clay_json_type(usage) == CLAY_JSON_OBJECT && st->callbacks && st->callbacks->on_usage) {
@@ -171,7 +195,10 @@ static void process_sse_data(const char *json_text, ClayStreamState *st) {
     ClayJson *content = clay_json_object_get(delta, "content");
     if (clay_json_type(content) == CLAY_JSON_STRING) {
         const char *text = clay_json_string_value(content);
-        clay_str_push(&st->content, text);
+        if (append_limited(&st->content, text, strlen(text), CLAY_OPENAI_CONTENT_LIMIT) != 0) {
+            clay_json_free(root);
+            return -1;
+        }
         if (st->callbacks && st->callbacks->on_token) st->callbacks->on_token(text, st->callbacks->userdata);
     }
 
@@ -181,18 +208,38 @@ static void process_sse_data(const char *json_text, ClayStreamState *st) {
         ClayJson *tc = clay_json_array_get(tool_calls, i);
         size_t idx = (size_t)clay_json_number_value(clay_json_object_get(tc, "index"));
         ClayToolCallAccum *acc = tool_call_at(&st->tool_calls, idx);
+        if (!acc) {
+            clay_json_free(root);
+            return -1;
+        }
 
         ClayJson *id = clay_json_object_get(tc, "id");
-        if (clay_json_type(id) == CLAY_JSON_STRING) clay_str_push(&acc->id, clay_json_string_value(id));
+        if (clay_json_type(id) == CLAY_JSON_STRING &&
+            append_limited(&acc->id, clay_json_string_value(id), strlen(clay_json_string_value(id)),
+                           CLAY_OPENAI_TOOL_FIELD_LIMIT) != 0) {
+            clay_json_free(root);
+            return -1;
+        }
 
         ClayJson *fn = clay_json_object_get(tc, "function");
         ClayJson *name = clay_json_object_get(fn, "name");
-        if (clay_json_type(name) == CLAY_JSON_STRING) clay_str_push(&acc->name, clay_json_string_value(name));
+        if (clay_json_type(name) == CLAY_JSON_STRING &&
+            append_limited(&acc->name, clay_json_string_value(name), strlen(clay_json_string_value(name)),
+                           CLAY_OPENAI_TOOL_FIELD_LIMIT) != 0) {
+            clay_json_free(root);
+            return -1;
+        }
         ClayJson *args = clay_json_object_get(fn, "arguments");
-        if (clay_json_type(args) == CLAY_JSON_STRING) clay_str_push(&acc->arguments, clay_json_string_value(args));
+        if (clay_json_type(args) == CLAY_JSON_STRING &&
+            append_limited(&acc->arguments, clay_json_string_value(args), strlen(clay_json_string_value(args)),
+                           CLAY_OPENAI_TOOL_FIELD_LIMIT) != 0) {
+            clay_json_free(root);
+            return -1;
+        }
     }
 
     clay_json_free(root);
+    return 0;
 }
 
 /* libcurl write callback: buffers raw bytes into whole lines and hands
@@ -200,8 +247,15 @@ static void process_sse_data(const char *json_text, ClayStreamState *st) {
    a chunk boundary can land anywhere, including mid-line. */
 static int on_http_chunk(const char *data, size_t len, void *userdata) {
     ClayStreamState *st = userdata;
-    clay_str_push_n(&st->raw, data, len);
-    clay_str_push_n(&st->line_buf, data, len);
+    if (st->raw.len < CLAY_OPENAI_ERROR_SAMPLE_LIMIT) {
+        size_t kept = CLAY_OPENAI_ERROR_SAMPLE_LIMIT - st->raw.len;
+        if (kept > len) kept = len;
+        clay_str_push_n(&st->raw, data, kept);
+    }
+    if (append_limited(&st->line_buf, data, len, CLAY_OPENAI_SSE_LINE_LIMIT) != 0) {
+        st->limit_exceeded = 1;
+        return -1;
+    }
 
     for (;;) {
         char *nl = memchr(st->line_buf.data, '\n', st->line_buf.len);
@@ -215,8 +269,9 @@ static int on_http_chunk(const char *data, size_t len, void *userdata) {
             char *saved = st->line_buf.data + trimmed_len;
             char saved_char = *saved;
             *saved = '\0';
-            process_sse_data(st->line_buf.data + 6, st);
+            if (process_sse_data(st->line_buf.data + 6, st) != 0) st->limit_exceeded = 1;
             *saved = saved_char;
+            if (st->limit_exceeded) return -1;
         }
 
         clay_str_remove_n(&st->line_buf, 0, line_len + 1);
@@ -367,6 +422,7 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages, const ClayTool *tool
         req.userdata = &st;
         req.should_abort = should_abort_stream;
         req.abort_userdata = &st;
+        req.max_response_bytes = CLAY_OPENAI_STREAM_RESPONSE_LIMIT;
 
         ClayHttpResponse resp;
         int rc = clay_http_request(&req, &resp);
