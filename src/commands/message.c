@@ -10,6 +10,7 @@
 #define CLAY_SHELL_CAPTURE_LIMIT                                               \
   (4 * 1024 * 1024) /* captured, for the scratch dump */
 #define CLAY_TOOL_VISIBLE_LINES 8
+#define CLAY_THINKING_LIMIT (4 * 1024 * 1024)
 
 typedef struct {
   int status_visible;
@@ -24,6 +25,11 @@ typedef struct {
   int has_usage;
   ClayTask *tool_task;
   ClayStr response;
+  ClayStr thinking;
+  struct timespec thinking_started;
+  double thinking_seconds;
+  int thinking_active;
+  int thinking_output_started;
 } ClayConversationStream;
 
 /* Snapshots the workspace before a tool call that might mutate it, so
@@ -678,6 +684,52 @@ static void show_thinking(ClayConversationStream *stream) {
   }
 }
 
+static void finish_thinking(ClayConversationStream *stream) {
+  if (!stream->thinking_active) return;
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  stream->thinking_seconds =
+      (double)(now.tv_sec - stream->thinking_started.tv_sec) +
+      (double)(now.tv_nsec - stream->thinking_started.tv_nsec) / 1e9;
+  if (stream->thinking_seconds < 0) stream->thinking_seconds = 0;
+  stream->thinking_active = 0;
+}
+
+static void on_reasoning(const char *text, void *userdata) {
+  if (!text || !*text) return;
+  ClayConversationStream *stream = userdata;
+  if (!stream->thinking_active) {
+    clock_gettime(CLOCK_MONOTONIC, &stream->thinking_started);
+    stream->thinking_active = 1;
+  }
+  size_t len = strlen(text);
+  if (stream->thinking.len <= CLAY_THINKING_LIMIT &&
+      len <= CLAY_THINKING_LIMIT - stream->thinking.len)
+    clay_str_push_n(&stream->thinking, text, len);
+  if (!stream->response_active && clay_term_is_interactive()) {
+    if (!stream->thinking_output_started) {
+      if (stream->status_visible) {
+        clay_below_set_editing(0);
+        clay_below_stop_elapsed("status");
+        clay_below_set_enabled("status", 0);
+        clay_below_render_status();
+        clay_below_status_insert_above();
+        stream->status_visible = 0;
+      }
+      clay_thinking_begin();
+      stream->thinking_output_started = 1;
+    }
+    clay_thinking_write(text);
+  }
+}
+
+static void persist_thinking(ClayCommands *commands,
+                             ClayConversationStream *stream) {
+  if (stream->thinking.len > 0)
+    clay_chat_set_active_thinking(commands->chat, stream->thinking.data,
+                                  stream->thinking_seconds);
+}
+
 static void close_response_for_tool(ClayConversationStream *stream) {
   clay_below_set_editing(0);
   if (stream->response_active) {
@@ -820,6 +872,11 @@ static void print_tool_output(const ClayJson *result, int show_command) {
 static void on_tool_call(const char *name, const char *arguments_json,
                          void *userdata) {
   ClayConversationStream *stream = userdata;
+  finish_thinking(stream);
+  if (stream->thinking_output_started) {
+    clay_thinking_finish(stream->thinking_seconds);
+    stream->thinking_output_started = 0;
+  }
   close_response_for_tool(stream);
   clay_str_clear(&stream->response);
   if (clay_term_is_interactive())
@@ -882,6 +939,11 @@ static void on_token(const char *text, void *userdata) {
   if (!text || !*text)
     return;
   ClayConversationStream *stream = userdata;
+  finish_thinking(stream);
+  if (stream->thinking_output_started) {
+    clay_thinking_finish(stream->thinking_seconds);
+    stream->thinking_output_started = 0;
+  }
   clay_str_push(&stream->response, text);
   if (!stream->response_active) {
     if (stream->status_visible) {
@@ -946,6 +1008,10 @@ static void on_usage_details(const ClayTokenUsage *usage, void *userdata) {
 
 static int should_abort(void *userdata) {
   (void)userdata;
+  if (clay_term_take_think_toggle()) {
+    clay_thinking_toggle();
+    return 0;
+  }
   return clay_term_take_escape() || clay_term_take_interrupt();
 }
 
@@ -956,6 +1022,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         "Select a provider and model with /model before sending a message.");
     return 0;
   }
+  clay_thinking_forget();
   ClayConnectedProvider *provider =
       clay_commands_find_provider(commands, commands->selected_provider);
   if (!provider) {
@@ -1042,11 +1109,13 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_openai_set_extra_header(client, "x-grok-conv-id", session_id);
   ClayConversationStream stream = {0};
   clay_str_init(&stream.response);
+  clay_str_init(&stream.thinking);
   ClayOpenAICallbacks callbacks = {0};
   callbacks.on_token = on_token;
   callbacks.on_tool_call = on_tool_call;
   callbacks.on_tool_result = on_tool_result;
   callbacks.on_usage_details = on_usage_details;
+  callbacks.on_reasoning = on_reasoning;
   callbacks.on_error = on_error;
   callbacks.should_abort = should_abort;
   callbacks.userdata = &stream;
@@ -1166,6 +1235,9 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   clock_gettime(CLOCK_MONOTONIC, &finished_at);
   double seconds = (double)(finished_at.tv_sec - started_at.tv_sec) +
                    (double)(finished_at.tv_nsec - started_at.tv_nsec) / 1e9;
+  finish_thinking(&stream);
+  if (stream.thinking_output_started)
+    clay_thinking_finish(stream.thinking_seconds);
   int had_response = stream.response_active;
   if (had_response)
     clay_response_end();
@@ -1173,6 +1245,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     if (stream.response.len > 0)
       clay_json_array_push(
           messages, clay_openai_message("assistant", stream.response.data));
+    persist_thinking(commands, &stream);
     clay_chat_finish_turn(commands->chat, messages, turn_start, "aborted");
     clay_json_free(messages);
     if (had_response && stream.status_visible) {
@@ -1183,10 +1256,12 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     }
     clay_sayc(CLAY_YELLOW, "Operation aborted by user.");
     clay_str_free(&stream.response);
+    clay_str_free(&stream.thinking);
     clay_app_set_state(commands->app, CLAY_APP_IDLE);
     return 0;
   }
   if (rc == 0) {
+    persist_thinking(commands, &stream);
     clay_chat_finish_turn(commands->chat, messages, turn_start, "completed");
     if (has_notes)
       clay_json_array_remove(messages, history_end);
@@ -1216,6 +1291,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     if (stream.response.len > 0)
       clay_json_array_push(
           messages, clay_openai_message("assistant", stream.response.data));
+    persist_thinking(commands, &stream);
     clay_chat_finish_turn(commands->chat, messages, turn_start,
                           stream.error_status > 0 ? "provider_error"
                                                   : "network_error");
@@ -1226,6 +1302,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_below_status_refresh_below();
     clay_below_status_prepare_prompt();
     clay_str_free(&stream.response);
+    clay_str_free(&stream.thinking);
     clay_app_set_state(commands->app, CLAY_APP_IDLE);
     return 1;
   }
@@ -1238,6 +1315,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
       clay_sayc(CLAY_RED, "Provider request failed.");
   }
   clay_str_free(&stream.response);
+  clay_str_free(&stream.thinking);
   clay_app_set_state(commands->app, CLAY_APP_IDLE);
   return 0;
 }

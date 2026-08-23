@@ -4,6 +4,7 @@
 #include "clay/below.h"
 #include "clay/command.h"
 #include "clay/color.h"
+#include "clay/list.h"
 #include "clay/str.h"
 #include "clay/term.h"
 
@@ -506,6 +507,11 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
             ClayInput shortcut = {.kind = CLAY_INPUT_COMMAND,
                                   .command = "__cycle_sandbox", .args = ""};
             clay_command_dispatch(commands, &shortcut);
+        } else if (key == CLAY_KEY_THINK_TOGGLE) {
+            if (clay_thinking_can_toggle()) {
+                clay_below_finish();
+                clay_thinking_toggle();
+            }
         } else if (key == CLAY_KEY_INTERRUPT) {
             clay_term_take_interrupt();
             if (buf.len == 0) {

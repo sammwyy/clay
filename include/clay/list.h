@@ -24,6 +24,15 @@ void clay_response_write(const char *text);
 void clay_response_end(void);
 int clay_response_prefix_width(void);
 
+/* Streams and toggles the latest assistant reasoning block in the chat. */
+void clay_thinking_begin(void);
+void clay_thinking_write(const char *text);
+void clay_thinking_finish(double seconds);
+void clay_thinking_restore(const char *text, double seconds);
+void clay_thinking_forget(void);
+int clay_thinking_can_toggle(void);
+void clay_thinking_toggle(void);
+
 /* Prints "◆ ℂlay  <message>" meant to head a list of steps that follow. */
 void clay_list_header(const char *fmt, ...);
 

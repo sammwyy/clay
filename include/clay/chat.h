@@ -43,6 +43,12 @@ const char *clay_chat_notes(const ClayChat *chat);
 int clay_chat_set_notes(ClayChat *chat, const char *notes); /* persists; 0 on success */
 void clay_chat_get_usage(const ClayChat *chat, ClayChatUsage *usage);
 int clay_chat_set_usage(ClayChat *chat, const ClayChatUsage *usage); /* persists; 0 on success */
+/* Stores reasoning on the active turn. The turn's normal save operation
+   persists it; this keeps partial/provider-specific text out of messages. */
+void clay_chat_set_active_thinking(ClayChat *chat, const char *text,
+                                   double seconds);
+/* Returns the latest persisted reasoning log, or NULL when unavailable. */
+char *clay_chat_last_thinking(const ClayChat *chat, double *seconds);
 
 /* /tmp/clay-<id>, private to this chat and created if missing. Malloc'd; NULL
    on failure. */

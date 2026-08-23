@@ -22,6 +22,7 @@ int main(void) {
     ClayChatUsage saved_usage = {125, 48, 98, 1, 250, 96};
     assert(clay_chat_set_usage(chat, &saved_usage) == 0);
     assert(clay_chat_begin_turn(chat, "hello") == 0);
+    clay_chat_set_active_thinking(chat, "first thought\nsecond thought", 1.25);
 
     ClayJson *messages = clay_json_array();
     clay_json_array_push(messages, clay_json_object());
@@ -48,6 +49,11 @@ int main(void) {
     assert(loaded_usage.cached_input_tokens_known);
     assert(loaded_usage.total_input_tokens == 250);
     assert(loaded_usage.total_output_tokens == 96);
+    double thinking_seconds = 0;
+    char *thinking = clay_chat_last_thinking(chat, &thinking_seconds);
+    assert(thinking && strcmp(thinking, "first thought\nsecond thought") == 0);
+    assert(thinking_seconds == 1.25);
+    free(thinking);
     ClayJson *history = clay_chat_openai_messages(chat);
     assert(clay_json_array_count(history) == 2);
     assert(strcmp(clay_json_string_value(clay_json_object_get(clay_json_array_get(history, 0), "content")), "hello") == 0);

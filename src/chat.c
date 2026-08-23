@@ -422,6 +422,33 @@ int clay_chat_set_usage(ClayChat *chat, const ClayChatUsage *usage) {
     return save(chat);
 }
 
+void clay_chat_set_active_thinking(ClayChat *chat, const char *text,
+                                   double seconds) {
+    if (!chat || !chat->active_turn || !text || !*text) return;
+    clay_json_object_set(chat->active_turn, "thinking",
+                         clay_json_string(text));
+    clay_json_object_set(chat->active_turn, "thinking_seconds",
+                         clay_json_number(seconds));
+}
+
+char *clay_chat_last_thinking(const ClayChat *chat, double *seconds) {
+    if (seconds) *seconds = 0;
+    if (!chat) return NULL;
+    ClayJson *turns = clay_json_object_get(chat->journal, "turns");
+    for (size_t i = clay_json_array_count(turns); i > 0; i--) {
+        ClayJson *turn = clay_json_array_get(turns, i - 1);
+        ClayJson *thinking = clay_json_object_get(turn, "thinking");
+        if (clay_json_type(thinking) != CLAY_JSON_STRING ||
+            !*clay_json_string_value(thinking))
+            continue;
+        if (seconds)
+            *seconds = clay_json_number_value(
+                clay_json_object_get(turn, "thinking_seconds"));
+        return strdup(clay_json_string_value(thinking));
+    }
+    return NULL;
+}
+
 size_t clay_chat_message_count(const ClayChat *chat) {
     return journal_message_count(chat->journal);
 }

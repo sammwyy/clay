@@ -76,6 +76,9 @@ typedef struct {
     /* Optional detailed usage. `cached_input_tokens_known` distinguishes an
        explicit zero from a provider that does not report cache usage. */
     void (*on_usage_details)(const ClayTokenUsage *usage, void *userdata);
+    /* Optional streamed reasoning/summary text. Providers that do not expose
+       it simply leave this callback unused. */
+    void (*on_reasoning)(const char *text, void *userdata);
 } ClayOpenAICallbacks;
 
 /* Parses both Chat Completions and Responses-style usage objects. */

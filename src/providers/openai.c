@@ -336,6 +336,20 @@ static int process_sse_data(const char *json_text, ClayStreamState *st) {
       clay_json_array_get(clay_json_object_get(root, "choices"), 0);
   ClayJson *delta = clay_json_object_get(choice0, "delta");
 
+  if (st->callbacks && st->callbacks->on_reasoning) {
+    const char *reasoning = NULL;
+    const char *keys[] = {"reasoning_content", "reasoning", "thinking"};
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+      ClayJson *value = clay_json_object_get(delta, keys[i]);
+      if (clay_json_type(value) == CLAY_JSON_STRING) {
+        reasoning = clay_json_string_value(value);
+        break;
+      }
+    }
+    if (reasoning && *reasoning)
+      st->callbacks->on_reasoning(reasoning, st->callbacks->userdata);
+  }
+
   ClayJson *content = clay_json_object_get(delta, "content");
   if (clay_json_type(content) == CLAY_JSON_STRING) {
     const char *text = clay_json_string_value(content);

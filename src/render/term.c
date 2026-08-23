@@ -54,6 +54,8 @@ struct ClayTermHttpServer {
 
 static volatile sig_atomic_t g_interrupted = 0;
 static int g_pending_escape = 0;
+static int g_pending_escape_action = 0;
+static int g_pending_think_toggle = 0;
 static int g_noninteractive = 0;
 
 #ifndef _WIN32
@@ -770,6 +772,8 @@ ClayKey clay_term_read_key(char *ch_out) {
     return CLAY_KEY_INTERRUPT;
   if (c == 0x0c)
     return CLAY_KEY_CLEAR_SCREEN;
+  if (c == 0x0f)
+    return CLAY_KEY_THINK_TOGGLE;
   if (c == 0x12)
     return CLAY_KEY_HISTORY_SEARCH;
   if (c == 27)
@@ -809,11 +813,13 @@ ClayKey clay_term_read_key(char *ch_out) {
     return CLAY_KEY_INTERRUPT;
   if (c == 0x0c)
     return CLAY_KEY_CLEAR_SCREEN;
+  if (c == 0x0f)
+    return CLAY_KEY_THINK_TOGGLE;
   if (c == 0x12)
     return CLAY_KEY_HISTORY_SEARCH;
 
   if (c == 0x1b) {
-    unsigned char seq[16];
+    unsigned char seq[64] = {0};
     size_t seq_len = 0;
     fd_set fds;
     struct timeval timeout = {0, 20000};
@@ -887,12 +893,44 @@ ClayKey clay_term_read_key_timeout(char *ch_out, int timeout_ms) {
 }
 
 int clay_term_take_escape(void) {
+  if (g_pending_escape_action) {
+    g_pending_escape_action = 0;
+    return 1;
+  }
+  if (g_pending_think_toggle)
+    return 0;
   if (!clay_term_input_pending())
     return 0;
   ClayKey key = clay_term_read_key(NULL);
+  if (key == CLAY_KEY_THINK_TOGGLE) {
+    g_pending_think_toggle = 1;
+    return 0;
+  }
+  if (key == CLAY_KEY_ESCAPE) {
+    return 1;
+  }
   if (key == CLAY_KEY_INTERRUPT)
     g_interrupted = 1;
-  return key == CLAY_KEY_ESCAPE;
+  return 0;
+}
+
+int clay_term_take_think_toggle(void) {
+  if (g_pending_think_toggle) {
+    g_pending_think_toggle = 0;
+    return 1;
+  }
+  if (g_pending_escape_action || !clay_term_input_pending())
+    return 0;
+  ClayKey key = clay_term_read_key(NULL);
+  if (key == CLAY_KEY_THINK_TOGGLE)
+    return 1;
+  if (key == CLAY_KEY_ESCAPE) {
+    g_pending_escape_action = 1;
+    return 0;
+  }
+  if (key == CLAY_KEY_INTERRUPT)
+    g_interrupted = 1;
+  return 0;
 }
 
 int clay_term_input_pending(void) {

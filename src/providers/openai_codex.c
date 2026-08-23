@@ -29,6 +29,7 @@
 #define CODEX_MODELS_RESPONSE_LIMIT (16 * 1024 * 1024)
 #define CODEX_SSE_LINE_LIMIT (256 * 1024)
 #define CODEX_CONTENT_LIMIT (4 * 1024 * 1024)
+#define CODEX_REASONING_LIMIT (4 * 1024 * 1024)
 #define CODEX_TOOL_LIMIT 128
 #define CODEX_FIELD_LIMIT (1024 * 1024)
 
@@ -52,6 +53,7 @@ typedef struct {
 typedef struct {
   ClayStr raw;
   ClayStr content;
+  ClayStr reasoning;
   ClayArray calls; /* CodexToolCall */
   ClaySseParser *sse;
   const ClayOpenAICallbacks *callbacks;
@@ -452,6 +454,15 @@ static void codex_sse_json(const char *text, void *userdata) {
       else if (s->callbacks && s->callbacks->on_token)
         s->callbacks->on_token(delta, s->callbacks->userdata);
     }
+  } else if (strcmp(type, "response.reasoning_summary_text.delta") == 0) {
+    const char *delta = string_at(root, "delta");
+    if (delta) {
+      if (append_limited(&s->reasoning, delta, strlen(delta),
+                         CODEX_REASONING_LIMIT))
+        s->malformed = 1;
+      else if (s->callbacks && s->callbacks->on_reasoning)
+        s->callbacks->on_reasoning(delta, s->callbacks->userdata);
+    }
   } else if (strcmp(type, "response.output_item.added") == 0) {
     process_item(s, clay_json_object_get(root, "item"));
   } else if (strcmp(type, "response.function_call_arguments.delta") == 0) {
@@ -488,6 +499,7 @@ static void stream_init(CodexStream *s, const ClayOpenAICallbacks *callbacks) {
   memset(s, 0, sizeof(*s));
   clay_str_init(&s->raw);
   clay_str_init(&s->content);
+  clay_str_init(&s->reasoning);
   clay_array_init(&s->calls, sizeof(CodexToolCall));
   s->callbacks = callbacks;
   s->sse = clay_sse_create(CODEX_SSE_LINE_LIMIT, codex_sse_json, s);
@@ -495,6 +507,7 @@ static void stream_init(CodexStream *s, const ClayOpenAICallbacks *callbacks) {
 static void stream_free(CodexStream *s) {
   clay_str_free(&s->raw);
   clay_str_free(&s->content);
+  clay_str_free(&s->reasoning);
   for (size_t i = 0; i < s->calls.count; i++) {
     CodexToolCall *c = clay_array_get(&s->calls, i);
     clay_str_free(&c->id);

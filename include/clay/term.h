@@ -74,6 +74,7 @@ typedef enum {
   CLAY_KEY_LEFT,
   CLAY_KEY_RIGHT,
   CLAY_KEY_CYCLE_SANDBOX,
+  CLAY_KEY_THINK_TOGGLE,
   CLAY_KEY_CLEAR_SCREEN,
   CLAY_KEY_HISTORY_SEARCH,
   CLAY_KEY_ESCAPE,
@@ -85,6 +86,7 @@ typedef enum {
    reads. */
 void clay_term_raw_enable(void);
 void clay_term_raw_disable(void);
+int clay_term_take_think_toggle(void);
 
 /* True once after Ctrl-C/SIGINT is received; consumes that notification. */
 int clay_term_take_interrupt(void);

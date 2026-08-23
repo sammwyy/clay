@@ -58,6 +58,12 @@ void clay_cmd_resume(const char *args, void *user_data) {
             clay_commands_set_tokens_below_with_cache(
                 commands, usage.input_tokens, usage.output_tokens,
                 usage.cached_input_tokens, usage.cached_input_tokens_known);
+            double thinking_seconds = 0;
+            char *thinking = clay_chat_last_thinking(chat, &thinking_seconds);
+            if (thinking) {
+                clay_thinking_restore(thinking, thinking_seconds);
+                free(thinking);
+            }
             int preview = clay_config_history_preview_count();
             if (preview > 0) {
                 clay_sayc(CLAY_CYAN, "Resumed %zu previous messages.", clay_chat_message_count(chat));
