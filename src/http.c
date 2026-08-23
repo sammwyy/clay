@@ -82,6 +82,15 @@ int clay_http_request(const ClayHttpRequest *req, ClayHttpResponse *response) {
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+#ifdef CURLSSLOPT_NATIVE_CA
+    /* The Windows release uses libcurl with OpenSSL. Its normal CA bundle
+       lives in the build environment, not next to the distributed .exe.
+       Ask libcurl to include Windows' native certificate stores instead of
+       requiring users to install a separate PEM bundle. */
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
+    curl_easy_setopt(curl, CURLOPT_PROXY_SSL_OPTIONS,
+                     (long)CURLSSLOPT_NATIVE_CA);
+#endif
     if (req->should_abort) {
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_cb);
