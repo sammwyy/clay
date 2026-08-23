@@ -14,11 +14,16 @@ Bring your own model. Stay in your flow. Ship better work.
 </div>
 
 ```text
-◆ ℂlay · v0.0.0 · Type /help for commands.
+◆ Clay  v0.0.2
+  /help for commands  ·  Ctrl+O reasoning
 
-> review this project and find the rough edges
-◆ ℂlay  I’ll inspect the structure and trace the main flows first.
-  ✓ 1.2s · your-model (your-provider) · ↑ 842  ↓ 126
+› review this project and find the rough edges
+
+◆ Agent (your-model)
+  Reasoning finished in 1.2s
+  I’ll inspect the structure and trace the main flows first.
+
+  ~/your-project · your-model    ↑ 842 ↓ 126 · ✓ 1.2s
 ```
 
 Clay is a compact coding-agent harness built for people who prefer to stay in the terminal. It connects to the models you already use, works directly on your files, keeps a paper trail of what it changed, and remembers what matters between sessions.
@@ -40,7 +45,10 @@ No giant framework to learn. No crowded dashboard. A single self-contained binar
 | **A visible plan** | `todowrite` keeps a live task checklist for multi-step work; `repo_map` gives a ranked overview of the codebase's top-level definitions (via `ctags` if it's installed, otherwise a small built-in heuristic for C, Python, JS/TS, Go, and Rust) before the model starts reading files one by one. |
 | **Bring your own tools** | `/mcp add <name> <command> [args...]` connects any Model Context Protocol server over stdio — its tools show up next to clay's own. stdio transport only: no SSE/HTTP, no OAuth. |
 | **Tests run themselves** | `/autotest <command>` runs your test or lint command after a successful edit (confirmed once per session) and hands any failure straight back to the model. |
-| **A focused interface** | Streaming output, visible status, reasoning controls, token counts, and instant cancellation stay out of the way of the prompt. |
+| **Provider-aware token caching** | Normalizes input, output, and cached-input usage when the provider reports it; the live status shows `(cache: N%)`, while unknown cache support stays distinct from a real zero. |
+| **Persistent reasoning and usage** | Reasoning logs and token totals are stored with the chat journal, restored by `/resume`, and the latest completed reasoning can be expanded with `Ctrl+O`. |
+| **A focused interface** | Streaming output, grouped tool activity, modular live status, reasoning controls, token counts, and instant cancellation stay out of the way of the prompt. |
+| **HTTPS on Windows** | The Windows build uses libcurl with the native Windows certificate store, so HTTPS requests work without shipping a separate CA bundle. |
 
 ## Get to your first task
 
@@ -114,6 +122,27 @@ session can be used by `-p` as-is; headless Codex sessions may provide
 
 **Cancel without losing your place.** Press `Esc` or `Ctrl-C` while Clay is generating. The generation stops, the chat is preserved, and you are back at the prompt.
 
+**Caching without provider logic in the harness.** Clay keeps the stable system
+prompt and conversation in the chat journal, then lets each provider adapter
+opt into its own cache mechanism. OpenAI and Codex use a stable per-chat prompt
+cache key; Grok uses the chat id for stable routing; generic OpenAI-compatible
+endpoints receive normal requests unless they explicitly report cache usage.
+The status line exposes only normalized usage, so `(cache: N%)` appears when
+the provider actually reports cached input tokens.
+
+**Reasoning that stays with the chat.** Supported providers stream reasoning
+before the normal assistant response. When generation ends, Clay replaces the
+stream with a compact elapsed-time summary; `Ctrl+O` expands the latest saved
+reasoning log. The reasoning text and its duration are serialized in the chat
+JSON and restored with `/resume`, alongside input, output, and cached-token
+usage.
+
+**A modular status line.** The workspace/model block, token counts, cache
+percentage, sandbox mode, and elapsed time are live modules that can be
+enabled, disabled, reordered, and updated independently. The display groups
+them with consistent separators while keeping the prompt and streamed output
+separate.
+
 ## Command center
 
 ### Providers & models
@@ -173,6 +202,7 @@ distribution files.
 | `Ctrl-C` on an empty prompt | Exit Clay cleanly. |
 | `Ctrl-L` | Clear the terminal and redraw the current prompt. |
 | `Ctrl-R` | Search backward through prompt history; press again for older matches. |
+| `Ctrl-O` | Expand the latest completed reasoning log. |
 | `Esc` or `Ctrl-C` while generating | Cancel the active response. |
 | `Esc`, then `Esc` again | Clear the current input. |
 
