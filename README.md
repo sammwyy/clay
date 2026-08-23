@@ -68,6 +68,26 @@ Then, inside Clay:
 
 That is the whole loop. Connect a provider, choose a model, and describe the outcome you want.
 
+### Install the latest release
+
+On Linux, download and install the latest binary under
+`~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sammwyy/clay/main/install.sh | sh
+```
+
+On Windows, run the PowerShell installer and choose whether to install Clay
+for the current user or all users:
+
+```powershell
+irm https://raw.githubusercontent.com/sammwyy/clay/main/install.ps1 | iex
+```
+
+Per-user installs go under `%USERPROFILE%\.clay\bin`; all-user installs go
+under `Program Files\Clay`. The selected user or machine `PATH` is updated
+automatically.
+
 To work in a real project instead:
 
 ```sh
