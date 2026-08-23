@@ -420,6 +420,10 @@ void clay_grok_destroy(ClayGrok *client) {
 void clay_grok_set_reasoning_effort(ClayGrok *client, const char *effort) {
   if (client) clay_openai_set_reasoning_effort(client->openai, effort);
 }
+void clay_grok_set_conversation_id(ClayGrok *client, const char *id) {
+  if (client)
+    clay_openai_set_extra_header(client->openai, "x-grok-conv-id", id);
+}
 int clay_grok_list_models(ClayGrok *client, ClayArray *models) {
   if (!client || ensure_access_token(client) != 0) return -1;
   /* The proxy catalog is subscription/account-specific. Do not seed it with

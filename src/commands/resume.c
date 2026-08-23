@@ -46,6 +46,18 @@ void clay_cmd_resume(const char *args, void *user_data) {
             clay_chat_destroy(commands->chat);
             commands->chat = chat;
             clay_commands_reset_conversation(commands);
+            ClayChatUsage usage;
+            clay_chat_get_usage(chat, &usage);
+            commands->input_tokens = usage.input_tokens;
+            commands->output_tokens = usage.output_tokens;
+            commands->cached_input_tokens = usage.cached_input_tokens;
+            commands->cached_input_tokens_known =
+                usage.cached_input_tokens_known;
+            commands->total_input_tokens = usage.total_input_tokens;
+            commands->total_output_tokens = usage.total_output_tokens;
+            clay_commands_set_tokens_below_with_cache(
+                commands, usage.input_tokens, usage.output_tokens,
+                usage.cached_input_tokens, usage.cached_input_tokens_known);
             int preview = clay_config_history_preview_count();
             if (preview > 0) {
                 clay_sayc(CLAY_CYAN, "Resumed %zu previous messages.", clay_chat_message_count(chat));

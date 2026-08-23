@@ -36,6 +36,7 @@ struct ClayOpenAICodex {
   ClayCodexCredentials credentials;
   char *model;
   char *reasoning_effort;
+  char *prompt_cache_key;
   int refresh_failed;
   int authentication_invalid;
   long last_status;
@@ -341,6 +342,7 @@ void clay_openai_codex_destroy(ClayOpenAICodex *client) {
   clay_openai_codex_credentials_free(&client->credentials);
   free(client->model);
   free(client->reasoning_effort);
+  free(client->prompt_cache_key);
   free(client);
 }
 void clay_openai_codex_set_reasoning_effort(ClayOpenAICodex *client,
@@ -349,6 +351,14 @@ void clay_openai_codex_set_reasoning_effort(ClayOpenAICodex *client,
     return;
   free(client->reasoning_effort);
   client->reasoning_effort = effort ? strdup(effort) : NULL;
+}
+void clay_openai_codex_set_prompt_cache_key(ClayOpenAICodex *client,
+                                            const char *key) {
+  if (!client)
+    return;
+  char *copy = key && *key ? strdup(key) : NULL;
+  free(client->prompt_cache_key);
+  client->prompt_cache_key = copy;
 }
 void clay_openai_codex_copy_credentials(const ClayOpenAICodex *client,
                                         ClayCodexCredentials *out) {
@@ -459,13 +469,16 @@ static void codex_sse_json(const char *text, void *userdata) {
     ClayJson *response = clay_json_object_get(root, "response");
     ClayJson *usage = clay_json_object_get(response, "usage");
     if (clay_json_type(usage) == CLAY_JSON_OBJECT && s->callbacks &&
-        s->callbacks->on_usage) {
-      s->input_tokens = (long)clay_json_number_value(
-          clay_json_object_get(usage, "input_tokens"));
-      s->output_tokens = (long)clay_json_number_value(
-          clay_json_object_get(usage, "output_tokens"));
-      s->callbacks->on_usage(s->input_tokens, s->output_tokens,
-                             s->callbacks->userdata);
+        (s->callbacks->on_usage || s->callbacks->on_usage_details)) {
+      ClayTokenUsage parsed;
+      clay_openai_usage_from_json(usage, &parsed);
+      s->input_tokens = parsed.input_tokens;
+      s->output_tokens = parsed.output_tokens;
+      if (s->callbacks->on_usage)
+        s->callbacks->on_usage(s->input_tokens, s->output_tokens,
+                               s->callbacks->userdata);
+      if (s->callbacks->on_usage_details)
+        s->callbacks->on_usage_details(&parsed, s->callbacks->userdata);
     }
   } else if (strcmp(type, "response.failed") == 0 || strcmp(type, "error") == 0)
     s->failed_event = 1;
@@ -598,6 +611,9 @@ static ClayStr request_body(ClayOpenAICodex *client, const ClayJson *messages,
   clay_json_object_set(root, "input", input);
   clay_json_object_set(root, "store", clay_json_bool(0));
   clay_json_object_set(root, "stream", clay_json_bool(1));
+  if (client->prompt_cache_key)
+    clay_json_object_set(root, "prompt_cache_key",
+                         clay_json_string(client->prompt_cache_key));
   if (client->reasoning_effort) {
     ClayJson *reasoning = clay_json_object();
     clay_json_object_set(reasoning, "effort",

@@ -23,6 +23,7 @@ struct ClayOpenAI {
   char *api_key;
   char *model;
   char *reasoning_effort;
+  char *prompt_cache_key;
   ClayOpenAIHeader extra_headers[CLAY_OPENAI_EXTRA_HEADERS_LIMIT];
   size_t extra_header_count;
   long last_status;
@@ -74,6 +75,7 @@ void clay_openai_destroy(ClayOpenAI *client) {
   free(client->api_key);
   free(client->model);
   free(client->reasoning_effort);
+  free(client->prompt_cache_key);
   for (size_t i = 0; i < client->extra_header_count; i++) {
     free((char *)client->extra_headers[i].name);
     free((char *)client->extra_headers[i].value);
@@ -89,6 +91,41 @@ void clay_openai_set_api_key(ClayOpenAI *client, const char *api_key) {
     return;
   free(client->api_key);
   client->api_key = copy;
+}
+
+void clay_openai_set_prompt_cache_key(ClayOpenAI *client, const char *key) {
+  if (!client)
+    return;
+  char *copy = key && *key ? strdup(key) : NULL;
+  free(client->prompt_cache_key);
+  client->prompt_cache_key = copy;
+}
+
+int clay_openai_set_extra_header(ClayOpenAI *client, const char *name,
+                                 const char *value) {
+  if (!client || !name || !*name || !value)
+    return -1;
+  for (size_t i = 0; i < client->extra_header_count; i++) {
+    if (strcmp(client->extra_headers[i].name, name) != 0)
+      continue;
+    char *copy = strdup(value);
+    if (!copy)
+      return -1;
+    free((char *)client->extra_headers[i].value);
+    client->extra_headers[i].value = copy;
+    return 0;
+  }
+  if (client->extra_header_count == CLAY_OPENAI_EXTRA_HEADERS_LIMIT)
+    return -1;
+  char *name_copy = strdup(name), *value_copy = strdup(value);
+  if (!name_copy || !value_copy) {
+    free(name_copy);
+    free(value_copy);
+    return -1;
+  }
+  client->extra_headers[client->extra_header_count++] =
+      (ClayOpenAIHeader){name_copy, value_copy};
+  return 0;
 }
 
 long clay_openai_last_status(const ClayOpenAI *client) {
@@ -166,6 +203,35 @@ ClayJson *clay_openai_message(const char *role, const char *content) {
   clay_json_object_set(m, "role", clay_json_string(role));
   clay_json_object_set(m, "content", clay_json_string(content));
   return m;
+}
+
+static int usage_number(const ClayJson *object, const char *key, long *out) {
+  ClayJson *value = clay_json_object_get(object, key);
+  if (clay_json_type(value) != CLAY_JSON_NUMBER)
+    return 0;
+  *out = (long)clay_json_number_value(value);
+  return 1;
+}
+
+void clay_openai_usage_from_json(const ClayJson *usage, ClayTokenUsage *out) {
+  memset(out, 0, sizeof(*out));
+  if (clay_json_type(usage) != CLAY_JSON_OBJECT)
+    return;
+
+  if (!usage_number(usage, "prompt_tokens", &out->input_tokens))
+    usage_number(usage, "input_tokens", &out->input_tokens);
+  if (!usage_number(usage, "completion_tokens", &out->output_tokens))
+    usage_number(usage, "output_tokens", &out->output_tokens);
+
+  ClayJson *details = clay_json_object_get(usage, "prompt_tokens_details");
+  if (clay_json_type(details) != CLAY_JSON_OBJECT)
+    details = clay_json_object_get(usage, "input_tokens_details");
+  if (clay_json_type(details) == CLAY_JSON_OBJECT)
+    out->cached_input_tokens_known = usage_number(
+        details, "cached_tokens", &out->cached_input_tokens);
+  if (!out->cached_input_tokens_known)
+    out->cached_input_tokens_known = usage_number(
+        usage, "cached_tokens", &out->cached_input_tokens);
 }
 
 /* One tool call as it accumulates across streamed deltas: the API sends
@@ -253,12 +319,17 @@ static int process_sse_data(const char *json_text, ClayStreamState *st) {
   ClayJson *usage = clay_json_object_get(root, "usage");
   if (clay_json_type(usage) == CLAY_JSON_OBJECT && st->callbacks &&
       st->callbacks->on_usage) {
-    long input_tokens = (long)clay_json_number_value(
-        clay_json_object_get(usage, "prompt_tokens"));
-    long output_tokens = (long)clay_json_number_value(
-        clay_json_object_get(usage, "completion_tokens"));
-    st->callbacks->on_usage(input_tokens, output_tokens,
+    ClayTokenUsage parsed;
+    clay_openai_usage_from_json(usage, &parsed);
+    st->callbacks->on_usage(parsed.input_tokens, parsed.output_tokens,
                             st->callbacks->userdata);
+    if (st->callbacks->on_usage_details)
+      st->callbacks->on_usage_details(&parsed, st->callbacks->userdata);
+  } else if (clay_json_type(usage) == CLAY_JSON_OBJECT && st->callbacks &&
+             st->callbacks->on_usage_details) {
+    ClayTokenUsage parsed;
+    clay_openai_usage_from_json(usage, &parsed);
+    st->callbacks->on_usage_details(&parsed, st->callbacks->userdata);
   }
 
   ClayJson *choice0 =
@@ -356,6 +427,9 @@ static ClayStr build_request_body(ClayOpenAI *client, const ClayJson *messages,
   clay_json_object_set(root, "model", clay_json_string(client->model));
   clay_json_object_set(root, "messages", clay_json_clone(messages));
   clay_json_object_set(root, "stream", clay_json_bool(1));
+  if (client->prompt_cache_key)
+    clay_json_object_set(root, "prompt_cache_key",
+                         clay_json_string(client->prompt_cache_key));
   if (client->reasoning_effort) {
     clay_json_object_set(root, "reasoning_effort",
                          clay_json_string(client->reasoning_effort));

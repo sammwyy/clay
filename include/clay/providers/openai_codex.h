@@ -35,6 +35,9 @@ void clay_openai_codex_destroy(ClayOpenAICodex *client);
 /* NULL omits reasoning from Responses requests and uses the model default. */
 void clay_openai_codex_set_reasoning_effort(ClayOpenAICodex *client,
                                             const char *effort);
+/* Stable per-chat key used by the Responses prompt cache. */
+void clay_openai_codex_set_prompt_cache_key(ClayOpenAICodex *client,
+                                            const char *key);
 int clay_openai_codex_list_models(ClayOpenAICodex *client, ClayArray *models);
 long clay_openai_codex_last_status(const ClayOpenAICodex *client);
 /* Caller saves a copied result to its existing credential store after this

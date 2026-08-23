@@ -53,6 +53,8 @@ ClayGrok *clay_grok_create(const ClayGrokCredentials *credentials,
                            const char *model);
 void clay_grok_destroy(ClayGrok *client);
 void clay_grok_set_reasoning_effort(ClayGrok *client, const char *effort);
+/* Stable per-chat routing key for xAI's automatic prompt cache. */
+void clay_grok_set_conversation_id(ClayGrok *client, const char *id);
 int clay_grok_list_models(ClayGrok *client, ClayArray *models);
 int clay_grok_run(ClayGrok *client, ClayJson *messages, const ClayTool *tools,
                   size_t tool_count, int max_rounds,

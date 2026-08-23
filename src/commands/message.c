@@ -19,6 +19,8 @@ typedef struct {
   long error_status;
   long input_tokens;
   long output_tokens;
+  long cached_input_tokens;
+  int cached_input_tokens_known;
   int has_usage;
   ClayTask *tool_task;
   ClayStr response;
@@ -931,10 +933,14 @@ static void on_error(long status, const char *body, void *userdata) {
   ((ClayConversationStream *)userdata)->error_status = status;
 }
 
-static void on_usage(long input_tokens, long output_tokens, void *userdata) {
+static void on_usage_details(const ClayTokenUsage *usage, void *userdata) {
   ClayConversationStream *stream = userdata;
-  stream->input_tokens += input_tokens;
-  stream->output_tokens += output_tokens;
+  stream->input_tokens += usage->input_tokens;
+  stream->output_tokens += usage->output_tokens;
+  if (usage->cached_input_tokens_known) {
+    stream->cached_input_tokens += usage->cached_input_tokens;
+    stream->cached_input_tokens_known = 1;
+  }
   stream->has_usage = 1;
 }
 
@@ -1025,13 +1031,22 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
                         "again with /connect.");
     return 0;
   }
+  const char *session_id = clay_chat_id(commands->chat);
+  if (codex)
+    clay_openai_codex_set_prompt_cache_key(codex, session_id);
+  else if (grok)
+    clay_grok_set_conversation_id(grok, session_id);
+  else if (client && strcmp(provider->type->id, "openai") == 0)
+    clay_openai_set_prompt_cache_key(client, session_id);
+  else if (client && strcmp(provider->type->id, "grok") == 0)
+    clay_openai_set_extra_header(client, "x-grok-conv-id", session_id);
   ClayConversationStream stream = {0};
   clay_str_init(&stream.response);
   ClayOpenAICallbacks callbacks = {0};
   callbacks.on_token = on_token;
   callbacks.on_tool_call = on_tool_call;
   callbacks.on_tool_result = on_tool_result;
-  callbacks.on_usage = on_usage;
+  callbacks.on_usage_details = on_usage_details;
   callbacks.on_error = on_error;
   callbacks.should_abort = should_abort;
   callbacks.userdata = &stream;
@@ -1181,10 +1196,21 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     if (stream.has_usage) {
       commands->input_tokens = stream.input_tokens;
       commands->output_tokens = stream.output_tokens;
+      commands->cached_input_tokens = stream.cached_input_tokens;
+      commands->cached_input_tokens_known = stream.cached_input_tokens_known;
       commands->total_input_tokens += stream.input_tokens;
       commands->total_output_tokens += stream.output_tokens;
-      clay_commands_set_tokens_below(commands, stream.input_tokens,
-                                     stream.output_tokens);
+      ClayChatUsage usage = {
+          stream.input_tokens,
+          stream.output_tokens,
+          stream.cached_input_tokens,
+          stream.cached_input_tokens_known,
+          commands->total_input_tokens,
+          commands->total_output_tokens};
+      clay_chat_set_usage(commands->chat, &usage);
+      clay_commands_set_tokens_below_with_cache(
+          commands, stream.input_tokens, stream.output_tokens,
+          stream.cached_input_tokens, stream.cached_input_tokens_known);
     }
   } else {
     if (stream.response.len > 0)

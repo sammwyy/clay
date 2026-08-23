@@ -1,6 +1,7 @@
 #include "clay/json.h"
 #include "clay/oauth.h"
 #include "clay/providers/grok.h"
+#include "clay/providers/openai.h"
 #include "clay/sse.h"
 #include "clay/str.h"
 
@@ -112,11 +113,38 @@ static void test_fragmented_openai_sse(void) {
   clay_str_free(&output);
 }
 
+static void test_usage_cache_details(void) {
+  ClayJson *chat = clay_json_parse(
+      "{\"prompt_tokens\":125,\"completion_tokens\":48,"
+      "\"prompt_tokens_details\":{\"cached_tokens\":98}}",
+      NULL);
+  ClayTokenUsage usage;
+  clay_openai_usage_from_json(chat, &usage);
+  assert(usage.input_tokens == 125 && usage.output_tokens == 48);
+  assert(usage.cached_input_tokens_known && usage.cached_input_tokens == 98);
+  clay_json_free(chat);
+
+  ClayJson *responses = clay_json_parse(
+      "{\"input_tokens\":125,\"output_tokens\":48,"
+      "\"input_tokens_details\":{\"cached_tokens\":0}}",
+      NULL);
+  clay_openai_usage_from_json(responses, &usage);
+  assert(usage.input_tokens == 125 && usage.output_tokens == 48);
+  assert(usage.cached_input_tokens_known && usage.cached_input_tokens == 0);
+  clay_json_free(responses);
+
+  ClayJson *unknown = clay_json_object();
+  clay_openai_usage_from_json(unknown, &usage);
+  clay_json_free(unknown);
+  assert(!usage.cached_input_tokens_known);
+}
+
 int main(void) {
   test_pkce_and_authorization_url();
   test_callback_and_cors();
   test_refresh_rotation_and_routing();
   test_fragmented_openai_sse();
+  test_usage_cache_details();
   puts("grok tests passed");
   return 0;
 }

@@ -132,6 +132,16 @@ STORAGE_TEST_SRC    := tests/test_storage.c
 STORAGE_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(STORAGE_TEST_SRC))
 STORAGE_TEST_TARGET := $(BIN_DIR)/test_storage
 
+TEST_OBJ_ALL := $(CLI_TEST_OBJ) $(COMMAND_TEST_OBJ) $(CHAT_TEST_OBJ) \
+	$(UUID_TEST_OBJ) $(MEMORY_TEST_OBJ) $(SANDBOX_TEST_OBJ) \
+	$(FS_TOOLS_TEST_OBJ) $(CHECKPOINT_TEST_OBJ) $(PERMISSIONS_TEST_OBJ) \
+	$(CONTEXT_COMPACT_TEST_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) \
+	$(TODOWRITE_TEST_OBJ) $(PROCESS_TEST_OBJ) $(MCP_TEST_OBJ) \
+	$(REPO_MAP_TEST_OBJ) $(ENV_BLOCK_TEST_OBJ) $(COMPACT_TEST_OBJ) \
+	$(CODEX_TEST_OBJ) $(GROK_TEST_OBJ) $(UNDO_TEST_OBJ) \
+	$(STORAGE_TEST_OBJ) $(TEST_OBJ)
+TEST_DEP := $(TEST_OBJ_ALL:.o=.d)
+
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
 # libcurl-4.dll and its own dependency DLLs alongside it.
 CC_WIN      ?= x86_64-w64-mingw32-gcc
@@ -367,3 +377,4 @@ clean:
 -include $(DEP)
 -include $(DEP_WIN)
 -include $(DEP_RELEASE)
+-include $(TEST_DEP)

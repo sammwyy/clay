@@ -19,6 +19,8 @@ int main(void) {
     assert(strcmp(clay_chat_notes(chat), "") == 0);
     assert(clay_chat_set_notes(chat, "remember this") == 0);
     assert(strcmp(clay_chat_notes(chat), "remember this") == 0);
+    ClayChatUsage saved_usage = {125, 48, 98, 1, 250, 96};
+    assert(clay_chat_set_usage(chat, &saved_usage) == 0);
     assert(clay_chat_begin_turn(chat, "hello") == 0);
 
     ClayJson *messages = clay_json_array();
@@ -38,6 +40,14 @@ int main(void) {
     assert(chat);
     assert(strcmp(clay_chat_system_prompt(chat), "you are clay") == 0);
     assert(strcmp(clay_chat_notes(chat), "remember this") == 0);
+    ClayChatUsage loaded_usage;
+    clay_chat_get_usage(chat, &loaded_usage);
+    assert(loaded_usage.input_tokens == 125);
+    assert(loaded_usage.output_tokens == 48);
+    assert(loaded_usage.cached_input_tokens == 98);
+    assert(loaded_usage.cached_input_tokens_known);
+    assert(loaded_usage.total_input_tokens == 250);
+    assert(loaded_usage.total_output_tokens == 96);
     ClayJson *history = clay_chat_openai_messages(chat);
     assert(clay_json_array_count(history) == 2);
     assert(strcmp(clay_json_string_value(clay_json_object_get(clay_json_array_get(history, 0), "content")), "hello") == 0);

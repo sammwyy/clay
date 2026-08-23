@@ -81,6 +81,8 @@ struct ClayCommands {
                           once one exists */
   long input_tokens;
   long output_tokens;
+  long cached_input_tokens;
+  int cached_input_tokens_known;
   long total_input_tokens;
   long total_output_tokens;
   long messages_sent;
@@ -121,6 +123,9 @@ int clay_commands_select_model(ClayCommands *commands, const char *provider,
 void clay_commands_update_selected_below(ClayCommands *commands);
 void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens,
                                     long output_tokens);
+void clay_commands_set_tokens_below_with_cache(
+    ClayCommands *commands, long input_tokens, long output_tokens,
+    long cached_input_tokens, int cached_input_tokens_known);
 void clay_commands_reset_conversation(ClayCommands *commands);
 /* Walks up from the cwd to the repo root, concatenating AGENTS.md/CLAY.md
    at each level (root-first). Malloc'd; NULL if none found. */

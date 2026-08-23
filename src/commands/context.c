@@ -484,12 +484,32 @@ void clay_commands_update_selected_below(ClayCommands *commands) {
 
 void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens,
                                     long output_tokens) {
+  clay_commands_set_tokens_below_with_cache(commands, input_tokens,
+                                            output_tokens, 0, 0);
+}
+
+void clay_commands_set_tokens_below_with_cache(
+    ClayCommands *commands, long input_tokens, long output_tokens,
+    long cached_input_tokens, int cached_input_tokens_known) {
   (void)commands;
   ClayStr text;
   clay_str_init(&text);
-  clay_str_printf(&text, "%s\xe2\x86\x91 %ld  \xe2\x86\x93 %ld%s",
-                  clay_color(CLAY_CYAN), input_tokens, output_tokens,
-                  clay_color(CLAY_RESET));
+  if (cached_input_tokens_known && input_tokens > 0) {
+    if (cached_input_tokens < 0)
+      cached_input_tokens = 0;
+    if (cached_input_tokens > input_tokens)
+      cached_input_tokens = input_tokens;
+    long percent = (long)((double)cached_input_tokens * 100.0 /
+                          (double)input_tokens);
+    clay_str_printf(&text, "%s\xe2\x86\x91 %ld  \xe2\x86\x93 %ld  "
+                    "%s(cache: %ld%%)%s",
+                    clay_color(CLAY_CYAN), input_tokens, output_tokens,
+                    clay_color(CLAY_GRAY), percent, clay_color(CLAY_RESET));
+  } else {
+    clay_str_printf(&text, "%s\xe2\x86\x91 %ld  \xe2\x86\x93 %ld%s",
+                    clay_color(CLAY_CYAN), input_tokens, output_tokens,
+                    clay_color(CLAY_RESET));
+  }
   clay_below_set_text("tokens", text.data);
   clay_str_free(&text);
 }
@@ -878,6 +898,8 @@ void clay_commands_new_chat(ClayCommands *commands) {
   clay_commands_reset_conversation(commands);
   commands->input_tokens = 0;
   commands->output_tokens = 0;
+  commands->cached_input_tokens = 0;
+  commands->cached_input_tokens_known = 0;
   clay_below_stop_elapsed("status");
   clay_below_set_enabled("status", 0);
   clay_commands_set_tokens_below(commands, 0, 0);
@@ -901,6 +923,8 @@ int clay_commands_select_model(ClayCommands *commands, const char *provider,
     clay_commands_reset_conversation(commands);
     commands->input_tokens = 0;
     commands->output_tokens = 0;
+    commands->cached_input_tokens = 0;
+    commands->cached_input_tokens_known = 0;
     clay_commands_set_tokens_below(commands, 0, 0);
   }
   clay_commands_update_selected_below(commands);

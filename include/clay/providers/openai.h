@@ -26,6 +26,12 @@ ClayOpenAI *clay_openai_create_with_headers(const char *base_url,
                                              size_t header_count);
 void clay_openai_destroy(ClayOpenAI *client);
 void clay_openai_set_api_key(ClayOpenAI *client, const char *api_key);
+/* Enables the provider's optional prompt-cache key. Generic OpenAI-compatible
+   endpoints leave this unset unless their adapter explicitly supports it. */
+void clay_openai_set_prompt_cache_key(ClayOpenAI *client, const char *key);
+/* Adds or replaces a provider-specific request header. */
+int clay_openai_set_extra_header(ClayOpenAI *client, const char *name,
+                                 const char *value);
 long clay_openai_last_status(const ClayOpenAI *client);
 /* NULL omits reasoning_effort from requests and uses the provider default. */
 void clay_openai_set_reasoning_effort(ClayOpenAI *client, const char *effort);
@@ -53,6 +59,13 @@ typedef struct {
 
 /* All optional (NULL to ignore). */
 typedef struct {
+    long input_tokens;
+    long output_tokens;
+    long cached_input_tokens;
+    int cached_input_tokens_known;
+} ClayTokenUsage;
+
+typedef struct {
     void (*on_token)(const char *text, void *userdata);
     void (*on_tool_call)(const char *name, const char *arguments_json, void *userdata);
     void (*on_tool_result)(const char *name, const ClayJson *result, void *userdata);
@@ -60,7 +73,13 @@ typedef struct {
     void (*on_error)(long status, const char *body, void *userdata);
     int (*should_abort)(void *userdata);
     void *userdata;
+    /* Optional detailed usage. `cached_input_tokens_known` distinguishes an
+       explicit zero from a provider that does not report cache usage. */
+    void (*on_usage_details)(const ClayTokenUsage *usage, void *userdata);
 } ClayOpenAICallbacks;
+
+/* Parses both Chat Completions and Responses-style usage objects. */
+void clay_openai_usage_from_json(const ClayJson *usage, ClayTokenUsage *out);
 
 /* Streams the model's reply to `messages` (OpenAI wire format), requesting
    final token usage when the compatible endpoint supports it. Runs any

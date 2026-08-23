@@ -14,6 +14,15 @@ typedef struct {
     size_t message_count;
 } ClayChatSummary;
 
+typedef struct {
+    long input_tokens;
+    long output_tokens;
+    long cached_input_tokens;
+    int cached_input_tokens_known;
+    long total_input_tokens;
+    long total_output_tokens;
+} ClayChatUsage;
+
 /* system_prompt is frozen into the journal at creation and never rebuilt
    on later loads, so a chat's provider-side prefix cache stays valid for
    its whole lifetime. */
@@ -32,6 +41,8 @@ const char *clay_chat_system_prompt(const ClayChat *chat);
    unset. */
 const char *clay_chat_notes(const ClayChat *chat);
 int clay_chat_set_notes(ClayChat *chat, const char *notes); /* persists; 0 on success */
+void clay_chat_get_usage(const ClayChat *chat, ClayChatUsage *usage);
+int clay_chat_set_usage(ClayChat *chat, const ClayChatUsage *usage); /* persists; 0 on success */
 
 /* /tmp/clay-<id>, private to this chat and created if missing. Malloc'd; NULL
    on failure. */

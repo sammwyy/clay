@@ -381,6 +381,47 @@ int clay_chat_set_notes(ClayChat *chat, const char *notes) {
     return save(chat);
 }
 
+void clay_chat_get_usage(const ClayChat *chat, ClayChatUsage *usage) {
+    if (!usage) return;
+    memset(usage, 0, sizeof(*usage));
+    if (!chat) return;
+    ClayJson *value = clay_json_object_get(chat->journal, "usage");
+    if (clay_json_type(value) != CLAY_JSON_OBJECT) return;
+    usage->input_tokens = (long)clay_json_number_value(
+        clay_json_object_get(value, "input_tokens"));
+    usage->output_tokens = (long)clay_json_number_value(
+        clay_json_object_get(value, "output_tokens"));
+    usage->cached_input_tokens = (long)clay_json_number_value(
+        clay_json_object_get(value, "cached_input_tokens"));
+    usage->cached_input_tokens_known =
+        clay_json_number_value(clay_json_object_get(
+            value, "cached_input_tokens_known")) != 0;
+    usage->total_input_tokens = (long)clay_json_number_value(
+        clay_json_object_get(value, "total_input_tokens"));
+    usage->total_output_tokens = (long)clay_json_number_value(
+        clay_json_object_get(value, "total_output_tokens"));
+}
+
+int clay_chat_set_usage(ClayChat *chat, const ClayChatUsage *usage) {
+    if (!chat || !usage) return -1;
+    ClayJson *value = clay_json_object();
+    clay_json_object_set(value, "input_tokens",
+                         clay_json_number((double)usage->input_tokens));
+    clay_json_object_set(value, "output_tokens",
+                         clay_json_number((double)usage->output_tokens));
+    clay_json_object_set(value, "cached_input_tokens",
+                         clay_json_number((double)usage->cached_input_tokens));
+    clay_json_object_set(
+        value, "cached_input_tokens_known",
+        clay_json_number((double)usage->cached_input_tokens_known));
+    clay_json_object_set(value, "total_input_tokens",
+                         clay_json_number((double)usage->total_input_tokens));
+    clay_json_object_set(value, "total_output_tokens",
+                         clay_json_number((double)usage->total_output_tokens));
+    clay_json_object_set(chat->journal, "usage", value);
+    return save(chat);
+}
+
 size_t clay_chat_message_count(const ClayChat *chat) {
     return journal_message_count(chat->journal);
 }
