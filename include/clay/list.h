@@ -10,7 +10,7 @@ typedef struct {
 /* Prints segments back to back on one line, each in its own color. */
 void clay_segments_println(const ClaySegment *segments, int count);
 
-/* Prints "◆ ℂlay  <message>" - the standard response line prefix. */
+/* Prints "◆  <message>" - the standard response line prefix. */
 void clay_say(const char *fmt, ...);
 
 /* Same as clay_say, but the message itself is drawn in `color`. */
@@ -24,6 +24,9 @@ void clay_response_write(const char *text);
 void clay_response_end(void);
 int clay_response_prefix_width(void);
 
+/* Persistent structure around one assistant execution. */
+void clay_turn_header(const char *model);
+
 /* Streams and toggles the latest assistant reasoning block in the chat. */
 void clay_thinking_begin(void);
 void clay_thinking_write(const char *text);
@@ -33,7 +36,7 @@ void clay_thinking_forget(void);
 int clay_thinking_can_toggle(void);
 void clay_thinking_toggle(void);
 
-/* Prints "◆ ℂlay  <message>" meant to head a list of steps that follow. */
+/* Prints "◆  <message>" meant to head a list of steps that follow. */
 void clay_list_header(const char *fmt, ...);
 
 /* Prints "N. <verb> <target> (<info>)", indented under a clay_list_header.
@@ -43,5 +46,8 @@ void clay_list_step(int index, const char *verb, const char *target, const char 
 
 /* Prints a plain bullet item ("  · text"), for simple unordered lists. */
 void clay_list_bullet(const char *fmt, ...);
+
+/* Prints a nested line belonging to a tool result ("    · text"). */
+void clay_tool_output_line(const char *fmt, ...);
 
 #endif /* CLAY_LIST_H */

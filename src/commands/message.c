@@ -817,7 +817,7 @@ static int command_fits_inline(const char *command) {
   clay_str_init(&label);
   clay_str_push(&label, "Executed $");
   append_label_text(&label, command);
-  size_t width = clay_utf8_width("\xe2\x97\x86 clay  \xe2\x9c\x93 ") +
+  size_t width = clay_utf8_width("  ") +
                  clay_utf8_width(label.data) + 8;
   clay_str_free(&label);
   return width < (size_t)clay_term_width();
@@ -834,11 +834,11 @@ static void print_tool_output(const ClayJson *result, int show_command) {
     ClayStr display;
     clay_str_init(&display);
     append_label_text(&display, command);
-    clay_list_bullet("$ %s", display.data);
+    clay_tool_output_line("$ %s", display.data);
     clay_str_free(&display);
   }
   if (!*output) {
-    clay_list_bullet("(no output)");
+    clay_tool_output_line("(no output)");
     return;
   }
   ClayStr line;
@@ -848,7 +848,7 @@ static void print_tool_output(const ClayJson *result, int show_command) {
   for (const unsigned char *p = (const unsigned char *)output;; p++) {
     if (*p == '\n' || *p == '\0') {
       if (line.len > 0 && shown < CLAY_TOOL_VISIBLE_LINES) {
-        clay_list_bullet("%s", line.data);
+        clay_tool_output_line("%s", line.data);
         shown++;
       } else if (line.len > 0)
         omitted = 1;
@@ -865,7 +865,7 @@ static void print_tool_output(const ClayJson *result, int show_command) {
     }
   }
   if (omitted || truncated)
-    clay_list_bullet("%s…%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
+    clay_tool_output_line("%s…%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
   clay_str_free(&line);
 }
 
@@ -1042,6 +1042,9 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_sayc(CLAY_RED, "Could not save the chat journal.");
     return 0;
   }
+  if (clay_term_is_interactive())
+    fputc('\n', stdout); /* breathing room after the user's prompt */
+  clay_turn_header(commands->selected_model);
   int collapsed = clay_commands_maybe_compact(commands);
   if (collapsed > 0) {
     clay_sayc(
@@ -1298,8 +1301,9 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_json_free(messages);
     set_status(seconds, 0);
   }
-  if (stream.started && stream.status_visible) {
-    clay_below_status_refresh_below();
+  if (stream.started && clay_term_is_interactive()) {
+    if (stream.status_visible)
+      clay_below_status_refresh_below();
     clay_below_status_prepare_prompt();
     clay_str_free(&stream.response);
     clay_str_free(&stream.thinking);

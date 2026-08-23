@@ -13,11 +13,13 @@
 
 #define CLAY_BELOW_MAX_MODULES 64
 #define CLAY_BELOW_SPINNER_FRAMES 10
+#define CLAY_BELOW_SEPARATOR_WIDTH 3 /* " · " */
 
 typedef struct {
     char *id;
     ClayStr text;
     ClayBelowState state;
+    ClayBelowAlign alignment;
     int enabled;
     int index;
     int show_elapsed;
@@ -75,6 +77,13 @@ static void ensure_last_input(void) {
         clay_str_init(&g_last_input);
         g_last_input_ready = 1;
     }
+}
+
+static void render_turn_separator(void) {
+    fputs(clay_color(CLAY_GRAY), stdout);
+    fputs("  ──────────────────────────────", stdout);
+    fputs(clay_color(CLAY_RESET), stdout);
+    fputc('\n', stdout);
 }
 
 static ClayBelowModule *find_module(const char *id) {
@@ -147,6 +156,136 @@ static void print_module_inline(const ClayBelowModule *m) {
     }
 }
 
+static int module_display_width(const ClayBelowModule *m) {
+    int width = 0;
+    switch (m->state) {
+        case CLAY_BELOW_LOADING:
+            width += (int)clay_utf8_width(SPINNER_FRAMES[0]) + 1;
+            break;
+        case CLAY_BELOW_FINISHED:
+            width += (int)clay_utf8_width(CLAY_ICON_CHECK) + 1;
+            break;
+        case CLAY_BELOW_IDLE:
+            width += (int)clay_utf8_width(CLAY_ICON_SLEEP) + 1;
+            break;
+        case CLAY_BELOW_NONE:
+        default:
+            break;
+    }
+    if (m->show_elapsed)
+        width += 5; /* "%5.1fs" */
+    else
+        width += (int)clay_utf8_width(m->text.data);
+    return width;
+}
+
+static int module_group_width(const int *order, int start, int count) {
+    int width = 0;
+    for (int i = start; i < start + count; i++) {
+        if (i > start) width += CLAY_BELOW_SEPARATOR_WIDTH;
+        width += module_display_width(
+            clay_array_get(&g_modules, (size_t)order[i]));
+    }
+    return width;
+}
+
+static void print_module_separator(void) {
+    printf(" %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT,
+           clay_color(CLAY_RESET));
+}
+
+static void print_module_group(const int *order, int start, int count) {
+    for (int i = start; i < start + count; i++) {
+        if (i > start) print_module_separator();
+        print_module_inline(clay_array_get(&g_modules, (size_t)order[i]));
+    }
+}
+
+/* Modules opt into the right-hand group; their configured index still
+   controls their order within that group. */
+static void print_modules_aligned(const int *order, int count) {
+    int left_order[CLAY_BELOW_MAX_MODULES];
+    int right_order[CLAY_BELOW_MAX_MODULES];
+    int left_count = 0;
+    int right_count = 0;
+    for (int i = 0; i < count; i++) {
+        ClayBelowModule *m = clay_array_get(&g_modules, (size_t)order[i]);
+        if (m->alignment == CLAY_BELOW_ALIGN_RIGHT)
+            right_order[right_count++] = order[i];
+        else
+            left_order[left_count++] = order[i];
+    }
+
+    if (left_count == 0 || right_count == 0) {
+        print_module_group(order, 0, count);
+        return;
+    }
+
+    int left_width = module_group_width(left_order, 0, left_count);
+    int right_width = module_group_width(right_order, 0, right_count);
+    int separator_width = CLAY_BELOW_SEPARATOR_WIDTH;
+    if (2 + left_width + separator_width + right_width > clay_term_width()) {
+        print_module_group(order, 0, count);
+        return;
+    }
+
+    print_module_group(left_order, 0, left_count);
+    print_module_separator();
+    print_module_group(right_order, 0, right_count);
+}
+
+static int module_group_offset(const int *order, int count, int target) {
+    int offset = 0;
+    for (int i = 0; i < count; i++) {
+        if (i > 0) offset += CLAY_BELOW_SEPARATOR_WIDTH;
+        if (order[i] == target) return offset;
+        offset += module_display_width(
+            clay_array_get(&g_modules, (size_t)order[i]));
+    }
+    return -1;
+}
+
+static int status_display_column(const int *order, int count) {
+    int status_order = -1;
+    int left_order[CLAY_BELOW_MAX_MODULES];
+    int right_order[CLAY_BELOW_MAX_MODULES];
+    int left_count = 0;
+    int right_count = 0;
+    for (int i = 0; i < count; i++) {
+        ClayBelowModule *m = clay_array_get(&g_modules, (size_t)order[i]);
+        if (strcmp(m->id, "status") == 0) {
+            status_order = order[i];
+        }
+        if (m->alignment == CLAY_BELOW_ALIGN_RIGHT)
+            right_order[right_count++] = order[i];
+        else
+            left_order[left_count++] = order[i];
+    }
+    if (status_order < 0) return -1;
+
+    int width = clay_term_width();
+    if (left_count > 0 && right_count > 0) {
+        int left_width = module_group_width(left_order, 0, left_count);
+        int right_width = module_group_width(right_order, 0, right_count);
+        int separator_width = CLAY_BELOW_SEPARATOR_WIDTH;
+        if (2 + left_width + separator_width + right_width <= width) {
+            int offset = status_order >= 0
+                             ? module_group_offset(right_order, right_count,
+                                                   status_order)
+                             : -1;
+            if (offset >= 0)
+                return 2 + left_width + separator_width + offset;
+            offset = module_group_offset(left_order, left_count, status_order);
+            if (offset >= 0) return 2 + offset;
+        }
+    }
+
+    int column = 2;
+    int offset = module_group_offset(order, count, status_order);
+    if (offset >= 0) column += offset;
+    return column;
+}
+
 /* Cursor rests at row 0 col 0 between calls. Rows that already exist use
    cursor-down (never scrolls); new rows use a real '\n' (scrolls if row 0
    is at the bottom). Using '\n' on an existing row double-scrolls and
@@ -158,7 +297,8 @@ static void render_locked(void) {
 
     fputc('\r', stdout);
     clay_term_clear_line();
-    printf("%s%s>%s %s", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET), g_last_input.data);
+    printf("%s%s%s%s %s", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
+           CLAY_ICON_PROMPT, clay_color(CLAY_RESET), g_last_input.data);
 
     int order[CLAY_BELOW_MAX_MODULES];
     int count = sorted_enabled_indices(order);
@@ -173,10 +313,7 @@ static void render_locked(void) {
 
         if (count > 0 && row == 1) {
             fputs("  ", stdout);
-            for (int k = 0; k < count; k++) {
-                if (k > 0) printf(" %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT, clay_color(CLAY_RESET));
-                print_module_inline(clay_array_get(&g_modules, (size_t)order[k]));
-            }
+            print_modules_aligned(order, count);
         } else if (row >= overlay_start && row < total_now) {
             fputs(*(char **)clay_array_get(&g_overlay, (size_t)(row - overlay_start)), stdout);
         }
@@ -204,10 +341,7 @@ static void render_status_locked(void) {
 
     int order[CLAY_BELOW_MAX_MODULES];
     int count = sorted_enabled_indices(order);
-    for (int k = 0; k < count; k++) {
-        if (k > 0) printf(" %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT, clay_color(CLAY_RESET));
-        print_module_inline(clay_array_get(&g_modules, (size_t)order[k]));
-    }
+    print_modules_aligned(order, count);
 
     fputc('\r', stdout);
     g_last_line_count = 1;
@@ -220,18 +354,20 @@ static int status_module_loading(void) {
 }
 
 static void render_status_spinner_locked(void) {
-    clay_term_cursor_col(2);
-    printf("%s%s%s", clay_color(CLAY_YELLOW), SPINNER_FRAMES[g_spinner_frame], clay_color(CLAY_RESET));
+    ensure_modules();
+    int order[CLAY_BELOW_MAX_MODULES];
+    int count = sorted_enabled_indices(order);
+    int status_column = status_display_column(order, count);
     ClayBelowModule *status = find_module("status");
-    if (status && status->show_elapsed) {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        double seconds = (double)(now.tv_sec - status->elapsed_start.tv_sec) +
-                         (double)(now.tv_nsec - status->elapsed_start.tv_nsec) / 1e9;
-        clay_term_cursor_col(4);
-        printf("%s%5.1fs%s", clay_color(CLAY_YELLOW), seconds, clay_color(CLAY_RESET));
+    if (!status || status_column < 0) {
+        render_status_locked();
+        return;
     }
-    fputc('\r', stdout);
+    /* The spinner and timer are fixed-width, so update only that cell. This
+       preserves the cursor row and avoids wrapping the whole status line. */
+    clay_term_cursor_col(status_column);
+    print_module_inline(status);
+    clay_term_cursor_col(0);
     fflush(stdout);
 }
 
@@ -271,6 +407,7 @@ void clay_below_add(int index, const char *id) {
         m.id = strdup(id);
         clay_str_init(&m.text);
         m.state = CLAY_BELOW_NONE;
+        m.alignment = CLAY_BELOW_ALIGN_LEFT;
         m.enabled = 1;
         m.index = index;
         m.show_elapsed = 0;
@@ -313,6 +450,14 @@ void clay_below_reorder(const char *id, int index) {
     ensure_modules();
     ClayBelowModule *m = find_module(id);
     if (m) m->index = index;
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_set_alignment(const char *id, ClayBelowAlign alignment) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) m->alignment = alignment;
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -440,7 +585,8 @@ void clay_below_status_prepare_prompt(void) {
         clay_term_cursor_down(1);
         fputc('\r', stdout);
         clay_term_clear_line();
-        fputc('\n', stdout); /* blank separator row */
+        fputc('\n', stdout); /* breathing room after the assistant block */
+        render_turn_separator(); /* separator row between turns */
         fputc('\n', stdout); /* row 0 of the next prompt */
         fputc('\n', stdout); /* row 1 of the next prompt, reserved up front */
         clay_term_cursor_up(1);

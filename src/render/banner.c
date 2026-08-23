@@ -6,8 +6,15 @@
 #include <stdio.h>
 
 void clay_banner(const char *version) {
-    printf("%s%s %slay%s %s%s%s %sv%s%s %s%s%s %sType /help for commands.%s\n\n", clay_color(CLAY_ORANGE),
-           CLAY_ICON_DIAMOND, CLAY_ICON_COMPLEX, clay_color(CLAY_RESET), clay_color(CLAY_GRAY), CLAY_ICON_DOT,
-           clay_color(CLAY_RESET), clay_color(CLAY_WHITE), version, clay_color(CLAY_RESET), clay_color(CLAY_GRAY),
-           CLAY_ICON_DOT, clay_color(CLAY_RESET), clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
+    printf("%s%s%s  %sClay%s  %sv%s%s\n",
+           clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND,
+           clay_color(CLAY_RESET), clay_color(CLAY_WHITE),
+           clay_color(CLAY_RESET), clay_color(CLAY_GRAY), version,
+           clay_color(CLAY_RESET));
+    printf("%s  %s/help%s for commands  %s·%s  %sCtrl+O%s reasoning\n",
+           clay_color(CLAY_GRAY), clay_color(CLAY_CYAN),
+           clay_color(CLAY_GRAY), clay_color(CLAY_GRAY),
+           clay_color(CLAY_GRAY), clay_color(CLAY_CYAN),
+           clay_color(CLAY_GRAY));
+    fputc('\n', stdout);
 }

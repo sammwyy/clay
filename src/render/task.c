@@ -39,9 +39,9 @@ static void render_line(const char *icon_color, const char *icon, const char *la
     pthread_mutex_lock(&g_render_lock);
     while (g_render_pause_depth > 0) pthread_cond_wait(&g_render_ready, &g_render_lock);
     clay_term_clear_line();
-    printf("%s%s %slay%s  %s%s%s %s%s%s", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, CLAY_ICON_COMPLEX,
-           clay_color(CLAY_RESET),
-           clay_color(icon_color), icon, clay_color(CLAY_RESET), clay_color(CLAY_GRAY), label, clay_color(CLAY_RESET));
+    printf("  %s%s%s %s%s%s", clay_color(icon_color), icon,
+           clay_color(CLAY_RESET), clay_color(CLAY_GRAY), label,
+           clay_color(CLAY_RESET));
     if (active) fputs("\xe2\x80\xa6", stdout);
     if (suffix) printf(" %s", suffix);
     fflush(stdout);

@@ -8,8 +8,8 @@ typedef struct ClayTask ClayTask;
 void clay_task_render_pause(void);
 void clay_task_render_resume(void);
 
-/* Starts a spinning task line: "◆ ℂlay  <label>… <spinner>", animated in
-   yellow on a background thread. Stop it with clay_task_success/fail. */
+/* Starts a compact task item with an animated spinner. Stop it with
+   clay_task_success/fail. */
 ClayTask *clay_task_start(const char *fmt, ...);
 
 /* Stops the spinner, replaces it with a green check and elapsed time,

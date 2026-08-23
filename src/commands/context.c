@@ -463,20 +463,47 @@ int clay_commands_logout_provider(ClayCommands *commands, const char *id) {
   return -1;
 }
 
+static void append_display_cwd(ClayStr *text) {
+  char *cwd = clay_term_cwd();
+  if (!cwd) {
+    clay_str_push(text, ".");
+    return;
+  }
+  const char *home = getenv("HOME");
+#ifdef _WIN32
+  if (!home || !*home) home = getenv("USERPROFILE");
+#endif
+  if (home && *home) {
+    size_t length = strlen(home);
+    size_t cwd_length = strlen(cwd);
+    if (cwd_length >= length && strncmp(cwd, home, length) == 0 &&
+        (cwd[length] == '\0' || cwd[length] == '/' || cwd[length] == '\\')) {
+      clay_str_push(text, "~");
+      clay_str_push(text, cwd + length);
+      free(cwd);
+      return;
+    }
+  }
+  clay_str_push(text, cwd);
+  free(cwd);
+}
+
 void clay_commands_update_selected_below(ClayCommands *commands) {
   ClayStr text;
   clay_str_init(&text);
+  append_display_cwd(&text);
   if (commands->selected_model && commands->selected_provider) {
     const ClayReasoningEffort *effort =
         clay_commands_reasoning_effort(commands);
-    clay_str_printf(&text, "%s%s%s %s(%s)%s %s[%s%s%s]%s",
+    clay_str_printf(&text, " %s%s%s %s·%s %s(%s)%s %s[%s%s%s]%s",
                     clay_color(CLAY_CORAL), commands->selected_model,
+                    clay_color(CLAY_RESET), clay_color(CLAY_GRAY),
                     clay_color(CLAY_RESET), clay_color(CLAY_GRAY),
                     commands->selected_provider, clay_color(CLAY_RESET),
                     clay_color(CLAY_GRAY), clay_color(CLAY_CYAN), effort->label,
                     clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
   } else {
-    clay_str_push(&text, "None");
+    clay_str_push(&text, " · None");
   }
   clay_below_set_text("model", text.data);
   clay_str_free(&text);
@@ -1067,15 +1094,19 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   if (!environment_selection)
     clay_config_selection_save(commands->selected_provider,
                                commands->selected_model);
-  clay_below_add(0, "status");
+  clay_below_add(6, "status");
   clay_below_set_enabled("status", 0);
   clay_below_add(1, "model");
+  clay_below_set_alignment("model", CLAY_BELOW_ALIGN_LEFT);
   clay_below_add(2, "tokens");
+  clay_below_set_alignment("tokens", CLAY_BELOW_ALIGN_RIGHT);
   clay_below_add(3, "hint");
   clay_below_set_enabled("hint", 0);
   clay_below_add(4, "mode");
   clay_below_set_enabled("mode", 0);
   clay_below_add(5, "sandbox");
+  clay_below_set_alignment("sandbox", CLAY_BELOW_ALIGN_RIGHT);
+  clay_below_set_alignment("status", CLAY_BELOW_ALIGN_RIGHT);
   clay_commands_set_tokens_below(commands, 0, 0);
   clay_commands_update_selected_below(commands);
   clay_commands_update_sandbox_below(commands);

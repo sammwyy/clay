@@ -10,6 +10,11 @@ typedef enum {
     CLAY_BELOW_IDLE      /* clock */
 } ClayBelowState;
 
+typedef enum {
+    CLAY_BELOW_ALIGN_LEFT,
+    CLAY_BELOW_ALIGN_RIGHT
+} ClayBelowAlign;
+
 /* Registers a status module below the prompt, ordered by `index` (lower
    first). Re-adding an existing id only updates its index. New modules
    start with empty text, CLAY_BELOW_NONE, enabled. */
@@ -20,6 +25,7 @@ void clay_below_set_text(const char *id, const char *content);
 void clay_below_set_state(const char *id, ClayBelowState state);
 void clay_below_set_enabled(const char *id, int enabled);
 void clay_below_reorder(const char *id, int index);
+void clay_below_set_alignment(const char *id, ClayBelowAlign alignment);
 
 /* Shows a fixed-width elapsed timer in place of a module's text. */
 void clay_below_start_elapsed(const char *id);

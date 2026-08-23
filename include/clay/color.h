@@ -10,8 +10,8 @@
 /* Palette. clay's accent is orange; everything else stays neutral so the
    accent keeps standing out. True-color escapes, no 256-color fallback. */
 #define CLAY_ORANGE "\x1b[38;2;255;140;66m"
-#define CLAY_GRAY   "\x1b[38;2;125;125;133m"
-#define CLAY_WHITE  "\x1b[38;2;230;230;235m"
+#define CLAY_GRAY   "\x1b[38;2;158;158;168m"
+#define CLAY_WHITE  "\x1b[38;2;242;242;247m"
 #define CLAY_CYAN   "\x1b[38;2;102;204;204m"
 #define CLAY_GREEN  "\x1b[38;2;96;200;120m"
 #define CLAY_YELLOW "\x1b[38;2;230;190;80m"
@@ -27,5 +27,6 @@
 #define CLAY_ICON_DOT     "\xc2\xb7"     /* · */
 #define CLAY_ICON_ARROW   "\xe2\x86\x92" /* → */
 #define CLAY_ICON_SLEEP   "\xf0\x9f\x92\xa4" /* 💤 */
+#define CLAY_ICON_PROMPT  "\xe2\x80\xba" /* › */
 
 #endif /* CLAY_COLOR_H */

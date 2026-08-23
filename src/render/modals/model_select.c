@@ -47,7 +47,7 @@ static void render_header(const ClayModelProvider *provider, int label_width, co
     for (int i = 0; i < left_padding; i++) fputc(' ', stdout);
     fputs(provider->label, stdout);
     for (int i = 0; i < right_padding; i++) fputc(' ', stdout);
-    printf(" >%s  %s%s%s", clay_color(CLAY_RESET), clay_color(CLAY_GRAY), CLAY_MODEL_SEARCH_PREFIX,
+    printf(" %s›%s  %s%s%s", clay_color(CLAY_ORANGE), clay_color(CLAY_RESET), clay_color(CLAY_GRAY), CLAY_MODEL_SEARCH_PREFIX,
            clay_color(CLAY_RESET));
     printf("%s%s%s", clay_color(CLAY_WHITE), filter, clay_color(CLAY_RESET));
 }

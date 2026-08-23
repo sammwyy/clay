@@ -91,7 +91,8 @@ void clay_prompt_history_clear(void) {
 }
 
 static char *fallback_prompt_line(void) {
-    printf("%s%s>%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET));
+    printf("%s%s%s%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
+           CLAY_ICON_PROMPT, clay_color(CLAY_RESET));
     fflush(stdout);
     char *line = read_line_dynamic();
     if (line) push_history(line);
@@ -688,7 +689,8 @@ static void render_secret_line(const char *question, size_t len) {
 
 static char *secret_fallback(const char *question) {
     printf("%s%s%s\n", clay_color(CLAY_WHITE), question, clay_color(CLAY_RESET));
-    printf("%s%s>%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET));
+    printf("%s%s%s%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
+           CLAY_ICON_PROMPT, clay_color(CLAY_RESET));
     fflush(stdout);
     return read_line_dynamic();
 }
@@ -754,7 +756,8 @@ static int select_fallback(const char *question, const ClayChoice *options, int 
         if (options[i].desc) printf("  %s%s%s", clay_color(CLAY_GRAY), options[i].desc, clay_color(CLAY_RESET));
         fputc('\n', stdout);
     }
-    printf("%s%s>%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET));
+    printf("%s%s%s%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
+           CLAY_ICON_PROMPT, clay_color(CLAY_RESET));
     fflush(stdout);
 
     char *line = read_line_dynamic();
@@ -872,7 +875,8 @@ static int choice_fallback(const char *question, const ClayChoice *choices, int 
         printf("  %s%d.%s %sType your own...%s\n", clay_color(CLAY_GRAY), count + 1, clay_color(CLAY_RESET),
                clay_color(CLAY_DIM), clay_color(CLAY_RESET));
     }
-    printf("%s%s>%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET));
+    printf("%s%s%s%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
+           CLAY_ICON_PROMPT, clay_color(CLAY_RESET));
     fflush(stdout);
 
     char *line = read_line_dynamic();
@@ -949,7 +953,8 @@ int clay_prompt_choice(const char *question, const ClayChoice *choices, int coun
     clay_term_raw_disable();
 
     if (entering_custom) {
-        printf("%s%s>%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD), clay_color(CLAY_RESET));
+        printf("%s%s%s%s ", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
+               CLAY_ICON_PROMPT, clay_color(CLAY_RESET));
         fflush(stdout);
         char *line = read_line_dynamic();
         if (line && custom_out) {

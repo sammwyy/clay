@@ -7,8 +7,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-/* Aligns continuation lines under the text of a "◆ ℂlay  " prefix. */
-#define CLAY_INDENT "         "
+/* Keeps ordinary list items visually separate from assistant messages. */
+#define CLAY_INDENT "  "
 
 static ClayStr g_thinking;
 static int g_thinking_ready = 0;
@@ -17,6 +17,7 @@ static int g_thinking_expanded = 0;
 static int g_thinking_rows = 1;
 static int g_thinking_col = 0;
 static double g_thinking_seconds = 0;
+static int g_response_line_start = 1;
 
 static void print_prefix(void);
 
@@ -28,13 +29,13 @@ static void ensure_thinking(void) {
 }
 
 static void print_thinking_summary(double seconds) {
-    print_prefix();
-    printf("%sReasoning finished in %.1fs%s\n",
+    printf("  %sReasoning finished in %.1fs%s\n",
            clay_color(CLAY_GRAY), seconds, clay_color(CLAY_RESET));
 }
 
 static void print_prefix(void) {
-    printf("%s%s %slay%s  ", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND, CLAY_ICON_COMPLEX, clay_color(CLAY_RESET));
+    printf("%s%s%s  ", clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND,
+           clay_color(CLAY_RESET));
 }
 
 void clay_segments_println(const ClaySegment *segments, int count) {
@@ -69,13 +70,25 @@ void clay_sayc(const char *color, const char *fmt, ...) {
 }
 
 void clay_response_begin(void) {
-    print_prefix();
+    fputc('\n', stdout);
     fputs(clay_color(CLAY_WHITE), stdout);
+    g_response_line_start = 1;
     fflush(stdout);
 }
 
 void clay_response_write(const char *text) {
-    fputs(text, stdout);
+    if (!text || !*text) return;
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        if (g_response_line_start && *p != '\n') {
+            fputs("  ", stdout);
+            g_response_line_start = 0;
+        }
+        fputc(*p, stdout);
+        if (*p == '\n')
+            g_response_line_start = 1;
+        else if (*p != '\r')
+            g_response_line_start = 0;
+    }
     fflush(stdout);
 }
 
@@ -85,7 +98,15 @@ void clay_response_end(void) {
 }
 
 int clay_response_prefix_width(void) {
-    return (int)clay_utf8_width("\xe2\x97\x86 \xe2\x84\x82lay  ");
+    return 2;
+}
+
+void clay_turn_header(const char *model) {
+    printf("%s%s%s %sAgent%s %s(%s)%s\n",
+           clay_color(CLAY_ORANGE), CLAY_ICON_DIAMOND,
+           clay_color(CLAY_RESET), clay_color(CLAY_WHITE),
+           clay_color(CLAY_RESET), clay_color(CLAY_CORAL),
+           model && *model ? model : "model", clay_color(CLAY_RESET));
 }
 
 void clay_thinking_begin(void) {
@@ -96,7 +117,7 @@ void clay_thinking_begin(void) {
     g_thinking_rows = 1;
     g_thinking_col = clay_response_prefix_width() +
                      (int)clay_utf8_width("Thinking: ");
-    print_prefix();
+    fputs("  ", stdout);
     fputs(clay_color(CLAY_GRAY), stdout);
     fputs("Thinking: ", stdout);
     fflush(stdout);
@@ -222,6 +243,16 @@ void clay_list_step(int index, const char *verb, const char *target, const char 
 
 void clay_list_bullet(const char *fmt, ...) {
     printf("%s%s%s%s ", CLAY_INDENT, clay_color(CLAY_GRAY), CLAY_ICON_DOT, clay_color(CLAY_RESET));
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+    fputc('\n', stdout);
+}
+
+void clay_tool_output_line(const char *fmt, ...) {
+    printf("    %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT,
+           clay_color(CLAY_RESET));
     va_list args;
     va_start(args, fmt);
     vprintf(fmt, args);
