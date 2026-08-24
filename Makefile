@@ -132,6 +132,10 @@ STORAGE_TEST_SRC    := tests/test_storage.c
 STORAGE_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(STORAGE_TEST_SRC))
 STORAGE_TEST_TARGET := $(BIN_DIR)/test_storage
 
+SKILL_TEST_SRC    := tests/test_skill.c
+SKILL_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(SKILL_TEST_SRC))
+SKILL_TEST_TARGET := $(BIN_DIR)/test_skill
+
 TEST_OBJ_ALL := $(CLI_TEST_OBJ) $(COMMAND_TEST_OBJ) $(CHAT_TEST_OBJ) \
 	$(UUID_TEST_OBJ) $(MEMORY_TEST_OBJ) $(SANDBOX_TEST_OBJ) \
 	$(FS_TOOLS_TEST_OBJ) $(CHECKPOINT_TEST_OBJ) $(PERMISSIONS_TEST_OBJ) \
@@ -139,7 +143,7 @@ TEST_OBJ_ALL := $(CLI_TEST_OBJ) $(COMMAND_TEST_OBJ) $(CHAT_TEST_OBJ) \
 	$(TODOWRITE_TEST_OBJ) $(PROCESS_TEST_OBJ) $(MCP_TEST_OBJ) \
 	$(REPO_MAP_TEST_OBJ) $(ENV_BLOCK_TEST_OBJ) $(COMPACT_TEST_OBJ) \
 	$(CODEX_TEST_OBJ) $(GROK_TEST_OBJ) $(UNDO_TEST_OBJ) \
-	$(STORAGE_TEST_OBJ) $(TEST_OBJ)
+	$(STORAGE_TEST_OBJ) $(SKILL_TEST_OBJ) $(TEST_OBJ)
 TEST_DEP := $(TEST_OBJ_ALL:.o=.d)
 
 # Windows cross-build via mingw-w64. With CURL_LINK=dynamic, clay.exe needs
@@ -161,9 +165,10 @@ UNIT_TEST_TARGETS := $(CLI_TEST_TARGET) $(COMMAND_TEST_TARGET) $(CHAT_TEST_TARGE
 	$(CONTEXT_COMPACT_TEST_TARGET) $(PROJECT_INSTRUCTIONS_TEST_TARGET) \
 	$(TODOWRITE_TEST_TARGET) $(PROCESS_TEST_TARGET) $(MCP_TEST_TARGET) \
 	$(REPO_MAP_TEST_TARGET) $(ENV_BLOCK_TEST_TARGET) $(COMPACT_TEST_TARGET) \
-	$(CODEX_TEST_TARGET) $(GROK_TEST_TARGET) $(UNDO_TEST_TARGET) $(STORAGE_TEST_TARGET)
+	$(CODEX_TEST_TARGET) $(GROK_TEST_TARGET) $(UNDO_TEST_TARGET) $(STORAGE_TEST_TARGET) \
+	$(SKILL_TEST_TARGET)
 
-.PHONY: all build release build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact test-undo test-storage completions man-pages run compress compress-release compress-win clean debug
+.PHONY: all build release build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-process test-mcp test-repo-map test-environment-block test-compact test-undo test-storage test-skill completions man-pages run compress compress-release compress-win clean debug
 
 all: build
 
@@ -243,6 +248,12 @@ test-memory: $(MEMORY_TEST_TARGET)
 
 $(MEMORY_TEST_TARGET): $(LIB_OBJ) $(MEMORY_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(MEMORY_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-skill: $(SKILL_TEST_TARGET)
+	@./$<
+
+$(SKILL_TEST_TARGET): $(LIB_OBJ) $(SKILL_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(SKILL_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-sandbox: $(SANDBOX_TEST_TARGET)
 	@./$<

@@ -8,7 +8,7 @@ _clay() {
     prev=${COMP_WORDS[COMP_CWORD-1]}
 
     if [[ ${COMP_CWORD} -eq 1 && ${cur} != -* ]]; then
-        COMPREPLY=( $(compgen -W 'shell' -- "${cur}") )
+        COMPREPLY=( $(compgen -W 'shell skill' -- "${cur}") )
         return 0
     fi
 
@@ -19,6 +19,8 @@ _clay() {
     local options='--help --version --no-color --cwd --prompt -p'
     if [[ ${COMP_WORDS[1]} == shell ]]; then
         options+=' ls cat cp mv rm mkdir touch cd pwd echo true false exit help'
+    elif [[ ${COMP_WORDS[1]} == skill ]]; then
+        options+=' install remove enable disable'
     fi
     COMPREPLY=( $(compgen -W "${options}" -- "${cur}") )
 }

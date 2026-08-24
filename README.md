@@ -44,6 +44,7 @@ No giant framework to learn. No crowded dashboard. A single self-contained binar
 | **Already knows the room** | An `AGENTS.md`/`CLAY.md` in the workspace is folded into the system prompt automatically; the OS, working directory, git branch, and a top-level file listing ride along too, so the model doesn't spend a turn on `pwd`/`ls`/`git branch`. |
 | **A visible plan** | `todowrite` keeps a live task checklist for multi-step work; `repo_map` gives a ranked overview of the codebase's top-level definitions (via `ctags` if it's installed, otherwise a small built-in heuristic for C, Python, JS/TS, Go, and Rust) before the model starts reading files one by one. |
 | **Bring your own tools** | `/mcp add <name> <command> [args...]` connects any Model Context Protocol server over stdio — its tools show up next to clay's own. stdio transport only: no SSE/HTTP, no OAuth. |
+| **Skills, loaded on demand** | `/skill install <path>` registers any `SKILL.md`-based skill directory in place (no copying) — including ones written for other agents that use the same convention. Only each skill's name and one-line description sit in the system prompt; the model loads the full instructions itself, through a `skill` tool call, the moment a task actually needs them. |
 | **Tests run themselves** | `/autotest <command>` runs your test or lint command after a successful edit (confirmed once per session) and hands any failure straight back to the model. |
 | **Provider-aware token caching** | Normalizes input, output, and cached-input usage when the provider reports it; the live status shows `(cache: N%)`, while unknown cache support stays distinct from a real zero. |
 | **Persistent reasoning and usage** | Reasoning logs and token totals are stored with the chat journal, restored by `/resume`, and the latest completed reasoning can be expanded with `Ctrl+O`. |
@@ -103,6 +104,19 @@ OPENAI_API_KEY=... OPENAI_MODEL=gpt-4o-mini \
   ./bin/clay --prompt "Run the test suite and summarize failures"
 # -p is an alias for --prompt
 ```
+
+`clay skill install/remove/enable/disable/list` manages skills directly,
+without starting the agent - no provider, no HTTP, no chat:
+
+```sh
+clay skill install https://github.com/example/some-skill.git
+clay skill install ./local-skill-dir
+clay skill disable some-skill
+clay skill              # list installed skills
+```
+
+It's the same code as the interactive `/skill` command; see "Extensibility"
+below for what each subcommand does.
 
 The environment is an in-memory override; API keys are not written to
 `~/.clay`. `CLAY_PROVIDER` and `CLAY_MODEL` can be used for explicit provider
@@ -190,6 +204,7 @@ separate.
 | Command | What it does |
 | --- | --- |
 | `/mcp` | List configured MCP servers, or `/mcp add <name> <command> [args...]` / `/mcp remove <name>`. |
+| `/skill` | List installed skills, or `/skill install <path-or-git-url> [name]` / `/skill remove <name>` / `/skill enable\|disable <name>`. A git URL is cloned into `~/.clay/skills/sources/` (`git pull`s on reinstall). |
 | `/autotest [<command>\|clear]` | Set (or clear) the command that runs after a successful edit. |
 
 ### Conversation

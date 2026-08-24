@@ -519,6 +519,42 @@ static ClayJson *remember_schema(void) {
   return schema;
 }
 
+static ClayJson *skill_tool(const ClayJson *arguments, void *userdata) {
+  (void)userdata;
+  const char *name =
+      clay_json_string_value(clay_json_object_get(arguments, "name"));
+  ClayJson *result = clay_json_object();
+  char *content = clay_skill_read(name);
+  if (!content) {
+    clay_json_object_set(result, "ok", clay_json_bool(0));
+    clay_json_object_set(result, "error",
+                         clay_json_string("no enabled skill with that name"));
+    return result;
+  }
+  clay_json_object_set(result, "ok", clay_json_bool(1));
+  clay_json_object_set(result, "content", clay_json_string(content));
+  free(content);
+  return result;
+}
+
+static ClayJson *skill_schema(void) {
+  ClayJson *name = clay_json_object();
+  clay_json_object_set(name, "type", clay_json_string("string"));
+  clay_json_object_set(
+      name, "description",
+      clay_json_string("Name from the skill index in your system prompt."));
+  ClayJson *properties = clay_json_object();
+  clay_json_object_set(properties, "name", name);
+  ClayJson *required = clay_json_array();
+  clay_json_array_push(required, clay_json_string("name"));
+  ClayJson *schema = clay_json_object();
+  clay_json_object_set(schema, "type", clay_json_string("object"));
+  clay_json_object_set(schema, "properties", properties);
+  clay_json_object_set(schema, "required", required);
+  clay_json_object_set(schema, "additionalProperties", clay_json_bool(0));
+  return schema;
+}
+
 static int valid_todo_status(const char *status) {
   return strcmp(status, "pending") == 0 || strcmp(status, "in_progress") == 0 ||
          strcmp(status, "completed") == 0;
@@ -1138,6 +1174,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   ClayJson *grep_schema_json = clay_fs_tool_grep_schema();
   ClayJson *todowrite_schema_json = todowrite_schema();
   ClayJson *repo_map_schema_json = clay_fs_tool_repo_map_schema();
+  ClayJson *skill_schema_json = skill_schema();
   clay_commands_connect_mcp_servers(commands);
   ClayArray tool_list;
   clay_array_init(&tool_list, sizeof(ClayTool));
@@ -1186,6 +1223,10 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
        "unfamiliar codebase before "
        "reading specific files.",
        repo_map_schema_json, clay_fs_tool_repo_map, commands},
+      {"skill",
+       "Loads one skill's full instructions by name from the index in your "
+       "system prompt. Call it before starting a task a skill covers.",
+       skill_schema_json, skill_tool, commands},
   };
   for (size_t i = 0; i < sizeof(builtin_tools) / sizeof(builtin_tools[0]);
        i++) {
@@ -1223,6 +1264,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   clay_json_free(grep_schema_json);
   clay_json_free(todowrite_schema_json);
   clay_json_free(repo_map_schema_json);
+  clay_json_free(skill_schema_json);
   clay_openai_destroy(client);
   if (codex) {
     /* Save a refresh or rotated refresh token before discarding this request

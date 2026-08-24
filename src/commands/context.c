@@ -777,6 +777,14 @@ static char *build_fresh_system_prompt(void) {
     clay_str_printf(&text, "\n\nLong-term memory index:\n%s", index);
   free(index);
 
+  char *skills = clay_skill_index();
+  if (*skills)
+    clay_str_printf(&text,
+                    "\n\nAvailable skills (call the skill tool with one name "
+                    "to load its full instructions):\n%s",
+                    skills);
+  free(skills);
+
   char *project_instructions = clay_commands_load_project_instructions();
   if (project_instructions) {
     clay_str_printf(&text, "\n\nProject instructions (AGENTS.md/CLAY.md):\n%s",

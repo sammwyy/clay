@@ -153,6 +153,10 @@ char *clay_term_platform_name(void);
 /* Current working directory, absolute. Malloc'd; NULL on failure. */
 char *clay_term_cwd(void);
 
+/* Absolute, symlink-resolved form of `path`, independent of the caller's
+   cwd at any later point. Malloc'd; NULL if `path` doesn't exist. */
+char *clay_term_resolve_path(const char *path);
+
 /* Creates one directory level (not recursive). 0 on success or if it
    already exists, nonzero on failure. */
 int clay_term_mkdir(const char *path);

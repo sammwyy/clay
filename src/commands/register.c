@@ -46,6 +46,11 @@ void clay_commands_register(ClayCommands *commands) {
                           clay_cmd_autotest, commands);
     clay_command_register(registry, "compact", "Replace the conversation with an LLM-written summary",
                           clay_cmd_compact, commands);
+    clay_command_register(registry, "skill",
+                          "List/install/remove skills (/skill install <path-or-git-url> [name], "
+                          "/skill enable|disable <name>)",
+                          clay_cmd_skill, commands);
+    clay_command_register_alias(registry, "skills", clay_cmd_skill, commands);
     if (demo_enabled()) {
         clay_command_register(registry, "demo_confirm", "Demo a yes/no prompt", clay_cmd_confirm, commands);
         clay_command_register(registry, "demo_select", "Demo a multi-option select prompt", clay_cmd_select, commands);

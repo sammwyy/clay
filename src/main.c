@@ -20,6 +20,8 @@ static int require_provider(ClayCommands *commands) {
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "shell") == 0)
         return clay_shell_main(argc - 2, argv + 2);
+    if (argc > 1 && strcmp(argv[1], "skill") == 0)
+        return clay_skill_cli_main(argc - 2, argv + 2);
     char *one_shot_prompt = NULL;
     int cli_status = clay_cli_startup_with_prompt(argc, argv, CLAY_VERSION,
                                                   &one_shot_prompt);

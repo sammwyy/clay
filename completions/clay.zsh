@@ -11,11 +11,15 @@ _clay() {
         '--cwd[Run the agent from this directory]:directory:_directories'
         '--prompt[Send one prompt and exit]:prompt:'
         '-p[Alias for --prompt]:prompt:'
-        '1:subcommand:(shell)'
+        '1:subcommand:(shell skill)'
     )
     if [[ ${words[2]} == shell ]]; then
         args+=(
             '*:shell command:(ls cat cp mv rm mkdir touch cd pwd echo true false exit help)'
+        )
+    elif [[ ${words[2]} == skill ]]; then
+        args+=(
+            '*:skill command:(install remove enable disable)'
         )
     fi
     _arguments -s $args

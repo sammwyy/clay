@@ -216,6 +216,7 @@ void clay_cmd_checkpoints(const char *args, void *user_data);
 void clay_cmd_permissions(const char *args, void *user_data);
 void clay_cmd_plan(const char *args, void *user_data);
 void clay_cmd_undo(const char *args, void *user_data);
+void clay_cmd_skill(const char *args, void *user_data);
 
 /* Captures and commits one file-level undo entry around a write/edit. The
    snapshot is best-effort; unsupported or oversized files are still edited,

@@ -1149,6 +1149,16 @@ char *clay_term_cwd(void) {
 #endif
 }
 
+char *clay_term_resolve_path(const char *path) {
+  char resolved[CLAY_PATH_MAX];
+#ifdef _WIN32
+  if (_fullpath(resolved, path, sizeof(resolved)) == NULL) return NULL;
+#else
+  if (realpath(path, resolved) == NULL) return NULL;
+#endif
+  return strdup(resolved);
+}
+
 int clay_term_mkdir(const char *path) {
 #ifdef _WIN32
   if (_mkdir(path) != 0 && errno != EEXIST) return -1;
