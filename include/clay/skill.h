@@ -19,9 +19,12 @@ int clay_skill_valid_name(const char *name);
    non-NULL/non-empty. If `path` looks like a git remote (http(s)/git/ssh/
    file URL, "git@host:...", or a ".git" suffix), it's `git clone`d (or
    `git pull`d, if already cloned before) into ~/.clay/skills/sources/ first
-   - real git, shelled out, same as clay/checkpoint.h. 0 on success; -1 if
-   the clone/file/frontmatter is missing, the name is invalid, or the index
-   can't be written. */
+   - real git, shelled out, same as clay/checkpoint.h. A github.com "tree"/
+   "blob" web URL (e.g. copy-pasted from browsing a folder in a multi-skill
+   repo, .../tree/<branch>/path/to/skill) is recognized too: it clones the
+   repo at that branch and looks for SKILL.md under that subpath, not the
+   repo root. 0 on success; -1 if the clone/file/frontmatter is missing,
+   the name is invalid, or the index can't be written. */
 int clay_skill_install(const char *path, const char *name);
 
 /* Removes the manifest entry (the SKILL.md itself is untouched, since it

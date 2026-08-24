@@ -45,10 +45,11 @@ static char *git_url_slug(const char *url) {
 }
 
 /* Clones `url` into ~/.clay/skills/sources/<slug> with real `git clone`
-   (git-shelled-out, same as clay/checkpoint.h - no libgit2), or updates it
-   with `git pull --ff-only` if that clone already exists. Malloc'd
-   absolute path to the local clone; NULL if git failed. */
-static char *git_sync(const char *url) {
+   (git-shelled-out, same as clay/checkpoint.h - no libgit2), checking out
+   `ref` if given (branch/tag; ignored on an already-existing clone, which
+   is just `git pull --ff-only`d in place). Malloc'd absolute path to the
+   local clone; NULL if git failed. */
+static char *git_sync(const char *url, const char *ref) {
     if (clay_storage_ensure_dir("skills/sources") != 0) return NULL;
     char *sources_dir = clay_storage_path("skills/sources");
     if (!sources_dir) return NULL;
@@ -67,6 +68,11 @@ static char *git_sync(const char *url) {
         clay_str_push(&command, " pull --ff-only --quiet");
     } else {
         clay_str_push(&command, "git clone --depth 1 --quiet ");
+        if (ref && *ref) {
+            clay_str_push(&command, "--branch ");
+            clay_term_shell_quote(&command, ref);
+            clay_str_push_char(&command, ' ');
+        }
         clay_term_shell_quote(&command, url);
         clay_str_push_char(&command, ' ');
         clay_term_shell_quote(&command, dest.data);
@@ -84,6 +90,53 @@ static char *git_sync(const char *url) {
         return NULL;
     }
     return dest.data;
+}
+
+/* github.com's own web UI (a repo's "tree"/"blob" page for a subdirectory
+   or file) isn't something git can clone directly - split it into a
+   clonable repo URL, the ref it's browsing, and the subpath holding
+   SKILL.md, so a folder link copy-pasted from the browser (the natural
+   way to point at one skill in a multi-skill repo) just works. Malloc's
+   the three out-params (the subpath one is "" if the link points at the
+   repo root). 0 (nothing set) if `url` isn't such a link. */
+static int split_github_web_url(const char *url, char **repo_url_out, char **ref_out, char **subpath_out) {
+    const char *prefix = "https://github.com/";
+    size_t prefix_len = strlen(prefix);
+    if (strncmp(url, prefix, prefix_len) != 0) return 0;
+
+    const char *owner = url + prefix_len;
+    const char *owner_end = strchr(owner, '/');
+    if (!owner_end) return 0;
+    const char *repo = owner_end + 1;
+    const char *repo_end = strchr(repo, '/');
+    if (!repo_end) return 0;
+
+    const char *marker = repo_end + 1;
+    const char *ref_start;
+    if (strncmp(marker, "tree/", 5) == 0 || strncmp(marker, "blob/", 5) == 0) ref_start = marker + 5;
+    else return 0;
+
+    const char *ref_end = strchr(ref_start, '/');
+    size_t ref_len = ref_end ? (size_t)(ref_end - ref_start) : strlen(ref_start);
+    if (ref_len == 0) return 0;
+
+    ClayStr repo_url;
+    clay_str_init(&repo_url);
+    clay_str_push_n(&repo_url, url, (size_t)(repo_end - url));
+    clay_str_push(&repo_url, ".git");
+
+    char *ref = malloc(ref_len + 1);
+    memcpy(ref, ref_start, ref_len);
+    ref[ref_len] = '\0';
+
+    ClayStr subpath;
+    clay_str_init(&subpath);
+    if (ref_end && *(ref_end + 1)) clay_str_push(&subpath, ref_end + 1);
+
+    *repo_url_out = repo_url.data;
+    *ref_out = ref;
+    *subpath_out = subpath.data;
+    return 1;
 }
 #define CLAY_SKILL_FILE_LIMIT (4 * 1024 * 1024)
 
@@ -219,8 +272,28 @@ static int resolve_skill_md(const char *path, char **dir_out, char **content_out
 
 int clay_skill_install(const char *path, const char *name_override) {
     char *cloned_dir = NULL;
-    if (looks_like_git_source(path)) {
-        cloned_dir = git_sync(path);
+    char *github_repo_url = NULL;
+    char *github_ref = NULL;
+    char *github_subpath = NULL;
+    if (split_github_web_url(path, &github_repo_url, &github_ref, &github_subpath)) {
+        cloned_dir = git_sync(github_repo_url, github_ref);
+        free(github_repo_url);
+        free(github_ref);
+        if (!cloned_dir) {
+            free(github_subpath);
+            return -1;
+        }
+        if (*github_subpath) {
+            ClayStr combined;
+            clay_str_init(&combined);
+            clay_str_printf(&combined, "%s/%s", cloned_dir, github_subpath);
+            free(cloned_dir);
+            cloned_dir = combined.data;
+        }
+        free(github_subpath);
+        path = cloned_dir;
+    } else if (looks_like_git_source(path)) {
+        cloned_dir = git_sync(path, NULL);
         if (!cloned_dir) return -1;
         path = cloned_dir;
     }
