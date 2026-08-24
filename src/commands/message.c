@@ -17,7 +17,6 @@ typedef struct {
   int status_visible;
   int started;
   int response_active;
-  int output_col;
   long error_status;
   long input_tokens;
   long output_tokens;
@@ -26,6 +25,8 @@ typedef struct {
   int has_usage;
   ClayTask *tool_task;
   ClayStr response;
+  ClayWrap wrap; /* word wrap for the streamed answer */
+  int wrapping;  /* off when stdout is not a terminal */
   ClayStr thinking;
   struct timespec thinking_started;
   double thinking_seconds;
@@ -851,6 +852,13 @@ static void set_status(double seconds, int success) {
   clay_str_free(&text);
 }
 
+static void collapse_thinking(ClayConversationStream *stream) {
+  if (!stream->thinking_output_started)
+    return;
+  clay_thinking_finish(stream->thinking_seconds);
+  stream->thinking_output_started = 0;
+}
+
 static void show_thinking(ClayConversationStream *stream) {
   clay_below_set_text("status", "");
   clay_below_set_state("status", CLAY_BELOW_LOADING);
@@ -887,14 +895,11 @@ static void on_reasoning(const char *text, void *userdata) {
     clay_str_push_n(&stream->thinking, text, len);
   if (!stream->response_active && clay_term_is_interactive()) {
     if (!stream->thinking_output_started) {
-      if (stream->status_visible) {
-        clay_below_set_editing(0);
-        clay_below_stop_elapsed("status");
-        clay_below_set_enabled("status", 0);
-        clay_below_render_status();
-        clay_below_status_insert_above();
-        stream->status_visible = 0;
-      }
+      /* Reasoning text takes the row the spinner was on: hand it back
+         whole, or clay_thinking_finish's row math erases the wrong rows.
+         The elapsed clock keeps running for the rest of the turn. */
+      clay_below_set_enabled("status", 0);
+      hide_status(stream);
       clay_thinking_begin();
       stream->thinking_output_started = 1;
     }
@@ -909,7 +914,21 @@ static void persist_thinking(ClayCommands *commands,
                                   stream->thinking_seconds);
 }
 
+static void response_write_text(const char *text, void *user_data) {
+  (void)user_data;
+  clay_response_write(text);
+}
+
+/* A new row means the pinned status row has to move down first. */
+static void response_break_row(void *user_data) {
+  ClayConversationStream *stream = user_data;
+  if (stream->status_visible)
+    clay_below_status_push_down();
+  clay_response_write("\n");
+}
+
 static void close_response_for_tool(ClayConversationStream *stream) {
+  clay_wrap_flush(&stream->wrap);
   clay_below_set_editing(0);
   if (stream->response_active) {
     clay_response_end();
@@ -929,6 +948,8 @@ static void append_label_text(ClayStr *out, const char *text) {
   for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
     if (*p == 0x1b)
       clay_str_push(out, "\\x1b");
+    else if (*p == '\t')
+      clay_str_push_char(out, ' ');
     else if (*p < 0x20)
       clay_str_push_char(out, '?');
     else
@@ -1019,11 +1040,14 @@ static int command_fits_inline(const char *command) {
   return width < (size_t)clay_term_width();
 }
 
-static void print_tool_output(const ClayJson *result, int show_command) {
+static void print_tool_output(const ClayJson *result, int show_command,
+                              int show_error) {
   const char *command =
       clay_json_string_value(clay_json_object_get(result, "command"));
   const char *output =
       clay_json_string_value(clay_json_object_get(result, "output"));
+  const char *error =
+      clay_json_string_value(clay_json_object_get(result, "error"));
   int truncated =
       clay_json_bool_value(clay_json_object_get(result, "output_truncated"));
   if (show_command && *command) {
@@ -1034,7 +1058,12 @@ static void print_tool_output(const ClayJson *result, int show_command) {
     clay_str_free(&display);
   }
   if (!*output) {
-    clay_tool_output_line("(no output)");
+    /* A failure with nothing on stdout still has something to say, unless
+       the status line above already said it. */
+    if (show_error && *error)
+      clay_tool_output_line("%s", error);
+    else if (!*error)
+      clay_tool_output_line("(no output)");
     return;
   }
   ClayStr line;
@@ -1054,6 +1083,8 @@ static void print_tool_output(const ClayJson *result, int show_command) {
     } else if (*p != '\r') {
       if (*p == 0x1b)
         clay_str_push(&line, "\\x1b");
+      else if (*p == '\t')
+        clay_str_push_char(&line, ' ');
       else if (*p < 0x20)
         clay_str_push_char(&line, '?');
       else
@@ -1069,10 +1100,7 @@ static void on_tool_call(const char *name, const char *arguments_json,
                          void *userdata) {
   ClayConversationStream *stream = userdata;
   finish_thinking(stream);
-  if (stream->thinking_output_started) {
-    clay_thinking_finish(stream->thinking_seconds);
-    stream->thinking_output_started = 0;
-  }
+  collapse_thinking(stream);
   close_response_for_tool(stream);
   clay_str_clear(&stream->response);
   if (clay_term_is_interactive())
@@ -1107,6 +1135,7 @@ static void on_tool_result(const char *name, const ClayJson *result,
       detail_key
           ? clay_json_string_value(clay_json_object_get(result, detail_key))
           : NULL;
+  int error_in_label = 0;
   if (stream->tool_task) {
     ClayStr label;
     clay_str_init(&label);
@@ -1115,17 +1144,29 @@ static void on_tool_result(const char *name, const ClayJson *result,
       append_label_text(&label, command);
     } else
       tool_label(&label, name, 1, ok, detail);
-    if (ok)
+    if (ok) {
       clay_task_success_with_label(stream->tool_task, label.data, "");
-    else
-      clay_task_fail_with_label(stream->tool_task, label.data, "exit %ld",
-                                exit_code);
+    } else {
+      /* An exit code only means something for a command; everything else
+         fails with a message worth reading. */
+      const char *error =
+          clay_json_string_value(clay_json_object_get(result, "error"));
+      if (clay_json_object_get(result, "exit_code"))
+        clay_task_fail_with_label(stream->tool_task, label.data, "exit %ld",
+                                  exit_code);
+      else if (*error) {
+        clay_task_fail_with_label(stream->tool_task, label.data, "- %s", error);
+        error_in_label = 1;
+      } else {
+        clay_task_fail_with_label(stream->tool_task, label.data, "");
+      }
+    }
     clay_str_free(&label);
     stream->tool_task = NULL;
   } else
     clay_sayc(ok ? CLAY_GREEN : CLAY_RED, "%s: %s", ok ? "Executed" : "Failed",
               name);
-  print_tool_output(result, !inline_command);
+  print_tool_output(result, !inline_command, !error_in_label);
   if (clay_term_is_interactive())
     clay_term_raw_enable();
   show_thinking(stream);
@@ -1136,55 +1177,39 @@ static void on_token(const char *text, void *userdata) {
     return;
   ClayConversationStream *stream = userdata;
   finish_thinking(stream);
-  if (stream->thinking_output_started) {
-    clay_thinking_finish(stream->thinking_seconds);
-    stream->thinking_output_started = 0;
-  }
+  collapse_thinking(stream);
   clay_str_push(&stream->response, text);
   if (!stream->response_active) {
-    if (stream->status_visible) {
+    if (clay_term_is_interactive()) {
+      /* Take the row under the answer back - reasoning output gave it up -
+         so the end-of-turn separator and prompt land in the right place. */
       clay_below_set_editing(0);
-      clay_below_stop_elapsed("status");
-      clay_below_set_enabled("status", 0);
+      /* No animator from here on, so drop the spinner but keep the turn's
+         clock: the row repaints on every line the answer streams. */
+      clay_below_set_state("status", CLAY_BELOW_NONE);
+      clay_below_set_enabled("status", 1);
       clay_below_render_status();
       clay_below_status_insert_above();
+      /* clay_response_begin opens with a newline, which would otherwise put
+         the first line of the answer on the pinned row. */
+      clay_below_status_push_down();
+      stream->status_visible = 1;
+      stream->wrapping = 1;
     }
     clay_response_begin();
-    stream->output_col = clay_response_prefix_width();
+    clay_wrap_init(&stream->wrap, clay_response_prefix_width(),
+                   response_write_text, response_break_row, stream);
     stream->response_active = 1;
     stream->started = 1;
   }
-  ClayStr pending;
-  clay_str_init(&pending);
-  int width = clay_term_width();
-  for (const unsigned char *p = (const unsigned char *)text; *p;) {
-    if (*p == '\n') {
-      clay_response_write(pending.data);
-      clay_str_clear(&pending);
-      if (stream->status_visible)
-        clay_below_status_push_down();
-      clay_response_write("\n");
-      stream->output_col = 0;
-      p++;
-      continue;
-    }
-    size_t char_len = (*p & 0xE0) == 0xC0   ? 2
-                      : (*p & 0xF0) == 0xE0 ? 3
-                      : (*p & 0xF8) == 0xF0 ? 4
-                                            : 1;
-    if (stream->status_visible && stream->output_col + 1 >= width) {
-      clay_response_write(pending.data);
-      clay_str_clear(&pending);
-      clay_below_status_push_down();
-      stream->output_col = 0;
-    }
-    clay_str_push_n(&pending, (const char *)p, char_len);
-    stream->output_col++;
-    p += char_len;
-  }
-  clay_response_write(pending.data);
-  clay_str_free(&pending);
+  /* Piped output keeps the model's own line breaks: wrapping is for a
+     terminal the user is watching. */
+  if (stream->wrapping)
+    clay_wrap_write(&stream->wrap, text);
+  else
+    clay_response_write(text);
 }
+
 
 static void on_error(long status, const char *body, void *userdata) {
   (void)body;
@@ -1471,11 +1496,12 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   double seconds = (double)(finished_at.tv_sec - started_at.tv_sec) +
                    (double)(finished_at.tv_nsec - started_at.tv_nsec) / 1e9;
   finish_thinking(&stream);
-  if (stream.thinking_output_started)
-    clay_thinking_finish(stream.thinking_seconds);
+  collapse_thinking(&stream);
   int had_response = stream.response_active;
-  if (had_response)
+  if (had_response) {
+    clay_wrap_flush(&stream.wrap);
     clay_response_end();
+  }
   if (rc == 1) {
     if (stream.response.len > 0)
       clay_json_array_push(
@@ -1491,6 +1517,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     }
     clay_sayc(CLAY_YELLOW, "Operation aborted by user.");
     clay_str_free(&stream.response);
+    clay_wrap_free(&stream.wrap);
     clay_str_free(&stream.thinking);
     clay_app_set_state(commands->app, CLAY_APP_IDLE);
     return 0;
@@ -1538,6 +1565,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
       clay_below_status_refresh_below();
     clay_below_status_prepare_prompt();
     clay_str_free(&stream.response);
+    clay_wrap_free(&stream.wrap);
     clay_str_free(&stream.thinking);
     clay_app_set_state(commands->app, CLAY_APP_IDLE);
     return 1;
@@ -1551,6 +1579,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
       clay_sayc(CLAY_RED, "Provider request failed.");
   }
   clay_str_free(&stream.response);
+  clay_wrap_free(&stream.wrap);
   clay_str_free(&stream.thinking);
   clay_app_set_state(commands->app, CLAY_APP_IDLE);
   return 0;

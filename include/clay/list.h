@@ -1,6 +1,8 @@
 #ifndef CLAY_LIST_H
 #define CLAY_LIST_H
 
+#include "clay/str.h"
+
 /* One colored piece of text inside a composed line. NULL color = default fg. */
 typedef struct {
     const char *text;
@@ -30,6 +32,27 @@ void clay_turn_header(const char *model);
 /* Streams and toggles the latest assistant reasoning block in the chat. */
 void clay_thinking_begin(void);
 void clay_thinking_write(const char *text);
+
+/* Greedy word wrap for text that arrives in chunks. Complete words go out as
+   they arrive; the trailing partial word waits so it can move to the next
+   row whole. `write` receives the text, `break_row` starts a new row (and is
+   where a caller repaints anything pinned below). */
+typedef struct {
+    int col;    /* column the next character lands on */
+    int indent; /* column text resumes at after a break */
+    ClayStr word;
+    void (*write)(const char *text, void *user_data);
+    void (*break_row)(void *user_data);
+    void *user_data;
+} ClayWrap;
+
+void clay_wrap_init(ClayWrap *wrap, int indent,
+                    void (*write)(const char *text, void *user_data),
+                    void (*break_row)(void *user_data), void *user_data);
+void clay_wrap_write(ClayWrap *wrap, const char *text);
+/* Writes whatever word is still buffered. Call before ending the block. */
+void clay_wrap_flush(ClayWrap *wrap);
+void clay_wrap_free(ClayWrap *wrap);
 void clay_thinking_finish(double seconds);
 void clay_thinking_restore(const char *text, double seconds);
 void clay_thinking_forget(void);

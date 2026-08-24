@@ -1203,26 +1203,28 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   if (!environment_selection)
     clay_config_selection_save(commands->selected_provider,
                                commands->selected_model);
-  clay_below_add(6, "status");
+  /* Leftmost so the spinner and elapsed time are the first thing the eye
+     lands on while a turn runs. */
+  clay_below_add(0, "status");
+  clay_below_set_alignment("status", CLAY_BELOW_ALIGN_LEFT);
   clay_below_set_enabled("status", 0);
-  clay_below_add(0, "cwd");
+  clay_below_add(1, "cwd");
   clay_below_set_alignment("cwd", CLAY_BELOW_ALIGN_LEFT);
-  /* First thing dropped when the row runs out of space - the banner and the
-     shell prompt both already say where we are. */
+  /* First thing dropped when the row runs out of space - the shell prompt
+     already says where we are. */
   clay_below_set_optional("cwd", 1);
-  clay_below_add(1, "model");
+  clay_below_add(2, "model");
   clay_below_set_alignment("model", CLAY_BELOW_ALIGN_LEFT);
-  clay_below_add(2, "tokens");
+  clay_below_add(3, "tokens");
   clay_below_set_alignment("tokens", CLAY_BELOW_ALIGN_RIGHT);
-  clay_below_add(3, "hint");
+  clay_below_add(4, "hint");
   clay_below_set_enabled("hint", 0);
-  clay_below_add(4, "mode");
+  clay_below_add(5, "mode");
   clay_below_set_enabled("mode", 0);
-  clay_below_add(5, "tasks");
+  clay_below_add(6, "tasks");
   clay_below_set_enabled("tasks", 0);
   clay_below_add(7, "sandbox");
   clay_below_set_alignment("sandbox", CLAY_BELOW_ALIGN_RIGHT);
-  clay_below_set_alignment("status", CLAY_BELOW_ALIGN_RIGHT);
   clay_commands_set_tokens_below(commands, 0, 0);
   clay_commands_update_selected_below(commands);
   clay_commands_update_sandbox_below(commands);

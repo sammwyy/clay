@@ -26,9 +26,17 @@
   tool call, Auto approves them; the status below the prompt colors Sandbox
   and Ask pink, Unleashed and Auto red. Configs holding the older `auto` value
   still read as Sandbox (Auto).
-- The banner now carries `/help for commands` on its first line and the
-  workspace path on its second; the working directory below the prompt is
-  dropped whenever the status would no longer fit on one row.
+- Streamed answers and reasoning are word-wrapped and kept inside the block
+  indent instead of breaking mid-word at column 0. Piped output (`-p`) is
+  untouched, so redirected text keeps the model's own line breaks.
+- The turn's spinner and elapsed time are the first thing in the status line,
+  and the clock keeps running under the answer as it streams.
+- Tool lines say what actually went wrong: a failed call shows its error
+  instead of "exit 0", the message is no longer repeated underneath, tabs in
+  tool output render as spaces, and a long command or output line is clipped
+  to one row instead of wrapping.
+- The working directory below the prompt is dropped whenever the status would
+  no longer fit on one row.
 - Rewrote the system prompt around engineering practice: evidence over
   guesswork, diagnose before editing, reuse before writing, verify what you
   changed (or hand the user the command to verify it), minimal comments that

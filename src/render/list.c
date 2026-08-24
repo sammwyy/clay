@@ -15,7 +15,6 @@ static int g_thinking_ready = 0;
 static int g_thinking_streaming = 0;
 static int g_thinking_expanded = 0;
 static int g_thinking_rows = 1;
-static int g_thinking_col = 0;
 static double g_thinking_seconds = 0;
 static int g_response_line_start = 1;
 
@@ -109,14 +108,115 @@ void clay_turn_header(const char *model) {
            model && *model ? model : "model", clay_color(CLAY_RESET));
 }
 
+/* Bytes of `text` that fit in `columns` display columns, on a UTF-8
+   boundary. */
+static size_t prefix_within_width(const char *text, int columns) {
+    size_t offset = 0;
+    int used = 0;
+    while (text[offset] && used < columns) {
+        unsigned char c = (unsigned char)text[offset];
+        offset += (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+        used++;
+    }
+    return offset;
+}
+
+void clay_wrap_init(ClayWrap *wrap, int indent,
+                    void (*write)(const char *text, void *user_data),
+                    void (*break_row)(void *user_data), void *user_data) {
+    wrap->col = indent;
+    wrap->indent = indent;
+    wrap->write = write;
+    wrap->break_row = break_row;
+    wrap->user_data = user_data;
+    clay_str_init(&wrap->word);
+}
+
+void clay_wrap_free(ClayWrap *wrap) {
+    clay_str_free(&wrap->word);
+}
+
+static void wrap_break(ClayWrap *wrap) {
+    wrap->break_row(wrap->user_data);
+    wrap->col = wrap->indent;
+}
+
+void clay_wrap_flush(ClayWrap *wrap) {
+    if (!wrap->word.len) return;
+    /* The terminal's last column stays free: writing it wraps on its own in
+       most terminals, which would double the row. */
+    int limit = clay_term_width() - 1;
+    int word_width = (int)clay_utf8_width(wrap->word.data);
+    if (wrap->col + word_width > limit && wrap->indent + word_width <= limit)
+        wrap_break(wrap);
+    /* A word longer than the row itself has to be cut somewhere. */
+    while (wrap->col + (int)clay_utf8_width(wrap->word.data) > limit) {
+        int room = limit - wrap->col;
+        if (room <= 0) {
+            wrap_break(wrap);
+            continue;
+        }
+        size_t bytes = prefix_within_width(wrap->word.data, room);
+        ClayStr piece;
+        clay_str_init(&piece);
+        clay_str_push_n(&piece, wrap->word.data, bytes);
+        wrap->write(piece.data, wrap->user_data);
+        clay_str_free(&piece);
+        clay_str_remove_n(&wrap->word, 0, bytes);
+        wrap_break(wrap);
+    }
+    wrap->write(wrap->word.data, wrap->user_data);
+    wrap->col += (int)clay_utf8_width(wrap->word.data);
+    clay_str_clear(&wrap->word);
+}
+
+void clay_wrap_write(ClayWrap *wrap, const char *text) {
+    if (!text || !*text) return;
+    for (const unsigned char *p = (const unsigned char *)text; *p;) {
+        if (*p == '\n') {
+            clay_wrap_flush(wrap);
+            wrap_break(wrap);
+            p++;
+            continue;
+        }
+        if (*p == '\r') {
+            p++;
+            continue;
+        }
+        size_t len = (*p & 0xE0) == 0xC0   ? 2
+                     : (*p & 0xF0) == 0xE0 ? 3
+                     : (*p & 0xF8) == 0xF0 ? 4
+                                           : 1;
+        clay_str_push_n(&wrap->word, (const char *)p, len);
+        if (*p == ' ' || *p == '\t') clay_wrap_flush(wrap);
+        p += len;
+    }
+}
+
+static ClayWrap g_thinking_wrap;
+
+static void thinking_write_raw(const char *text, void *user_data) {
+    (void)user_data;
+    fputs(text, stdout);
+}
+
+static void thinking_break_row(void *user_data) {
+    (void)user_data;
+    fputc('\n', stdout);
+    fputs("  ", stdout);
+    g_thinking_rows++;
+}
+
 void clay_thinking_begin(void) {
     ensure_thinking();
     clay_str_clear(&g_thinking);
     g_thinking_streaming = 1;
     g_thinking_expanded = 0;
     g_thinking_rows = 1;
-    g_thinking_col = clay_response_prefix_width() +
-                     (int)clay_utf8_width("Thinking: ");
+    clay_wrap_init(&g_thinking_wrap, clay_response_prefix_width(),
+                   thinking_write_raw, thinking_break_row, NULL);
+    g_thinking_wrap.col = clay_response_prefix_width() +
+                          (int)clay_utf8_width("Thinking: ");
     fputs("  ", stdout);
     fputs(clay_color(CLAY_GRAY), stdout);
     fputs("Thinking: ", stdout);
@@ -126,41 +226,16 @@ void clay_thinking_begin(void) {
 void clay_thinking_write(const char *text) {
     if (!text || !*text) return;
     ensure_thinking();
-    clay_str_push(&g_thinking, text);
-    int width = clay_term_width();
-    for (const unsigned char *p = (const unsigned char *)text; *p;) {
-        if (*p == '\n') {
-            g_thinking_rows++;
-            g_thinking_col = 0;
-            p++;
-            continue;
-        }
-        if (*p == '\r') {
-            g_thinking_col = 0;
-            p++;
-            continue;
-        }
-        if (g_thinking_col >= width) {
-            g_thinking_rows++;
-            g_thinking_col = 0;
-        }
-        g_thinking_col++;
-        if ((*p & 0xE0) == 0xC0)
-            p += 2;
-        else if ((*p & 0xF0) == 0xE0)
-            p += 3;
-        else if ((*p & 0xF8) == 0xF0)
-            p += 4;
-        else
-            p++;
-    }
-    fputs(text, stdout);
+    clay_str_push(&g_thinking, text); /* stored raw, for Ctrl+O */
+    clay_wrap_write(&g_thinking_wrap, text);
     fflush(stdout);
 }
 
 void clay_thinking_finish(double seconds) {
     ensure_thinking();
     if (!g_thinking_streaming) return;
+    clay_wrap_flush(&g_thinking_wrap);
+    clay_wrap_free(&g_thinking_wrap);
     g_thinking_seconds = seconds;
     fputs(clay_color(CLAY_RESET), stdout);
     fputc('\n', stdout);
@@ -250,12 +325,24 @@ void clay_list_bullet(const char *fmt, ...) {
     fputc('\n', stdout);
 }
 
+/* One row per line: a wrapped tool line reads as two entries and pushes the
+   real output off screen. */
 void clay_tool_output_line(const char *fmt, ...) {
     printf("    %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT,
            clay_color(CLAY_RESET));
+    ClayStr line;
+    clay_str_init(&line);
     va_list args;
     va_start(args, fmt);
-    vprintf(fmt, args);
+    clay_str_vprintf(&line, fmt, args);
     va_end(args);
+    int room = clay_term_width() - 7; /* indent, bullet, space, last column */
+    if (room > 1 && (int)clay_utf8_width(line.data) > room) {
+        clay_term_write_clipped(line.data, room - 1);
+        printf("%s…%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
+    } else {
+        fputs(line.data, stdout);
+    }
+    clay_str_free(&line);
     fputc('\n', stdout);
 }

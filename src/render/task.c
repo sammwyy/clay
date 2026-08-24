@@ -39,9 +39,19 @@ static void render_line(const char *icon_color, const char *icon, const char *la
     pthread_mutex_lock(&g_render_lock);
     while (g_render_pause_depth > 0) pthread_cond_wait(&g_render_ready, &g_render_lock);
     clay_term_clear_line();
-    printf("  %s%s%s %s%s%s", clay_color(icon_color), icon,
-           clay_color(CLAY_RESET), clay_color(CLAY_GRAY), label,
-           clay_color(CLAY_RESET));
+    /* One row per task: a label that wraps turns the live line into two and
+       the spinner then redraws over the wrong one. */
+    int room = clay_term_width() - 5 - (int)clay_utf8_width(icon);
+    if (suffix) room -= (int)clay_utf8_width(suffix) + 1;
+    printf("  %s%s%s %s", clay_color(icon_color), icon, clay_color(CLAY_RESET),
+           clay_color(CLAY_GRAY));
+    if (room > 1 && (int)clay_utf8_width(label) > room) {
+        clay_term_write_clipped(label, room - 1);
+        fputs("\xe2\x80\xa6", stdout);
+    } else {
+        fputs(label, stdout);
+    }
+    fputs(clay_color(CLAY_RESET), stdout);
     if (active) fputs("\xe2\x80\xa6", stdout);
     if (suffix) printf(" %s", suffix);
     fflush(stdout);

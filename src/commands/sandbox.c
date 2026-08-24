@@ -3,13 +3,13 @@
 #include <string.h>
 
 /* Two independent axes, cycled together by Shift+Tab: where commands run
-   (Sandbox/Unleashed) and whether each tool call is approved by hand
-   (Ask/Auto). */
+   (Sandbox/Unleashed), and whether approvals go through /permissions (Ask)
+   or are skipped entirely (Auto). */
 static const ClayChoice MODE_CHOICES[] = {
-    {"Sandbox (Ask)", "Isolated filesystem, no network; every tool call asks first (default)."},
-    {"Sandbox (Auto)", "Isolated filesystem, no network; tool calls run without asking."},
-    {"Unleashed (Ask)", "No sandbox, commands run in a normal shell; every tool call asks first."},
-    {"Unleashed (Auto)", "No sandbox and no questions. Only in a workspace you can afford to lose."},
+    {"Sandbox (Ask)", "Isolated filesystem, no network; /permissions decides what asks first (default)."},
+    {"Sandbox (Auto)", "Isolated filesystem, no network; every tool call runs without asking."},
+    {"Unleashed (Ask)", "Commands run in a normal shell; /permissions decides what asks first."},
+    {"Unleashed (Auto)", "No sandbox and nothing asks. Only in a workspace you can afford to lose."},
 };
 
 static const char *const MODE_IDS[] = {"sandbox", "sandbox-auto", "unleashed",
