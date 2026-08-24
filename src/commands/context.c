@@ -551,13 +551,8 @@ static int load_system_prompt_cache(char **text_out, long long *last_used_out,
   char *path = system_prompt_cache_path();
   if (!path)
     return -1;
-  ClayStr body;
-  int read_rc = clay_storage_read_limited(path, 4 * 1024 * 1024, &body);
+  ClayJson *root = clay_storage_read_json(path, 4 * 1024 * 1024);
   free(path);
-  if (read_rc != 0)
-    return -1;
-  ClayJson *root = clay_json_parse(body.data, NULL);
-  clay_str_free(&body);
   const char *text =
       clay_json_type(root) == CLAY_JSON_OBJECT
           ? clay_json_string_value(clay_json_object_get(root, "text"))
@@ -584,18 +579,14 @@ static void save_system_prompt_cache(const char *text, long long last_used_at,
   clay_json_object_set(root, "last_used_at",
                        clay_json_number((double)last_used_at));
   clay_json_object_set(root, "cwd", clay_json_string(cwd));
-  ClayStr body;
-  clay_str_init(&body);
-  clay_json_stringify(root, &body);
-  clay_json_free(root);
   char *path = clay_storage_path("system_prompt.json");
   if (!path) {
-    clay_str_free(&body);
+    clay_json_free(root);
     return;
   }
-  clay_storage_write_atomic_private(path, body.data, body.len);
+  clay_storage_write_json_atomic_private(path, root);
   free(path);
-  clay_str_free(&body);
+  clay_json_free(root);
 }
 
 #define CLAY_PROJECT_INSTRUCTIONS_MAX_DEPTH 32

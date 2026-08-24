@@ -5,6 +5,8 @@
 
 #include <stddef.h>
 
+typedef struct ClayJson ClayJson;
+
 /* Paths and files under the private ~/.clay storage tree. Returned paths are
    malloc'd. `relative` uses '/' separators and must be an internal path, not
    user input. */
@@ -20,5 +22,10 @@ int clay_storage_read_limited(const char *path, size_t max_bytes,
                               ClayStr *out);
 int clay_storage_write_atomic_private(const char *path, const void *data,
                                       size_t len);
+
+/* Bounded JSON file helpers. Returned values are owned by the caller. */
+ClayJson *clay_storage_read_json(const char *path, size_t max_bytes);
+int clay_storage_write_json_atomic_private(const char *path,
+                                           const ClayJson *value);
 
 #endif /* CLAY_STORAGE_H */

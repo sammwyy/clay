@@ -1,5 +1,6 @@
 #include "clay/storage.h"
 
+#include "clay/json.h"
 #include "clay/term.h"
 
 #include <stdlib.h>
@@ -70,4 +71,22 @@ int clay_storage_read_limited(const char *path, size_t max_bytes,
 int clay_storage_write_atomic_private(const char *path, const void *data,
                                       size_t len) {
     return clay_term_write_file_atomic(path, data, len);
+}
+
+ClayJson *clay_storage_read_json(const char *path, size_t max_bytes) {
+    ClayStr text;
+    if (clay_storage_read_limited(path, max_bytes, &text) != 0) return NULL;
+    ClayJson *value = clay_json_parse(text.data, NULL);
+    clay_str_free(&text);
+    return value;
+}
+
+int clay_storage_write_json_atomic_private(const char *path,
+                                           const ClayJson *value) {
+    ClayStr text;
+    clay_str_init(&text);
+    clay_json_stringify(value, &text);
+    int rc = clay_storage_write_atomic_private(path, text.data, text.len);
+    clay_str_free(&text);
+    return rc;
 }

@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "clay/array.h"
+#include "clay/json.h"
 #include "clay/storage.h"
 
 #include <assert.h>
@@ -35,6 +36,18 @@ int main(void) {
     clay_str_free(&body);
     assert(clay_storage_read_limited(path, 4, &body) != 0);
     assert(errno == EFBIG);
+
+    ClayJson *json = clay_json_object();
+    clay_json_object_set(json, "name", clay_json_string("clay"));
+    assert(clay_storage_write_json_atomic_private(path, json) == 0);
+    clay_json_free(json);
+    json = clay_storage_read_json(path, 1024);
+    assert(json);
+    assert(strcmp(clay_json_string_value(clay_json_object_get(json, "name")),
+                  "clay") == 0);
+    clay_json_free(json);
+    assert(clay_storage_write_atomic_private(path, "{", 1) == 0);
+    assert(clay_storage_read_json(path, 1024) == NULL);
     remove(path);
     free(path);
 

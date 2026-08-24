@@ -47,10 +47,8 @@ static char *read_file(const char *path) {
 
 static ClayJson *load_manifest(void) {
     char *path = index_path();
-    char *text = path ? read_file(path) : NULL;
+    ClayJson *root = path ? clay_storage_read_json(path, CLAY_MEMORY_FILE_LIMIT) : NULL;
     free(path);
-    ClayJson *root = text ? clay_json_parse(text, NULL) : NULL;
-    free(text);
     if (!root || clay_json_type(root) != CLAY_JSON_OBJECT ||
         clay_json_type(clay_json_object_get(root, "entries")) != CLAY_JSON_ARRAY) {
         clay_json_free(root);
@@ -67,13 +65,9 @@ static int save_manifest(ClayJson *root) {
         clay_json_free(root);
         return -1;
     }
-    ClayStr body;
-    clay_str_init(&body);
-    clay_json_stringify(root, &body);
-    clay_json_free(root);
-    int ok = clay_storage_write_atomic_private(path, body.data, body.len) == 0;
+    int ok = clay_storage_write_json_atomic_private(path, root) == 0;
     free(path);
-    clay_str_free(&body);
+    clay_json_free(root);
     return ok ? 0 : -1;
 }
 

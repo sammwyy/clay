@@ -46,12 +46,6 @@ static int ensure_chat_dir(const char *id) {
     return rc;
 }
 
-static char *read_file(const char *path) {
-    ClayStr text;
-    if (clay_storage_read_limited(path, CLAY_CHAT_FILE_LIMIT, &text) != 0) return NULL;
-    return text.data;
-}
-
 static size_t journal_message_count(const ClayJson *journal) {
     ClayJson *turns = clay_json_object_get(journal, "turns");
     size_t count = 0;
@@ -131,12 +125,9 @@ static void chat_summaries_free(ClayArray *summaries) {
 static int chat_index_load(ClayArray *summaries) {
     char *path = chat_index_path();
     if (!path) return -1;
-    ClayStr text;
-    int rc = clay_storage_read_limited(path, CLAY_CHAT_INDEX_FILE_LIMIT, &text);
+    ClayJson *root = clay_storage_read_json(path, CLAY_CHAT_INDEX_FILE_LIMIT);
     free(path);
-    if (rc != 0) return -1;
-    ClayJson *root = clay_json_parse(text.data, NULL);
-    clay_str_free(&text);
+    if (!root) return -1;
     ClayJson *items = root && clay_json_type(root) == CLAY_JSON_OBJECT
                           ? clay_json_object_get(root, "chats") : NULL;
     if (clay_json_type(items) != CLAY_JSON_ARRAY) {
@@ -180,13 +171,9 @@ static int chat_index_save(const ClayArray *summaries) {
         clay_json_array_push(items, item);
     }
     clay_json_object_set(root, "chats", items);
-    ClayStr body;
-    clay_str_init(&body);
-    clay_json_stringify(root, &body);
-    clay_json_free(root);
-    int rc = clay_storage_write_atomic_private(path, body.data, body.len);
-    clay_str_free(&body);
+    int rc = clay_storage_write_json_atomic_private(path, root);
     free(path);
+    clay_json_free(root);
     return rc;
 }
 
@@ -244,11 +231,7 @@ static int save(ClayChat *chat) {
     clay_json_object_set(chat->journal, "updated_at", clay_json_number(clay_time_now()));
     clay_json_object_set(chat->journal, "message_count",
                          clay_json_number((double)journal_message_count(chat->journal)));
-    ClayStr body;
-    clay_str_init(&body);
-    clay_json_stringify(chat->journal, &body);
-    int ok = clay_storage_write_atomic_private(chat->path, body.data, body.len) == 0;
-    clay_str_free(&body);
+    int ok = clay_storage_write_json_atomic_private(chat->path, chat->journal) == 0;
     if (ok) chat_index_update(chat);
     return ok ? 0 : -1;
 }
@@ -343,11 +326,8 @@ ClayChat *clay_chat_create(const char *system_prompt) {
 ClayChat *clay_chat_load(const char *id) {
     char *path = chat_path(id);
     if (!path) return NULL;
-    char *text = read_file(path);
+    ClayJson *journal = clay_storage_read_json(path, CLAY_CHAT_FILE_LIMIT);
     free(path);
-    if (!text) return NULL;
-    ClayJson *journal = clay_json_parse(text, NULL);
-    free(text);
     if (!journal || clay_json_type(journal) != CLAY_JSON_OBJECT ||
         clay_json_type(clay_json_object_get(journal, "turns")) != CLAY_JSON_ARRAY) {
         clay_json_free(journal);

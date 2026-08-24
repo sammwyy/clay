@@ -209,11 +209,8 @@ static char *config_path(void) {
 /* Array of server-config objects, or an empty array if missing/malformed. */
 static ClayJson *load_config_root(void) {
     char *path = config_path();
-    ClayStr text;
-    int read_rc = path ? clay_storage_read_limited(path, CLAY_MCP_CONFIG_FILE_LIMIT, &text) : -1;
+    ClayJson *root = path ? clay_storage_read_json(path, CLAY_MCP_CONFIG_FILE_LIMIT) : NULL;
     free(path);
-    ClayJson *root = read_rc == 0 ? clay_json_parse(text.data, NULL) : NULL;
-    if (read_rc == 0) clay_str_free(&text);
     if (!root || clay_json_type(root) != CLAY_JSON_ARRAY) {
         clay_json_free(root);
         root = clay_json_array();
@@ -233,13 +230,9 @@ static int save_config_root(ClayJson *root) {
         return -1;
     }
 
-    ClayStr body;
-    clay_str_init(&body);
-    clay_json_stringify(root, &body);
-    clay_json_free(root);
-    int ok = clay_storage_write_atomic_private(path, body.data, body.len) == 0;
+    int ok = clay_storage_write_json_atomic_private(path, root) == 0;
     free(path);
-    clay_str_free(&body);
+    clay_json_free(root);
     return ok ? 0 : -1;
 }
 

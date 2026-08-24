@@ -49,13 +49,8 @@ static ClayJson *load_selection_root(void) {
   char *path = selection_path();
   if (!path)
     return clay_json_object();
-  ClayStr text;
-  int read_rc = clay_storage_read_limited(path, CLAY_CONFIG_FILE_LIMIT, &text);
+  ClayJson *root = clay_storage_read_json(path, CLAY_CONFIG_FILE_LIMIT);
   free(path);
-  if (read_rc != 0)
-    return clay_json_object();
-  ClayJson *root = clay_json_parse(text.data, NULL);
-  clay_str_free(&text);
   if (!root || clay_json_type(root) != CLAY_JSON_OBJECT) {
     clay_json_free(root);
     return clay_json_object();
@@ -74,15 +69,9 @@ static int save_selection_root(ClayJson *root) {
     return -1;
   }
 
-  ClayStr body;
-  clay_str_init(&body);
-  clay_json_stringify(root, &body);
-  clay_json_free(root);
-
-  int rc = clay_storage_write_atomic_private(path, body.data, body.len);
-
+  int rc = clay_storage_write_json_atomic_private(path, root);
   free(path);
-  clay_str_free(&body);
+  clay_json_free(root);
   return rc;
 }
 
@@ -91,13 +80,8 @@ ClayProviderConfig *clay_config_load(const char *id) {
   if (!path)
     return NULL;
 
-  ClayStr text;
-  int read_rc = clay_storage_read_limited(path, CLAY_CONFIG_FILE_LIMIT, &text);
+  ClayJson *root = clay_storage_read_json(path, CLAY_CONFIG_FILE_LIMIT);
   free(path);
-  if (read_rc != 0)
-    return NULL;
-  ClayJson *root = clay_json_parse(text.data, NULL);
-  clay_str_free(&text);
   if (!root)
     return NULL;
 
@@ -151,15 +135,9 @@ int clay_config_save(const ClayProviderConfig *config) {
     clay_json_object_set(root, "expires_at",
                          clay_json_number(config->expires_at));
 
-  ClayStr body;
-  clay_str_init(&body);
-  clay_json_stringify(root, &body);
-  clay_json_free(root);
-
-  int rc = clay_storage_write_atomic_private(path, body.data, body.len);
-
+  int rc = clay_storage_write_json_atomic_private(path, root);
   free(path);
-  clay_str_free(&body);
+  clay_json_free(root);
   return rc;
 }
 
