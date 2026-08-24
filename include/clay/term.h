@@ -18,6 +18,9 @@ void clay_term_cursor_down(int n);
 void clay_term_cursor_col(int col); /* 0-based column, absolute */
 void clay_term_sleep_ms(int ms);
 
+/* Notifies the user when an interactive session needs attention. */
+void clay_term_notify(const char *title, const char *message);
+
 /* Runs a shell command in the current directory, appending combined
    stdout/stderr to output up to output_limit. */
 int clay_term_shell_exec(const char *command, ClayStr *output,

@@ -40,6 +40,7 @@
 #endif
 
 #define CLAY_TERM_SHELL_TIMEOUT_SECONDS 120
+#define CLAY_TERM_NOTIFICATION_LIMIT 512
 
 struct ClayTermHttpServer {
 #ifdef _WIN32
@@ -119,6 +120,75 @@ void clay_term_sleep_ms(int ms) {
 #else
   usleep((unsigned int)ms * 1000);
 #endif
+}
+
+static void clay_term_notification_text(ClayStr *out, const char *text) {
+  if (!text) return;
+  for (size_t i = 0; text[i] && out->len < CLAY_TERM_NOTIFICATION_LIMIT; i++) {
+    unsigned char ch = (unsigned char)text[i];
+    if (ch < 0x20 || ch == 0x7f || ch == ';')
+      clay_str_push_char(out, ' ');
+    else
+      clay_str_push_char(out, (char)ch);
+  }
+}
+
+#if !defined(_WIN32) && defined(__APPLE__)
+static void clay_term_applescript_quote(ClayStr *out, const char *text) {
+  clay_str_push_char(out, '"');
+  for (const char *p = text; *p; p++) {
+    if (*p == '\\' || *p == '"') clay_str_push_char(out, '\\');
+    clay_str_push_char(out, *p);
+  }
+  clay_str_push_char(out, '"');
+}
+#endif
+
+#ifndef _WIN32
+static void clay_term_spawn_notification(const char *title, const char *message) {
+  pid_t child = fork();
+  if (child < 0) return;
+  if (child == 0) {
+    pid_t detached = fork();
+    if (detached > 0) _exit(0);
+    if (detached < 0) _exit(0);
+#ifdef __APPLE__
+    ClayStr script;
+    clay_str_init(&script);
+    clay_str_push(&script, "display notification ");
+    clay_term_applescript_quote(&script, message);
+    clay_str_push(&script, " with title ");
+    clay_term_applescript_quote(&script, title);
+    execlp("osascript", "osascript", "-e", script.data, (char *)NULL);
+    clay_str_free(&script);
+#else
+    execlp("notify-send", "notify-send", "--app-name", title, message,
+           (char *)NULL);
+#endif
+    _exit(0);
+  }
+  waitpid(child, NULL, 0);
+}
+#endif
+
+void clay_term_notify(const char *title, const char *message) {
+  if (!clay_term_is_interactive()) return;
+
+  ClayStr safe_title;
+  ClayStr safe_message;
+  clay_str_init(&safe_title);
+  clay_str_init(&safe_message);
+  clay_term_notification_text(&safe_title, title ? title : "Clay");
+  clay_term_notification_text(&safe_message, message ? message : "Attention required");
+
+  fputc('\a', stdout);
+  printf("\x1b]9;%s: %s\a", safe_title.data, safe_message.data);
+  fflush(stdout);
+#ifndef _WIN32
+  clay_term_spawn_notification(safe_title.data, safe_message.data);
+#endif
+  clay_str_free(&safe_title);
+  clay_str_free(&safe_message);
 }
 
 int clay_term_shell_exec(const char *command, ClayStr *output,

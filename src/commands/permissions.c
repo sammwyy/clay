@@ -153,6 +153,7 @@ int clay_permissions_check(ClayCommands *commands, ClayPermissionCategory catego
         {"Always allow this session", "Don't ask again for similar calls until clay exits."},
         {"Deny", "Skip this call and tell the model it was denied."},
     };
+    clay_term_notify("Clay permission required", question.data);
     int index = clay_app_choice(commands->app, question.data, OPTIONS, 3, 0, NULL);
     const char *result = index == 0 ? "Allowed once" :
                          index == 1 ? "Allowed for this session" : "Denied";

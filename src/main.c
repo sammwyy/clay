@@ -78,6 +78,7 @@ int main(int argc, char **argv) {
             }
         } else if (input.kind == CLAY_INPUT_MESSAGE) {
             prompt_ready = clay_commands_run_message(commands, input.raw);
+            clay_term_notify("Clay", "Turn finished");
         }
         clay_input_free(&input);
         if (clay_term_take_interrupt()) {
