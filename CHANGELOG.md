@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `ask_user` tool: the model can ask one question mid-turn and get the answer
+  back in the same turn, through the same picker `/permissions` uses. Options
+  come with optional one-line notes, and a "Type your own..." row is offered
+  unless the model turns it off. Without a tty the call fails with an
+  instruction to assume and continue, so `-p` and piped runs never hang.
+
+### Changed
+
+- Rewrote the system prompt around engineering practice: evidence over
+  guesswork, diagnose before editing, reuse before writing, verify what you
+  changed (or hand the user the command to verify it), minimal comments that
+  state facts rather than reasoning, plain accurate English in docs, and
+  Conventional Commits for any commit the user asks for.
+
 ## 0.0.3
 
 ### Added

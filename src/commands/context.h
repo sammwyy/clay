@@ -260,4 +260,10 @@ ClayJson *clay_fs_tool_repo_map_schema(void);
 ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata);
 ClayJson *todowrite_schema(void);
 
+/* Interactive question tool (src/commands/message.c). Blocks on the choice
+   widget; fails instead of prompting when stdin/stdout is not a tty.
+   userdata is a ClayCommands*. */
+ClayJson *ask_user_tool(const ClayJson *arguments, void *userdata);
+ClayJson *ask_user_schema(void);
+
 #endif /* CLAY_COMMANDS_CONTEXT_H */

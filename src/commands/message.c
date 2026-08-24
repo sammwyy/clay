@@ -11,6 +11,7 @@
   (4 * 1024 * 1024) /* captured, for the scratch dump */
 #define CLAY_TOOL_VISIBLE_LINES 8
 #define CLAY_THINKING_LIMIT (4 * 1024 * 1024)
+#define CLAY_ASK_USER_MAX_OPTIONS 6
 
 typedef struct {
   int status_visible;
@@ -555,6 +556,128 @@ static ClayJson *skill_schema(void) {
   return schema;
 }
 
+static ClayJson *ask_user_error(const char *message) {
+  ClayJson *result = clay_json_object();
+  clay_json_object_set(result, "ok", clay_json_bool(0));
+  clay_json_object_set(result, "error", clay_json_string(message));
+  return result;
+}
+
+/* Asks the user one question through the same picker widget /permissions
+   uses, and hands the answer back to the model in the same turn. */
+ClayJson *ask_user_tool(const ClayJson *arguments, void *userdata) {
+  ClayCommands *commands = userdata;
+  const char *question =
+      clay_json_string_value(clay_json_object_get(arguments, "question"));
+  if (!*question)
+    return ask_user_error("question is required");
+
+  const ClayJson *options = clay_json_object_get(arguments, "options");
+  size_t count = clay_json_array_count(options);
+  if (count > CLAY_ASK_USER_MAX_OPTIONS)
+    return ask_user_error(
+        "at most 6 options; ask a narrower question instead");
+
+  const ClayJson *allow = clay_json_object_get(arguments, "allow_custom");
+  int allow_custom = allow ? clay_json_bool_value(allow) : 1;
+  if (count == 0)
+    allow_custom = 1;
+
+  ClayChoice choices[CLAY_ASK_USER_MAX_OPTIONS];
+  for (size_t i = 0; i < count; i++) {
+    const ClayJson *option = clay_json_array_get(options, i);
+    const char *label =
+        clay_json_string_value(clay_json_object_get(option, "label"));
+    const char *desc =
+        clay_json_string_value(clay_json_object_get(option, "description"));
+    if (!*label)
+      return ask_user_error("every option needs a non-empty label");
+    choices[i].title = label;
+    choices[i].desc = *desc ? desc : NULL;
+  }
+
+  if (!clay_term_is_interactive())
+    return ask_user_error("this session has no interactive terminal, so the "
+                          "user cannot answer: pick the most reasonable "
+                          "option, state the assumption you made, and "
+                          "continue");
+
+  clay_term_notify("Clay needs an answer", question);
+  char *custom = NULL;
+  int index = clay_app_choice(commands->app, question, choices, (int)count,
+                              allow_custom, &custom);
+  const char *answer =
+      index >= 0 && index < (int)count ? choices[index].title : custom;
+  if (!answer || !*answer) {
+    free(custom);
+    return ask_user_error("the user dismissed the question without answering");
+  }
+
+  ClayJson *result = clay_json_object();
+  clay_json_object_set(result, "ok", clay_json_bool(1));
+  clay_json_object_set(result, "answer", clay_json_string(answer));
+  clay_json_object_set(result, "output", clay_json_string(answer));
+  if (index >= 0)
+    clay_json_object_set(result, "selected_index", clay_json_number(index));
+  free(custom);
+  return result;
+}
+
+ClayJson *ask_user_schema(void) {
+  ClayJson *question = clay_json_object();
+  clay_json_object_set(question, "type", clay_json_string("string"));
+  clay_json_object_set(
+      question, "description",
+      clay_json_string("One focused question, in the user's own terms."));
+
+  ClayJson *label = clay_json_object();
+  clay_json_object_set(label, "type", clay_json_string("string"));
+  clay_json_object_set(label, "description",
+                       clay_json_string("The answer itself, a few words."));
+  ClayJson *description = clay_json_object();
+  clay_json_object_set(description, "type", clay_json_string("string"));
+  clay_json_object_set(
+      description, "description",
+      clay_json_string("Optional one-line note on what picking this means."));
+  ClayJson *option_properties = clay_json_object();
+  clay_json_object_set(option_properties, "label", label);
+  clay_json_object_set(option_properties, "description", description);
+  ClayJson *option_required = clay_json_array();
+  clay_json_array_push(option_required, clay_json_string("label"));
+  ClayJson *option = clay_json_object();
+  clay_json_object_set(option, "type", clay_json_string("object"));
+  clay_json_object_set(option, "properties", option_properties);
+  clay_json_object_set(option, "required", option_required);
+
+  ClayJson *options = clay_json_object();
+  clay_json_object_set(options, "type", clay_json_string("array"));
+  clay_json_object_set(options, "items", option);
+  clay_json_object_set(
+      options, "description",
+      clay_json_string("Two to four concrete answers, most likely first. Omit "
+                       "only when no option can be guessed."));
+
+  ClayJson *allow_custom = clay_json_object();
+  clay_json_object_set(allow_custom, "type", clay_json_string("boolean"));
+  clay_json_object_set(
+      allow_custom, "description",
+      clay_json_string("Offer a \"Type your own...\" row too. Default true; "
+                       "set false only when the options are exhaustive."));
+
+  ClayJson *properties = clay_json_object();
+  clay_json_object_set(properties, "question", question);
+  clay_json_object_set(properties, "options", options);
+  clay_json_object_set(properties, "allow_custom", allow_custom);
+  ClayJson *required = clay_json_array();
+  clay_json_array_push(required, clay_json_string("question"));
+  ClayJson *schema = clay_json_object();
+  clay_json_object_set(schema, "type", clay_json_string("object"));
+  clay_json_object_set(schema, "properties", properties);
+  clay_json_object_set(schema, "required", required);
+  clay_json_object_set(schema, "additionalProperties", clay_json_bool(0));
+  return schema;
+}
+
 static int valid_todo_status(const char *status) {
   return strcmp(status, "pending") == 0 || strcmp(status, "in_progress") == 0 ||
          strcmp(status, "completed") == 0;
@@ -824,6 +947,9 @@ static void tool_label(ClayStr *out, const char *name, int completed,
   else if (strcmp(name, "repo_map") == 0)
     verb = completed ? (success ? "Mapped repo" : "Repo map failed")
                      : "Mapping repo";
+  else if (strcmp(name, "ask_user") == 0)
+    verb = completed ? (success ? "Asked the user" : "Question unanswered")
+                     : "Asking the user";
   if (verb) {
     clay_str_push(out, verb);
     if (detail && *detail) {
@@ -1175,6 +1301,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   ClayJson *todowrite_schema_json = todowrite_schema();
   ClayJson *repo_map_schema_json = clay_fs_tool_repo_map_schema();
   ClayJson *skill_schema_json = skill_schema();
+  ClayJson *ask_user_schema_json = ask_user_schema();
   clay_commands_connect_mcp_servers(commands);
   ClayArray tool_list;
   clay_array_init(&tool_list, sizeof(ClayTool));
@@ -1227,6 +1354,11 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
        "Loads one skill's full instructions by name from the index in your "
        "system prompt. Call it before starting a task a skill covers.",
        skill_schema_json, skill_tool, commands},
+      {"ask_user",
+       "Asks the user one question in their terminal, with options to pick "
+       "from, and returns their answer. Use it when an unknown would change "
+       "what you build.",
+       ask_user_schema_json, ask_user_tool, commands},
   };
   for (size_t i = 0; i < sizeof(builtin_tools) / sizeof(builtin_tools[0]);
        i++) {
@@ -1265,6 +1397,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   clay_json_free(todowrite_schema_json);
   clay_json_free(repo_map_schema_json);
   clay_json_free(skill_schema_json);
+  clay_json_free(ask_user_schema_json);
   clay_openai_destroy(client);
   if (codex) {
     /* Save a refresh or rotated refresh token before discarding this request
