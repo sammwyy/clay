@@ -127,7 +127,11 @@ ClayModelSelection clay_model_select(const ClayModelProvider *providers, int pro
     ClayModelSelection result;
     memset(&result, 0, sizeof(result));
     if (provider_count <= 0) return result;
-    if (!clay_term_is_interactive()) return model_select_fallback(providers, provider_count, default_provider);
+    /* This widget tracks a fixed set of physical rows. At narrow widths its
+       header and model descriptions would wrap, invalidating that tracking;
+       the numbered picker remains fully usable in a tiny terminal. */
+    if (!clay_term_is_interactive() || clay_term_width() < 50)
+        return model_select_fallback(providers, provider_count, default_provider);
 
     int active_tab = (default_provider >= 0 && default_provider < provider_count) ? default_provider : 0;
 

@@ -40,6 +40,12 @@ void clay_term_shell_quote(ClayStr *out, const char *value);
 void clay_term_setenv(const char *name, const char *value);
 
 int clay_term_width(void);
+
+/* Writes at most `columns` visible terminal cells from `text`, preserving
+   complete UTF-8 characters and ANSI escape sequences. The return value is
+   the number of visible cells written. This is intended for transient UI
+   rows, where letting the terminal wrap would invalidate cursor tracking. */
+size_t clay_term_write_clipped(const char *text, int columns);
 int clay_term_supports_color(
     void); /* terminal capability: isatty + not "dumb" */
 int clay_term_is_interactive(void); /* stdin and stdout are both a real tty */
@@ -82,7 +88,8 @@ typedef enum {
   CLAY_KEY_HISTORY_SEARCH,
   CLAY_KEY_ESCAPE,
   CLAY_KEY_INTERRUPT,
-  CLAY_KEY_EOF
+  CLAY_KEY_EOF,
+  CLAY_KEY_RESIZE
 } ClayKey;
 
 /* Raw mode: no line buffering, no echo. Pair enable/disable around raw

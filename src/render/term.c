@@ -1,4 +1,5 @@
 #include "clay/term.h"
+#include "clay/color.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -54,6 +55,7 @@ struct ClayTermHttpServer {
 };
 
 static volatile sig_atomic_t g_interrupted = 0;
+static volatile sig_atomic_t g_resized = 0;
 static int g_pending_escape = 0;
 static int g_pending_escape_action = 0;
 static int g_pending_think_toggle = 0;
@@ -63,6 +65,11 @@ static int g_noninteractive = 0;
 static void handle_sigint(int signal_number) {
   (void)signal_number;
   g_interrupted = 1;
+}
+
+static void handle_sigwinch(int signal_number) {
+  (void)signal_number;
+  g_resized = 1;
 }
 #endif
 
@@ -85,6 +92,12 @@ void clay_term_init(void) {
   action.sa_handler = handle_sigint;
   sigemptyset(&action.sa_mask);
   sigaction(SIGINT, &action, NULL);
+
+  struct sigaction winch_action;
+  memset(&winch_action, 0, sizeof(winch_action));
+  winch_action.sa_handler = handle_sigwinch;
+  sigemptyset(&winch_action.sa_mask);
+  sigaction(SIGWINCH, &winch_action, NULL);
 #endif
 }
 
@@ -752,6 +765,65 @@ size_t clay_utf8_width(const char *s) {
   return width;
 }
 
+size_t clay_term_write_clipped(const char *text, int columns) {
+  if (!text || columns <= 0)
+    return 0;
+
+  size_t width = 0;
+  const unsigned char *p = (const unsigned char *)text;
+  int clipped = 0;
+  while (*p) {
+    if (width >= (size_t)columns) {
+      clipped = 1;
+      break;
+    }
+    if (*p == 0x1b) {
+      const unsigned char *start = p++;
+      if (*p == '[') {
+        p++;
+        while (*p && (*p < 0x40 || *p > 0x7e))
+          p++;
+        if (*p)
+          p++;
+      } else if (*p == ']') {
+        p++;
+        while (*p && *p != 0x07 && !(*p == 0x1b && *(p + 1) == '\\'))
+          p++;
+        if (*p == 0x07)
+          p++;
+        else if (*p == 0x1b)
+          p += 2;
+      } else if (*p) {
+        p++;
+      }
+      fwrite(start, 1, (size_t)(p - start), stdout);
+      continue;
+    }
+
+    size_t bytes = 1;
+    if ((*p & 0xE0) == 0xC0)
+      bytes = 2;
+    else if ((*p & 0xF0) == 0xE0)
+      bytes = 3;
+    else if ((*p & 0xF8) == 0xF0)
+      bytes = 4;
+    for (size_t i = 1; i < bytes; i++) {
+      if (!p[i]) {
+        bytes = 1;
+        break;
+      }
+    }
+    fwrite(p, 1, bytes, stdout);
+    p += bytes;
+    width++;
+  }
+  /* A clipped ANSI-coloured string must not leak its style into the next UI
+     row. Resetting is harmless for ordinary text and no-ops with NO_COLOR. */
+  if (clipped)
+    fputs(clay_color(CLAY_RESET), stdout);
+  return width;
+}
+
 void clay_term_hyperlink(const char *url, const char *text) {
   if (clay_term_supports_color()) {
     printf("\x1b]8;;%s\x1b\\%s\x1b]8;;\x1b\\", url, text);
@@ -873,6 +945,10 @@ ClayKey clay_term_read_key(char *ch_out) {
   ssize_t n = read(STDIN_FILENO, &c, 1);
   if (n < 0 && errno == EINTR && g_interrupted)
     return CLAY_KEY_INTERRUPT;
+  if (n < 0 && errno == EINTR && g_resized) {
+    g_resized = 0;
+    return CLAY_KEY_RESIZE;
+  }
   if (n <= 0)
     return CLAY_KEY_EOF;
   if (c == '\r' || c == '\n')
@@ -956,6 +1032,10 @@ ClayKey clay_term_read_key_timeout(char *ch_out, int timeout_ms) {
     return CLAY_KEY_NONE;
   if (ready < 0 && errno == EINTR && g_interrupted)
     return CLAY_KEY_INTERRUPT;
+  if (ready < 0 && errno == EINTR && g_resized) {
+    g_resized = 0;
+    return CLAY_KEY_RESIZE;
+  }
   if (ready < 0)
     return CLAY_KEY_NONE;
 #endif

@@ -79,9 +79,26 @@ static void ensure_last_input(void) {
     }
 }
 
+static int safe_row_width(void) {
+    int width = clay_term_width();
+    /* Avoid using the terminal's final column: many terminals autowrap as
+       soon as it is written, which makes a logical row become two rows. */
+    return width > 1 ? width - 1 : 1;
+}
+
+static int below_indent_width(void) {
+    int width = safe_row_width();
+    return width >= 2 ? 2 : width;
+}
+
+static void print_below_indent(void) {
+    for (int i = 0; i < below_indent_width(); i++) fputc(' ', stdout);
+}
+
 static void render_turn_separator(void) {
     fputs(clay_color(CLAY_GRAY), stdout);
-    fputs("  ──────────────────────────────", stdout);
+    print_below_indent();
+    clay_term_write_clipped("──────────────────────────────", safe_row_width() - below_indent_width());
     fputs(clay_color(CLAY_RESET), stdout);
     fputc('\n', stdout);
 }
@@ -129,16 +146,39 @@ static int sorted_enabled_indices(int *order) {
     return count;
 }
 
-static void print_module_inline(const ClayBelowModule *m) {
+/* Keep the established left group before the right group. The old renderer
+   used this grouping whenever it fit on one row; retaining it makes the new
+   two-row layout a reflow rather than a reordering of the status modules. */
+static void group_aligned_indices(const int *order, int count, int *grouped) {
+    int at = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        ClayBelowAlign alignment = pass == 0 ? CLAY_BELOW_ALIGN_LEFT
+                                             : CLAY_BELOW_ALIGN_RIGHT;
+        for (int i = 0; i < count; i++) {
+            ClayBelowModule *m = clay_array_get(&g_modules, (size_t)order[i]);
+            if (m->alignment == alignment) grouped[at++] = order[i];
+        }
+    }
+}
+
+static int print_module_inline_limited(const ClayBelowModule *m, int available) {
+    if (available <= 0) return 0;
+    int written = 0;
     switch (m->state) {
         case CLAY_BELOW_LOADING:
+            if (available - written < 2) return written;
             printf("%s%s%s ", clay_color(CLAY_YELLOW), SPINNER_FRAMES[g_spinner_frame], clay_color(CLAY_RESET));
+            written += 2;
             break;
         case CLAY_BELOW_FINISHED:
+            if (available - written < 2) return written;
             printf("%s%s%s ", clay_color(CLAY_GREEN), CLAY_ICON_CHECK, clay_color(CLAY_RESET));
+            written += 2;
             break;
         case CLAY_BELOW_IDLE:
+            if (available - written < 2) return written;
             printf("%s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_SLEEP, clay_color(CLAY_RESET));
+            written += 2;
             break;
         case CLAY_BELOW_NONE:
         default:
@@ -150,10 +190,17 @@ static void print_module_inline(const ClayBelowModule *m) {
         double seconds = (double)(now.tv_sec - m->elapsed_start.tv_sec) +
                          (double)(now.tv_nsec - m->elapsed_start.tv_nsec) / 1e9;
         const char *color = m->state == CLAY_BELOW_LOADING ? CLAY_YELLOW : CLAY_GRAY;
-        printf("%s%5.1fs%s", clay_color(color), seconds, clay_color(CLAY_RESET));
+        char elapsed[32];
+        snprintf(elapsed, sizeof(elapsed), "%5.1fs", seconds);
+        printf("%s", clay_color(color));
+        written += (int)clay_term_write_clipped(elapsed, available - written);
+        printf("%s", clay_color(CLAY_RESET));
     } else {
-        printf("%s%s%s", clay_color(CLAY_GRAY), m->text.data, clay_color(CLAY_RESET));
+        printf("%s", clay_color(CLAY_GRAY));
+        written += (int)clay_term_write_clipped(m->text.data, available - written);
+        printf("%s", clay_color(CLAY_RESET));
     }
+    return written;
 }
 
 static int module_display_width(const ClayBelowModule *m) {
@@ -179,111 +226,96 @@ static int module_display_width(const ClayBelowModule *m) {
     return width;
 }
 
-static int module_group_width(const int *order, int start, int count) {
-    int width = 0;
-    for (int i = start; i < start + count; i++) {
-        if (i > start) width += CLAY_BELOW_SEPARATOR_WIDTH;
-        width += module_display_width(
-            clay_array_get(&g_modules, (size_t)order[i]));
-    }
-    return width;
-}
-
 static void print_module_separator(void) {
     printf(" %s%s%s ", clay_color(CLAY_GRAY), CLAY_ICON_DOT,
            clay_color(CLAY_RESET));
 }
 
-static void print_module_group(const int *order, int start, int count) {
-    for (int i = start; i < start + count; i++) {
-        if (i > start) print_module_separator();
-        print_module_inline(clay_array_get(&g_modules, (size_t)order[i]));
-    }
-}
-
-/* Modules opt into the right-hand group; their configured index still
-   controls their order within that group. */
-static void print_modules_aligned(const int *order, int count) {
-    int left_order[CLAY_BELOW_MAX_MODULES];
-    int right_order[CLAY_BELOW_MAX_MODULES];
-    int left_count = 0;
-    int right_count = 0;
+static int module_row_count(const int *order, int count, int max_rows) {
+    if (count == 0 || max_rows <= 0) return 0;
+    int capacity = safe_row_width() - below_indent_width();
+    if (capacity <= 0) return 0;
+    int rows = 1;
+    int used = 0;
     for (int i = 0; i < count; i++) {
-        ClayBelowModule *m = clay_array_get(&g_modules, (size_t)order[i]);
-        if (m->alignment == CLAY_BELOW_ALIGN_RIGHT)
-            right_order[right_count++] = order[i];
-        else
-            left_order[left_count++] = order[i];
-    }
-
-    if (left_count == 0 || right_count == 0) {
-        print_module_group(order, 0, count);
-        return;
-    }
-
-    int left_width = module_group_width(left_order, 0, left_count);
-    int right_width = module_group_width(right_order, 0, right_count);
-    int separator_width = CLAY_BELOW_SEPARATOR_WIDTH;
-    if (2 + left_width + separator_width + right_width > clay_term_width()) {
-        print_module_group(order, 0, count);
-        return;
-    }
-
-    print_module_group(left_order, 0, left_count);
-    print_module_separator();
-    print_module_group(right_order, 0, right_count);
-}
-
-static int module_group_offset(const int *order, int count, int target) {
-    int offset = 0;
-    for (int i = 0; i < count; i++) {
-        if (i > 0) offset += CLAY_BELOW_SEPARATOR_WIDTH;
-        if (order[i] == target) return offset;
-        offset += module_display_width(
-            clay_array_get(&g_modules, (size_t)order[i]));
-    }
-    return -1;
-}
-
-static int status_display_column(const int *order, int count) {
-    int status_order = -1;
-    int left_order[CLAY_BELOW_MAX_MODULES];
-    int right_order[CLAY_BELOW_MAX_MODULES];
-    int left_count = 0;
-    int right_count = 0;
-    for (int i = 0; i < count; i++) {
-        ClayBelowModule *m = clay_array_get(&g_modules, (size_t)order[i]);
-        if (strcmp(m->id, "status") == 0) {
-            status_order = order[i];
+        int module_width = module_display_width(clay_array_get(&g_modules, (size_t)order[i]));
+        int needed = module_width + (used ? CLAY_BELOW_SEPARATOR_WIDTH : 0);
+        if (used && used + needed > capacity) {
+            if (rows == max_rows) break;
+            rows++;
+            used = 0;
+            needed = module_width;
         }
-        if (m->alignment == CLAY_BELOW_ALIGN_RIGHT)
-            right_order[right_count++] = order[i];
-        else
-            left_order[left_count++] = order[i];
+        if (module_width > capacity) break;
+        used += needed;
     }
-    if (status_order < 0) return -1;
+    return rows;
+}
 
-    int width = clay_term_width();
-    if (left_count > 0 && right_count > 0) {
-        int left_width = module_group_width(left_order, 0, left_count);
-        int right_width = module_group_width(right_order, 0, right_count);
-        int separator_width = CLAY_BELOW_SEPARATOR_WIDTH;
-        if (2 + left_width + separator_width + right_width <= width) {
-            int offset = status_order >= 0
-                             ? module_group_offset(right_order, right_count,
-                                                   status_order)
-                             : -1;
-            if (offset >= 0)
-                return 2 + left_width + separator_width + offset;
-            offset = module_group_offset(left_order, left_count, status_order);
-            if (offset >= 0) return 2 + offset;
+/* Fits whole modules greedily without ever relying on terminal wrapping.
+   A prompt can spend two rows on status, while the streamed-output status
+   remains one row because its cursor choreography deliberately reserves a
+   single row beneath the response.
+
+   start_row is this block's first physical row (matching the row numbering
+   clay_term_row_enter uses elsewhere in this file). Every row after the
+   first must go through clay_term_row_enter too: a bare '\n' scrolls the
+   whole screen when that row already exists below row 0, which is exactly
+   the double-scroll bug clay_term_row_enter exists to avoid. */
+static int render_modules(const int *order, int count, int max_rows, int start_row) {
+    if (count == 0 || max_rows <= 0) return 0;
+
+    int capacity = safe_row_width() - below_indent_width();
+    if (capacity <= 0) return 0;
+    int starts[2] = {0, 0};
+    int ends[2] = {0, 0};
+    int rows = 1;
+    int used = 0;
+    int truncated = 0;
+    starts[0] = 0;
+
+    for (int i = 0; i < count; i++) {
+        int module_width = module_display_width(clay_array_get(&g_modules, (size_t)order[i]));
+        int needed = module_width + (used ? CLAY_BELOW_SEPARATOR_WIDTH : 0);
+        if (used && used + needed > capacity) {
+            ends[rows - 1] = i;
+            if (rows == max_rows) {
+                truncated = 1;
+                break;
+            }
+            starts[rows] = i;
+            used = 0;
+            rows++;
+            needed = module_width;
         }
+        if (module_width > capacity) {
+            ends[rows - 1] = i + 1;
+            if (i + 1 < count) truncated = 1;
+            break;
+        }
+        used += needed;
+        ends[rows - 1] = i + 1;
     }
 
-    int column = 2;
-    int offset = module_group_offset(order, count, status_order);
-    if (offset >= 0) column += offset;
-    return column;
+    for (int row = 0; row < rows; row++) {
+        if (row > 0) {
+            clay_term_row_enter(start_row + row, &g_max_rows_established);
+            clay_term_clear_line();
+        }
+        print_below_indent();
+        int row_used = 0;
+        for (int i = starts[row]; i < ends[row]; i++) {
+            if (row_used) {
+                print_module_separator();
+                row_used += CLAY_BELOW_SEPARATOR_WIDTH;
+            }
+            ClayBelowModule *m = clay_array_get(&g_modules, (size_t)order[i]);
+            row_used += print_module_inline_limited(m, capacity - row_used);
+        }
+        if (truncated && row + 1 == rows && row_used + 2 <= capacity)
+            fputs(" …", stdout);
+    }
+    return rows;
 }
 
 /* Cursor rests at row 0 col 0 between calls. Rows that already exist use
@@ -297,36 +329,95 @@ static void render_locked(void) {
 
     fputc('\r', stdout);
     clay_term_clear_line();
-    printf("%s%s%s%s %s", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
-           CLAY_ICON_PROMPT, clay_color(CLAY_RESET), g_last_input.data);
+    /* Some terminals (notably tmux) reflow previously-written rows when the
+       window is resized - wrapping or unwrapping lines that were written at
+       the old width - without the app's involvement. That desyncs the
+       cursor-relative row bookkeeping below and leaves stale fragments on
+       screen. Erasing everything from the cursor to the end of the screen
+       before redrawing guarantees no such fragment can survive a redraw. */
+    fputs("\x1b[0J", stdout);
+    int prompt_prefix = safe_row_width() >= 2 ? 2 : 1;
+    printf("%s%s%s%s", clay_color(CLAY_GREEN), clay_color(CLAY_BOLD),
+           CLAY_ICON_PROMPT, clay_color(CLAY_RESET));
+    if (prompt_prefix == 2) fputc(' ', stdout);
+
+    /* The editor is deliberately a one-row viewport. A long input used to
+       wrap into the status/overlay area, so subsequent redraws cleared or
+       cursor-positioned the wrong physical rows. Keep the cursor in view by
+       scrolling the beginning away and mark that with an ellipsis. */
+    int input_space = safe_row_width() - prompt_prefix;
+    size_t cursor = g_last_cursor < g_last_input.len ? g_last_cursor : g_last_input.len;
+    char saved = g_last_input.data[cursor];
+    g_last_input.data[cursor] = '\0';
+    size_t start = 0;
+    int omitted = 0;
+    while ((int)clay_utf8_width(g_last_input.data + start) > input_space - 1 &&
+           start < cursor) {
+        unsigned char byte = (unsigned char)g_last_input.data[start];
+        if (byte == 0x1b) {
+            start++;
+            if (g_last_input.data[start] == '[') {
+                start++;
+                while (g_last_input.data[start] &&
+                       ((unsigned char)g_last_input.data[start] < 0x40 ||
+                        (unsigned char)g_last_input.data[start] > 0x7e)) start++;
+                if (g_last_input.data[start]) start++;
+            } else if (g_last_input.data[start] == ']') {
+                start++;
+                while (g_last_input.data[start] && g_last_input.data[start] != '\a' &&
+                       !(g_last_input.data[start] == 0x1b && g_last_input.data[start + 1] == '\\')) start++;
+                if (g_last_input.data[start] == '\a') start++;
+                else if (g_last_input.data[start] == 0x1b) start += 2;
+            } else if (g_last_input.data[start]) {
+                start++;
+            }
+        } else if ((byte & 0xE0) == 0xC0) {
+            start += 2;
+        } else if ((byte & 0xF0) == 0xE0) {
+            start += 3;
+        } else if ((byte & 0xF8) == 0xF0) {
+            start += 4;
+        } else {
+            start++;
+        }
+        omitted = 1;
+    }
+    int before_cursor = (int)clay_utf8_width(g_last_input.data + start);
+    g_last_input.data[cursor] = saved;
+    if (omitted && input_space > 0) fputs("…", stdout);
+    clay_term_write_clipped(g_last_input.data + start,
+                            input_space - (omitted ? 1 : 0));
 
     int order[CLAY_BELOW_MAX_MODULES];
     int count = sorted_enabled_indices(order);
-    int overlay_start = count > 0 ? 2 : 1;
+    int grouped_order[CLAY_BELOW_MAX_MODULES];
+    group_aligned_indices(order, count, grouped_order);
+    int status_rows = module_row_count(grouped_order, count, 2);
+    int overlay_start = 1 + status_rows;
     int total_now = overlay_start + (int)g_overlay.count;
 
     int rows_to_visit = total_now > g_last_line_count ? total_now : g_last_line_count;
 
-    for (int row = 1; row < rows_to_visit; row++) {
+    for (int row = 1; row < rows_to_visit;) {
         clay_term_row_enter(row, &g_max_rows_established);
         clay_term_clear_line();
 
         if (count > 0 && row == 1) {
-            fputs("  ", stdout);
-            print_modules_aligned(order, count);
+            int rendered_rows = render_modules(grouped_order, count, 2, row);
+            if (rendered_rows > 1 && g_max_rows_established < row + rendered_rows)
+                g_max_rows_established = row + rendered_rows;
+            row += rendered_rows;
+            continue;
         } else if (row >= overlay_start && row < total_now) {
-            fputs(*(char **)clay_array_get(&g_overlay, (size_t)(row - overlay_start)), stdout);
+            clay_term_write_clipped(*(char **)clay_array_get(&g_overlay,
+                                      (size_t)(row - overlay_start)), safe_row_width());
         }
+        row++;
     }
 
     if (rows_to_visit > 1) clay_term_cursor_up(rows_to_visit - 1);
 
-    size_t cursor = g_last_cursor < g_last_input.len ? g_last_cursor : g_last_input.len;
-    char saved = g_last_input.data[cursor];
-    g_last_input.data[cursor] = '\0';
-    int col = (int)clay_utf8_width(g_last_input.data);
-    g_last_input.data[cursor] = saved;
-    clay_term_cursor_col(2 + col);
+    clay_term_cursor_col(prompt_prefix + (omitted && input_space > 0 ? 1 : 0) + before_cursor);
 
     g_last_line_count = total_now;
     fflush(stdout);
@@ -337,37 +428,15 @@ static void render_status_locked(void) {
 
     fputc('\r', stdout);
     clay_term_clear_line();
-    fputs("  ", stdout);
 
     int order[CLAY_BELOW_MAX_MODULES];
     int count = sorted_enabled_indices(order);
-    print_modules_aligned(order, count);
+    int grouped_order[CLAY_BELOW_MAX_MODULES];
+    group_aligned_indices(order, count, grouped_order);
+    render_modules(grouped_order, count, 1, 0);
 
     fputc('\r', stdout);
     g_last_line_count = 1;
-    fflush(stdout);
-}
-
-static int status_module_loading(void) {
-    ClayBelowModule *status = find_module("status");
-    return status && status->enabled && status->state == CLAY_BELOW_LOADING;
-}
-
-static void render_status_spinner_locked(void) {
-    ensure_modules();
-    int order[CLAY_BELOW_MAX_MODULES];
-    int count = sorted_enabled_indices(order);
-    int status_column = status_display_column(order, count);
-    ClayBelowModule *status = find_module("status");
-    if (!status || status_column < 0) {
-        render_status_locked();
-        return;
-    }
-    /* The spinner and timer are fixed-width, so update only that cell. This
-       preserves the cursor row and avoids wrapping the whole status line. */
-    clay_term_cursor_col(status_column);
-    print_module_inline(status);
-    clay_term_cursor_col(0);
     fflush(stdout);
 }
 
@@ -378,8 +447,7 @@ static void *animator_loop(void *arg) {
         pthread_mutex_lock(&g_lock);
         if (g_editing && has_loading_module()) {
             g_spinner_frame = (g_spinner_frame + 1) % CLAY_BELOW_SPINNER_FRAMES;
-            if (g_status_only && status_module_loading()) render_status_spinner_locked();
-            else if (g_status_only) render_status_locked();
+            if (g_status_only) render_status_locked();
             else render_locked();
         }
         pthread_mutex_unlock(&g_lock);

@@ -495,6 +495,10 @@ static char *interactive_prompt_line(ClayCommandRegistry *commands) {
             clay_below_render(buf.data, cursor);
             continue;
         }
+        if (key == CLAY_KEY_RESIZE) {
+            clay_below_render(buf.data, cursor);
+            continue;
+        }
         if (clear_armed && key != CLAY_KEY_ESCAPE) {
             clear_armed = 0;
             clay_below_set_enabled("hint", 0);
@@ -776,7 +780,7 @@ static int select_fallback(const char *question, const ClayChoice *options, int 
 }
 
 int clay_prompt_select(const char *question, const ClayChoice *options, int count, int default_index) {
-    if (!clay_term_is_interactive()) {
+    if (!clay_term_is_interactive() || clay_term_width() < 40) {
         return select_fallback(question, options, count, default_index);
     }
 
@@ -799,7 +803,7 @@ int clay_prompt_select(const char *question, const ClayChoice *options, int coun
         } else if (key == CLAY_KEY_INTERRUPT || key == CLAY_KEY_EOF || key == CLAY_KEY_ESCAPE) {
             result = default_index;
             break;
-        } else {
+        } else if (key != CLAY_KEY_RESIZE) {
             continue;
         }
         render_select_line(question, options, count, selected);
@@ -899,7 +903,10 @@ static int choice_fallback(const char *question, const ClayChoice *choices, int 
 
 int clay_prompt_choice(const char *question, const ClayChoice *choices, int count,
                         int allow_custom, char **custom_out) {
-    if (!clay_term_is_interactive()) {
+    /* Choice rows are redrawn in place. Use the line-oriented variant on a
+       narrow terminal so long titles/descriptions can wrap naturally rather
+       than making the raw-mode cursor drift. */
+    if (!clay_term_is_interactive() || clay_term_width() < 40) {
         return choice_fallback(question, choices, count, allow_custom, custom_out);
     }
 
