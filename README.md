@@ -134,7 +134,7 @@ and model selection. Provider-specific credentials are:
 | Custom OpenAI-compatible | `CLAY_PROVIDER=custom`, `CLAY_API_KEY`, `CLAY_BASE_URL`, `CUSTOM_MODEL` |
 
 When there is no saved provider selection, Clay infers the provider from the
-credential variable. All provider URLs must use HTTPS. A saved OpenAI Codex
+credential variable. Provider URLs may use HTTP or HTTPS. A saved OpenAI Codex
 session can be used by `-p` as-is; headless Codex sessions may provide
 `OPENAI_CODEX_ACCESS_TOKEN`, `OPENAI_CODEX_REFRESH_TOKEN`,
 `OPENAI_CODEX_ACCOUNT_ID`, optional `OPENAI_CODEX_ID_TOKEN` and

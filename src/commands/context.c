@@ -299,7 +299,7 @@ void clay_commands_load_provider(ClayCommands *commands,
   int is_grok_api_key = strcmp(type->id, "grok") == 0 &&
                         !is_grok_subscription;
   if ((!is_codex && !is_grok_subscription &&
-       (!clay_openai_url_is_secure(config->base_url) || !config->apikey ||
+       (!clay_openai_url_is_supported(config->base_url) || !config->apikey ||
         !*config->apikey)) ||
       (is_grok_api_key && strcmp(config->base_url, CLAY_GROK_API_URL) != 0) ||
       (is_codex && (!config->access_token || !config->refresh_token ||

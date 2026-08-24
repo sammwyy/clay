@@ -139,12 +139,20 @@ static void test_usage_cache_details(void) {
   assert(!usage.cached_input_tokens_known);
 }
 
+static void test_openai_url_schemes(void) {
+  assert(clay_openai_url_is_supported("https://api.example.test/v1"));
+  assert(clay_openai_url_is_supported("http://127.0.0.1:8080/v1"));
+  assert(!clay_openai_url_is_supported("ftp://api.example.test/v1"));
+  assert(!clay_openai_url_is_supported("http://"));
+}
+
 int main(void) {
   test_pkce_and_authorization_url();
   test_callback_and_cors();
   test_refresh_rotation_and_routing();
   test_fragmented_openai_sse();
   test_usage_cache_details();
+  test_openai_url_schemes();
   puts("grok tests passed");
   return 0;
 }

@@ -120,8 +120,8 @@ static void connect_type(ClayCommands *commands, const ClayProviderType *type) {
     free(base_url);
     return;
   }
-  if (!clay_openai_url_is_secure(base_url)) {
-    clay_sayc(CLAY_RED, "Provider URLs must use HTTPS.");
+  if (!clay_openai_url_is_supported(base_url)) {
+    clay_sayc(CLAY_RED, "Provider URLs must use HTTP or HTTPS.");
     free(base_url);
     return;
   }

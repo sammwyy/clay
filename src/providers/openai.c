@@ -29,9 +29,10 @@ struct ClayOpenAI {
   long last_status;
 };
 
-int clay_openai_url_is_secure(const char *base_url) {
-  return base_url && strncmp(base_url, "https://", 8) == 0 &&
-         base_url[8] != '\0';
+int clay_openai_url_is_supported(const char *base_url) {
+  return base_url &&
+         ((strncmp(base_url, "https://", 8) == 0 && base_url[8] != '\0') ||
+          (strncmp(base_url, "http://", 7) == 0 && base_url[7] != '\0'));
 }
 
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key,
@@ -42,7 +43,7 @@ ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key,
 ClayOpenAI *clay_openai_create_with_headers(
     const char *base_url, const char *api_key, const char *model,
     const ClayOpenAIHeader *headers, size_t header_count) {
-  if (!clay_openai_url_is_secure(base_url))
+  if (!clay_openai_url_is_supported(base_url))
     return NULL;
   if (header_count > CLAY_OPENAI_EXTRA_HEADERS_LIMIT)
     return NULL;

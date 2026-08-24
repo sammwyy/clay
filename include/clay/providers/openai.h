@@ -16,8 +16,8 @@ typedef struct {
 } ClayOpenAIHeader;
 
 /* `base_url` has no trailing slash, e.g. "https://api.openai.com/v1" -
-   "/chat/completions" is appended to it. */
-int clay_openai_url_is_secure(const char *base_url);
+   "/chat/completions" is appended to it. HTTP and HTTPS URLs are supported. */
+int clay_openai_url_is_supported(const char *base_url);
 ClayOpenAI *clay_openai_create(const char *base_url, const char *api_key, const char *model);
 ClayOpenAI *clay_openai_create_with_headers(const char *base_url,
                                              const char *api_key,
