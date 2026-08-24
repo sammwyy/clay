@@ -14,7 +14,7 @@ Bring your own model. Stay in your flow. Ship better work.
 </div>
 
 ```text
-◆ Clay  v0.0.2
+◆ Clay  v0.0.3
   /help for commands  ·  Ctrl+O reasoning
 
 › review this project and find the rough edges
