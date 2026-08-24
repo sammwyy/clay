@@ -21,12 +21,38 @@ void clay_term_sleep_ms(int ms);
 /* Notifies the user when an interactive session needs attention. */
 void clay_term_notify(const char *title, const char *message);
 
+/* Controls for one command run. A NULL options pointer means: the default
+   timeout, no stop hook, no streaming. */
+typedef struct {
+    int timeout_seconds; /* <= 0 uses CLAY_SHELL_DEFAULT_TIMEOUT_SECONDS */
+    /* Polled about every 100ms while the command runs; a non-zero return
+       kills its process group. */
+    int (*should_stop)(void *user_data);
+    /* Called with each chunk as it arrives, on the calling thread. */
+    void (*on_output)(const char *data, size_t len, void *user_data);
+    void *user_data;
+} ClayExecOptions;
+
+typedef struct {
+    int exit_code;
+    int output_truncated;
+    int timed_out;
+    int stopped; /* should_stop asked for the kill */
+} ClayExecResult;
+
+#define CLAY_SHELL_DEFAULT_TIMEOUT_SECONDS 120
+#define CLAY_SHELL_MAX_TIMEOUT_SECONDS 3600
+
 /* Runs a shell command in the current directory, appending combined
    stdout/stderr to output up to output_limit. */
 int clay_term_shell_exec(const char *command, ClayStr *output,
-                         size_t output_limit, int *exit_code,
-                         int *output_truncated);
+                         size_t output_limit, const ClayExecOptions *options,
+                         ClayExecResult *result);
 int clay_term_change_dir(const char *path);
+
+/* Current directory with the user's home collapsed to "~". Malloc'd,
+   caller frees; "." when the cwd can't be read. */
+char *clay_term_display_cwd(void);
 
 /* Appends `value` to `out`, quoted so the shell clay_term_shell_exec/
    clay_sandbox_exec invokes it through treats it as one literal argument.

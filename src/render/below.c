@@ -21,6 +21,7 @@ typedef struct {
     ClayBelowState state;
     ClayBelowAlign alignment;
     int enabled;
+    int optional; /* dropped when the block would otherwise overflow */
     int index;
     int show_elapsed;
     struct timespec elapsed_start;
@@ -231,6 +232,40 @@ static void print_module_separator(void) {
            clay_color(CLAY_RESET));
 }
 
+/* Whether every module in `order` lands inside `max_rows` rows. */
+static int modules_fit(const int *order, int count, int max_rows) {
+    if (count == 0) return 1;
+    int capacity = safe_row_width() - below_indent_width();
+    if (capacity <= 0) return 0;
+    int rows = 1;
+    int used = 0;
+    for (int i = 0; i < count; i++) {
+        int module_width = module_display_width(clay_array_get(&g_modules, (size_t)order[i]));
+        if (module_width > capacity) return 0;
+        int needed = module_width + (used ? CLAY_BELOW_SEPARATOR_WIDTH : 0);
+        if (used && used + needed > capacity) {
+            if (rows == max_rows) return 0;
+            rows++;
+            needed = module_width;
+            used = 0;
+        }
+        used += needed;
+    }
+    return 1;
+}
+
+/* Optional modules are a nicety, not information the block must carry:
+   they only survive when everything still fits on one row. */
+static int drop_optional_modules(int *order, int count) {
+    if (modules_fit(order, count, 1)) return count;
+    int kept = 0;
+    for (int i = 0; i < count; i++) {
+        ClayBelowModule *m = clay_array_get(&g_modules, (size_t)order[i]);
+        if (!m->optional) order[kept++] = order[i];
+    }
+    return kept;
+}
+
 static int module_row_count(const int *order, int count, int max_rows) {
     if (count == 0 || max_rows <= 0) return 0;
     int capacity = safe_row_width() - below_indent_width();
@@ -389,7 +424,7 @@ static void render_locked(void) {
                             input_space - (omitted ? 1 : 0));
 
     int order[CLAY_BELOW_MAX_MODULES];
-    int count = sorted_enabled_indices(order);
+    int count = drop_optional_modules(order, sorted_enabled_indices(order));
     int grouped_order[CLAY_BELOW_MAX_MODULES];
     group_aligned_indices(order, count, grouped_order);
     int status_rows = module_row_count(grouped_order, count, 2);
@@ -430,7 +465,7 @@ static void render_status_locked(void) {
     clay_term_clear_line();
 
     int order[CLAY_BELOW_MAX_MODULES];
-    int count = sorted_enabled_indices(order);
+    int count = drop_optional_modules(order, sorted_enabled_indices(order));
     int grouped_order[CLAY_BELOW_MAX_MODULES];
     group_aligned_indices(order, count, grouped_order);
     render_modules(grouped_order, count, 1, 0);
@@ -477,6 +512,7 @@ void clay_below_add(int index, const char *id) {
         m.state = CLAY_BELOW_NONE;
         m.alignment = CLAY_BELOW_ALIGN_LEFT;
         m.enabled = 1;
+        m.optional = 0;
         m.index = index;
         m.show_elapsed = 0;
         clay_array_push_val(&g_modules, &m);
@@ -526,6 +562,14 @@ void clay_below_set_alignment(const char *id, ClayBelowAlign alignment) {
     ensure_modules();
     ClayBelowModule *m = find_module(id);
     if (m) m->alignment = alignment;
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_set_optional(const char *id, int optional) {
+    pthread_mutex_lock(&g_lock);
+    ensure_modules();
+    ClayBelowModule *m = find_module(id);
+    if (m) m->optional = optional != 0;
     pthread_mutex_unlock(&g_lock);
 }
 

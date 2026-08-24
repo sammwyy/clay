@@ -134,6 +134,19 @@
   "globs, redirections) but may need an execution confirmation. " \
   "Keep commands focused and summarize what came back." \
   "\n\n" \
+  "shell_exec kills a command after 120 seconds and hands you what " \
+  "it printed by then, so a stuck command never stalls the session; " \
+  "raise timeout_seconds for a slow build or test run." \
+  "\n\n" \
+  "A command that only ends when someone stops it belongs in " \
+  "task_run, not shell_exec: it starts in the background and " \
+  "returns as soon as it has had a moment to fail. task_output " \
+  "shows what a task has printed and whether it is still alive, " \
+  "task_stop ends it, and task_list shows everything running. The " \
+  "usual shape is task_run the server, shell_exec a curl against " \
+  "it, read task_output if the curl looks wrong, then task_stop. " \
+  "Stop what you started before your turn ends; nothing else will." \
+  "\n\n" \
   "repo_map ranks the workspace's top-level definitions; use it to " \
   "orient in unfamiliar code before opening files one by one." \
   "\n\n" \
@@ -584,39 +597,16 @@ int clay_commands_logout_provider(ClayCommands *commands, const char *id) {
   return -1;
 }
 
-static void append_display_cwd(ClayStr *text) {
-  char *cwd = clay_term_cwd();
-  if (!cwd) {
-    clay_str_push(text, ".");
-    return;
-  }
-  const char *home = getenv("HOME");
-#ifdef _WIN32
-  if (!home || !*home) home = getenv("USERPROFILE");
-#endif
-  if (home && *home) {
-    size_t length = strlen(home);
-    size_t cwd_length = strlen(cwd);
-    if (cwd_length >= length && strncmp(cwd, home, length) == 0 &&
-        (cwd[length] == '\0' || cwd[length] == '/' || cwd[length] == '\\')) {
-      clay_str_push(text, "~");
-      clay_str_push(text, cwd + length);
-      free(cwd);
-      return;
-    }
-  }
-  clay_str_push(text, cwd);
-  free(cwd);
-}
-
 void clay_commands_update_selected_below(ClayCommands *commands) {
+  char *cwd = clay_term_display_cwd();
+  clay_below_set_text("cwd", cwd);
+  free(cwd);
   ClayStr text;
   clay_str_init(&text);
-  append_display_cwd(&text);
   if (commands->selected_model && commands->selected_provider) {
     const ClayReasoningEffort *effort =
         clay_commands_reasoning_effort(commands);
-    clay_str_printf(&text, " %s%s%s %s·%s %s(%s)%s %s[%s%s%s]%s",
+    clay_str_printf(&text, "%s%s%s %s·%s %s(%s)%s %s[%s%s%s]%s",
                     clay_color(CLAY_CORAL), commands->selected_model,
                     clay_color(CLAY_RESET), clay_color(CLAY_GRAY),
                     clay_color(CLAY_RESET), clay_color(CLAY_GRAY),
@@ -624,7 +614,7 @@ void clay_commands_update_selected_below(ClayCommands *commands) {
                     clay_color(CLAY_GRAY), clay_color(CLAY_CYAN), effort->label,
                     clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
   } else {
-    clay_str_push(&text, " · None");
+    clay_str_push(&text, "None");
   }
   clay_below_set_text("model", text.data);
   clay_str_free(&text);
@@ -1189,10 +1179,8 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   }
   free(saved_effort);
   char *sandbox_mode = clay_config_sandbox_mode();
-  commands->sandbox_auto_approve = strcmp(sandbox_mode, "auto") == 0;
-  commands->sandbox_mode = strcmp(sandbox_mode, "unleashed") == 0
-                               ? CLAY_SANDBOX_MODE_UNLEASHED
-                               : CLAY_SANDBOX_MODE_SANDBOX;
+  clay_commands_parse_sandbox_mode(sandbox_mode, &commands->sandbox_mode,
+                                   &commands->sandbox_auto_approve);
   free(sandbox_mode);
   commands->use_integrated_shell = clay_config_use_integrated_shell();
   if (!clay_sandbox_supported()) {
@@ -1208,6 +1196,7 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   clay_array_init(&commands->mcp_servers, sizeof(ClayMcpServer *));
   clay_array_init(&commands->mcp_bindings, sizeof(ClayMcpToolBinding));
   clay_array_init(&commands->undo_history, sizeof(ClayUndoEntry));
+  clay_array_init(&commands->tasks, sizeof(ClayBackgroundTask *));
   commands->auto_test_command = clay_config_auto_test_command();
   commands->auto_test_choice = CLAY_AUTO_TEST_UNASKED;
   clay_commands_reset_conversation(commands);
@@ -1216,6 +1205,11 @@ ClayCommands *clay_commands_create(ClayApp *app) {
                                commands->selected_model);
   clay_below_add(6, "status");
   clay_below_set_enabled("status", 0);
+  clay_below_add(0, "cwd");
+  clay_below_set_alignment("cwd", CLAY_BELOW_ALIGN_LEFT);
+  /* First thing dropped when the row runs out of space - the banner and the
+     shell prompt both already say where we are. */
+  clay_below_set_optional("cwd", 1);
   clay_below_add(1, "model");
   clay_below_set_alignment("model", CLAY_BELOW_ALIGN_LEFT);
   clay_below_add(2, "tokens");
@@ -1224,7 +1218,9 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   clay_below_set_enabled("hint", 0);
   clay_below_add(4, "mode");
   clay_below_set_enabled("mode", 0);
-  clay_below_add(5, "sandbox");
+  clay_below_add(5, "tasks");
+  clay_below_set_enabled("tasks", 0);
+  clay_below_add(7, "sandbox");
   clay_below_set_alignment("sandbox", CLAY_BELOW_ALIGN_RIGHT);
   clay_below_set_alignment("status", CLAY_BELOW_ALIGN_RIGHT);
   clay_commands_set_tokens_below(commands, 0, 0);
@@ -1236,6 +1232,7 @@ ClayCommands *clay_commands_create(ClayApp *app) {
 void clay_commands_destroy(ClayCommands *commands) {
   if (!commands)
     return;
+  clay_commands_stop_tasks(commands);
   for (size_t i = 0; i < commands->providers.count; i++)
     provider_free(clay_array_get(&commands->providers, i));
   clay_array_free(&commands->providers);

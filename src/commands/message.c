@@ -33,10 +33,7 @@ typedef struct {
   int thinking_output_started;
 } ClayConversationStream;
 
-/* Snapshots the workspace before a tool call that might mutate it, so
-   /checkpoints can undo it. Best-effort: a failed snapshot doesn't block
-   the tool call itself. */
-static void checkpoint_before(ClayCommands *commands, const char *label) {
+void clay_commands_checkpoint(ClayCommands *commands, const char *label) {
   if (!commands->chat)
     return;
   char *checkpoints_dir = clay_chat_checkpoints_dir(commands->chat);
@@ -78,8 +75,6 @@ static void run_auto_test(ClayCommands *commands, ClayJson *result) {
       clay_app_task_start(commands->app, "$ %s", commands->auto_test_command);
   ClayStr output;
   clay_str_init(&output);
-  int exit_code = -1;
-  int truncated = 0;
   char *workspace_dir = clay_term_cwd();
   char *scratch_dir = clay_chat_scratch_dir(commands->chat);
   ClaySandboxConfig sandbox = {
@@ -87,8 +82,10 @@ static void run_auto_test(ClayCommands *commands, ClayJson *result) {
       .workspace_dir = workspace_dir,
       .scratch_dir = scratch_dir,
   };
+  ClayExecResult exec = {0};
   int rc = clay_sandbox_exec(&sandbox, commands->auto_test_command, &output,
-                             CLAY_SHELL_OUTPUT_LIMIT, &exit_code, &truncated);
+                             CLAY_SHELL_OUTPUT_LIMIT, NULL, &exec);
+  int exit_code = exec.exit_code;
   free(workspace_dir);
   free(scratch_dir);
 
@@ -168,7 +165,7 @@ static ClayJson *write_tool_checkpointed(const ClayJson *arguments,
   ClayStr label;
   clay_str_init(&label);
   clay_str_printf(&label, "write: %s", path && *path ? path : "?");
-  checkpoint_before(userdata, label.data);
+  clay_commands_checkpoint(userdata, label.data);
   clay_commands_undo_prepare(userdata, path);
   clay_str_free(&label);
   ClayJson *result = clay_fs_tool_write(arguments, userdata);
@@ -192,7 +189,7 @@ static ClayJson *edit_tool_checkpointed(const ClayJson *arguments,
   ClayStr label;
   clay_str_init(&label);
   clay_str_printf(&label, "edit: %s", path && *path ? path : "?");
-  checkpoint_before(userdata, label.data);
+  clay_commands_checkpoint(userdata, label.data);
   clay_commands_undo_prepare(userdata, path);
   clay_str_free(&label);
   ClayJson *result = clay_fs_tool_edit(arguments, userdata);
@@ -320,7 +317,9 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
       return denied_result();
     }
   }
-  checkpoint_before(commands, invocation.data);
+  clay_commands_checkpoint(commands, invocation.data);
+  int timeout_seconds =
+      (int)clay_json_number_value(clay_json_object_get(arguments, "timeout_seconds"));
   ClayStr output;
   clay_str_init(&output);
   int exit_code = -1;
@@ -337,9 +336,13 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
       .readonly_mounts = (const char *const *)readonly_mounts,
       .readonly_mount_count = readonly_mount_count,
   };
+  ClayExecOptions options = {0};
+  options.timeout_seconds = timeout_seconds;
+  ClayExecResult exec = {0};
   int rc = clay_sandbox_exec(&sandbox, invocation.data, &output,
-                             CLAY_SHELL_CAPTURE_LIMIT, &exit_code,
-                             &output_truncated);
+                             CLAY_SHELL_CAPTURE_LIMIT, &options, &exec);
+  exit_code = exec.exit_code;
+  output_truncated = exec.output_truncated;
   free(workspace_dir);
   free(scratch_dir);
   for (size_t i = 0; i < readonly_mount_count; i++) free(readonly_mounts[i]);
@@ -374,6 +377,15 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
   if (rc != 0)
     clay_json_object_set(result, "error",
                          clay_json_string("failed to start command"));
+  if (exec.timed_out) {
+    clay_json_object_set(result, "timed_out", clay_json_bool(1));
+    clay_json_object_set(
+        result, "error",
+        clay_json_string("timed out and was killed; the output above is what "
+                         "it produced first. Raise timeout_seconds for a slow "
+                         "one-shot command, or start a long-running one with "
+                         "task_run instead."));
+  }
   clay_str_free(&output);
   clay_str_free(&invocation);
   return result;
@@ -796,9 +808,17 @@ static ClayJson *shell_exec_schema(void) {
   clay_json_object_set(
       args, "description",
       clay_json_string("Optional command arguments, including shell quoting."));
+  ClayJson *timeout = clay_json_object();
+  clay_json_object_set(timeout, "type", clay_json_string("number"));
+  clay_json_object_set(
+      timeout, "description",
+      clay_json_string("Seconds to wait before the command is killed "
+                       "(default 120, max 3600). A command that blocks until "
+                       "you stop it belongs in task_run, not here."));
   ClayJson *properties = clay_json_object();
   clay_json_object_set(properties, "command", command);
   clay_json_object_set(properties, "args", args);
+  clay_json_object_set(properties, "timeout_seconds", timeout);
   ClayJson *required = clay_json_array();
   clay_json_array_push(required, clay_json_string("command"));
   ClayJson *schema = clay_json_object();
@@ -950,6 +970,18 @@ static void tool_label(ClayStr *out, const char *name, int completed,
   else if (strcmp(name, "ask_user") == 0)
     verb = completed ? (success ? "Asked the user" : "Question unanswered")
                      : "Asking the user";
+  else if (strcmp(name, "task_run") == 0)
+    verb = completed ? (success ? "Started background task" : "Failed to start")
+                     : "Starting background task";
+  else if (strcmp(name, "task_output") == 0)
+    verb = completed ? (success ? "Read task output" : "No such task")
+                     : "Reading task output";
+  else if (strcmp(name, "task_stop") == 0)
+    verb = completed ? (success ? "Stopped task" : "No such task")
+                     : "Stopping task";
+  else if (strcmp(name, "task_list") == 0)
+    verb = completed ? (success ? "Listed tasks" : "Failed to list tasks")
+                     : "Listing tasks";
   if (verb) {
     clay_str_push(out, verb);
     if (detail && *detail) {
@@ -969,6 +1001,8 @@ static const char *tool_detail_key(const char *name) {
   if (strcmp(name, "read") == 0 || strcmp(name, "write") == 0 ||
       strcmp(name, "edit") == 0)
     return "path";
+  if (strcmp(name, "task_run") == 0)
+    return "command";
   if (strcmp(name, "glob") == 0 || strcmp(name, "grep") == 0)
     return "pattern";
   return NULL;
@@ -1302,6 +1336,10 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   ClayJson *repo_map_schema_json = clay_fs_tool_repo_map_schema();
   ClayJson *skill_schema_json = skill_schema();
   ClayJson *ask_user_schema_json = ask_user_schema();
+  ClayJson *task_run_schema_json = task_run_schema();
+  ClayJson *task_output_schema_json = task_output_schema();
+  ClayJson *task_stop_schema_json = task_stop_schema();
+  ClayJson *task_list_schema_json = task_list_schema();
   clay_commands_connect_mcp_servers(commands);
   ClayArray tool_list;
   clay_array_init(&tool_list, sizeof(ClayTool));
@@ -1359,6 +1397,21 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
        "from, and returns their answer. Use it when an unknown would change "
        "what you build.",
        ask_user_schema_json, ask_user_tool, commands},
+      {"task_run",
+       "Starts a command in the background and returns right away. For "
+       "anything that keeps running until you stop it: a dev server, a "
+       "watcher, a tail.",
+       task_run_schema_json, task_run_tool, commands},
+      {"task_output",
+       "Returns what a background task has printed so far, plus whether it "
+       "is still running.",
+       task_output_schema_json, task_output_tool, commands},
+      {"task_stop",
+       "Stops a background task and returns its exit status and final "
+       "output.",
+       task_stop_schema_json, task_stop_tool, commands},
+      {"task_list", "Lists this session's background tasks and their status.",
+       task_list_schema_json, task_list_tool, commands},
   };
   for (size_t i = 0; i < sizeof(builtin_tools) / sizeof(builtin_tools[0]);
        i++) {
@@ -1398,6 +1451,10 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   clay_json_free(repo_map_schema_json);
   clay_json_free(skill_schema_json);
   clay_json_free(ask_user_schema_json);
+  clay_json_free(task_run_schema_json);
+  clay_json_free(task_output_schema_json);
+  clay_json_free(task_stop_schema_json);
+  clay_json_free(task_list_schema_json);
   clay_openai_destroy(client);
   if (codex) {
     /* Save a refresh or rotated refresh token before discarding this request

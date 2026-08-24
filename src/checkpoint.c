@@ -41,8 +41,9 @@ static int run_git(const char *checkpoints_dir, const char *workspace_dir, const
     clay_str_push(&command, args);
 
     clay_str_clear(output);
-    int truncated = 0;
-    int rc = clay_term_shell_exec(command.data, output, CLAY_CHECKPOINT_OUTPUT_LIMIT, exit_code, &truncated);
+    ClayExecResult exec = {0};
+    int rc = clay_term_shell_exec(command.data, output, CLAY_CHECKPOINT_OUTPUT_LIMIT, NULL, &exec);
+    if (exit_code) *exit_code = exec.exit_code;
     clay_str_free(&command);
 
     clay_term_setenv("GIT_AUTHOR_NAME", NULL);
@@ -64,12 +65,11 @@ static int ensure_bare_repo(const char *checkpoints_dir) {
     clay_term_shell_quote(&command, checkpoints_dir);
     ClayStr output;
     clay_str_init(&output);
-    int exit_code = -1;
-    int truncated = 0;
-    int rc = clay_term_shell_exec(command.data, &output, CLAY_CHECKPOINT_OUTPUT_LIMIT, &exit_code, &truncated);
+    ClayExecResult exec = {0};
+    int rc = clay_term_shell_exec(command.data, &output, CLAY_CHECKPOINT_OUTPUT_LIMIT, NULL, &exec);
     clay_str_free(&command);
     clay_str_free(&output);
-    return rc == 0 && exit_code == 0 ? 0 : -1;
+    return rc == 0 && exec.exit_code == 0 ? 0 : -1;
 }
 
 int clay_checkpoint_save(const char *checkpoints_dir, const char *workspace_dir, const char *label) {

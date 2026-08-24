@@ -10,9 +10,11 @@
 static int run(ClaySandboxMode mode, const char *workspace, const char *scratch, const char *command, ClayStr *output,
                int *exit_code) {
     ClaySandboxConfig config = {.mode = mode, .workspace_dir = workspace, .scratch_dir = scratch};
-    int truncated = 0;
+    ClayExecResult exec = {0};
     clay_str_clear(output);
-    return clay_sandbox_exec(&config, command, output, 64 * 1024, exit_code, &truncated);
+    int rc = clay_sandbox_exec(&config, command, output, 64 * 1024, NULL, &exec);
+    *exit_code = exec.exit_code;
+    return rc;
 }
 
 int main(void) {

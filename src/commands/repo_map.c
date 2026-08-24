@@ -54,11 +54,11 @@ static int try_ctags(ClayCommands *commands, const char *workspace_dir, ClayArra
     };
     ClayStr output;
     clay_str_init(&output);
-    int exit_code = -1;
-    int truncated = 0;
+    ClayExecResult exec = {0};
     int rc = clay_sandbox_exec(
         &sandbox, "ctags -x -R --exclude=.git --exclude=node_modules --exclude=build --exclude=build-win .", &output,
-        CLAY_REPO_MAP_CTAGS_CAPTURE_LIMIT, &exit_code, &truncated);
+        CLAY_REPO_MAP_CTAGS_CAPTURE_LIMIT, NULL, &exec);
+    int exit_code = exec.exit_code;
     free(scratch_dir);
     if (rc != 0 || exit_code != 0 || output.len == 0) {
         clay_str_free(&output);

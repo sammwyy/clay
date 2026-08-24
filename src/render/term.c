@@ -40,7 +40,6 @@
 #define CLAY_PATH_MAX 4096
 #endif
 
-#define CLAY_TERM_SHELL_TIMEOUT_SECONDS 120
 #define CLAY_TERM_NOTIFICATION_LIMIT 512
 
 struct ClayTermHttpServer {
@@ -204,9 +203,55 @@ void clay_term_notify(const char *title, const char *message) {
   clay_str_free(&safe_message);
 }
 
+/* Shared by both platform paths below: resolves the caller's timeout and
+   hands each chunk to the streaming hook before it is buffered. */
+static int exec_timeout_seconds(const ClayExecOptions *options) {
+  int seconds = options ? options->timeout_seconds : 0;
+  if (seconds <= 0) seconds = CLAY_SHELL_DEFAULT_TIMEOUT_SECONDS;
+  if (seconds > CLAY_SHELL_MAX_TIMEOUT_SECONDS)
+    seconds = CLAY_SHELL_MAX_TIMEOUT_SECONDS;
+  return seconds;
+}
+
+static int exec_should_stop(const ClayExecOptions *options) {
+  return options && options->should_stop &&
+         options->should_stop(options->user_data);
+}
+
+static void exec_stream(const ClayExecOptions *options, const char *data,
+                        size_t len) {
+  if (options && options->on_output)
+    options->on_output(data, len, options->user_data);
+}
+
+char *clay_term_display_cwd(void) {
+  char *cwd = clay_term_cwd();
+  if (!cwd) return strdup(".");
+  const char *home = getenv("HOME");
+#ifdef _WIN32
+  if (!home || !*home) home = getenv("USERPROFILE");
+#endif
+  size_t length = home ? strlen(home) : 0;
+  if (length && strncmp(cwd, home, length) == 0 &&
+      (cwd[length] == '\0' || cwd[length] == '/' || cwd[length] == '\\')) {
+    ClayStr display;
+    clay_str_init(&display);
+    clay_str_push_char(&display, '~');
+    clay_str_push(&display, cwd + length);
+    free(cwd);
+    return display.data;
+  }
+  return cwd;
+}
+
 int clay_term_shell_exec(const char *command, ClayStr *output,
-                         size_t output_limit, int *exit_code,
-                         int *output_truncated) {
+                         size_t output_limit, const ClayExecOptions *options,
+                         ClayExecResult *result) {
+  result->exit_code = -1;
+  result->output_truncated = 0;
+  result->timed_out = 0;
+  result->stopped = 0;
+  int timeout_seconds = exec_timeout_seconds(options);
 #ifdef _WIN32
   SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
   HANDLE read_handle = NULL, write_handle = NULL;
@@ -253,8 +298,8 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
 
   int truncated = 0;
   int timed_out = 0;
-  ULONGLONG deadline = GetTickCount64() +
-                       (ULONGLONG)CLAY_TERM_SHELL_TIMEOUT_SECONDS * 1000;
+  int stopped = 0;
+  ULONGLONG deadline = GetTickCount64() + (ULONGLONG)timeout_seconds * 1000;
   for (;;) {
     DWORD available = 0;
     if (!PeekNamedPipe(read_handle, NULL, 0, NULL, &available, NULL)) break;
@@ -267,6 +312,7 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
       for (DWORD i = 0; i < count; i++) {
         if (buffer[i] == '\0') buffer[i] = '?';
       }
+      exec_stream(options, buffer, (size_t)count);
       size_t kept = output->len < output_limit ? output_limit - output->len : 0;
       if ((size_t)count > kept) truncated = 1;
       if (kept > (size_t)count) kept = count;
@@ -285,6 +331,13 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
       CloseHandle(process.hProcess);
       if (job) CloseHandle(job);
       return -1;
+    }
+    if (exec_should_stop(options)) {
+      stopped = 1;
+      if (job) TerminateJobObject(job, 143);
+      else TerminateProcess(process.hProcess, 143);
+      WaitForSingleObject(process.hProcess, INFINITE);
+      break;
     }
     if (GetTickCount64() >= deadline) {
       timed_out = 1;
@@ -307,6 +360,7 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
     if (!ReadFile(read_handle, buffer, requested, &count, NULL) || count == 0)
       break;
     for (DWORD i = 0; i < count; i++) if (buffer[i] == '\0') buffer[i] = '?';
+    exec_stream(options, buffer, (size_t)count);
     size_t kept = output->len < output_limit ? output_limit - output->len : 0;
     if ((size_t)count > kept) truncated = 1;
     if (kept > (size_t)count) kept = count;
@@ -325,8 +379,10 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
     if (kept < sizeof(message) - 1) truncated = 1;
     if (kept) clay_str_push_n(output, message, kept);
   }
-  if (exit_code) *exit_code = timed_out ? 124 : (int)status;
-  if (output_truncated) *output_truncated = truncated;
+  result->exit_code = timed_out ? 124 : (int)status;
+  result->output_truncated = truncated;
+  result->timed_out = timed_out;
+  result->stopped = stopped;
   return 0;
 #else
   int pipe_fds[2];
@@ -356,8 +412,9 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
     return -1;
   }
 
-  int truncated = 0, timed_out = 0, child_done = 0, pipe_open = 1;
+  int truncated = 0, timed_out = 0, stopped = 0, child_done = 0, pipe_open = 1;
   int status = 0;
+  long long stopped_at = 0;
   struct timespec started;
   clock_gettime(CLOCK_MONOTONIC, &started);
   while (pipe_open || !child_done) {
@@ -366,10 +423,20 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
     clock_gettime(CLOCK_MONOTONIC, &now);
     long long elapsed = (long long)(now.tv_sec - started.tv_sec) * 1000 +
                         (now.tv_nsec - started.tv_nsec) / 1000000;
-    if (pipe_open && elapsed >= CLAY_TERM_SHELL_TIMEOUT_SECONDS * 1000) {
+    if (!child_done && !stopped && exec_should_stop(options)) {
+      kill(-pid, SIGTERM);
+      stopped = 1;
+      stopped_at = elapsed;
+    }
+    /* SIGTERM lets a server flush and exit; SIGKILL is the backstop for one
+       that ignores it. */
+    if (stopped && !child_done && elapsed - stopped_at >= 2000)
+      kill(-pid, SIGKILL);
+    if (!child_done && !timed_out &&
+        elapsed >= (long long)timeout_seconds * 1000) {
       kill(-pid, SIGKILL);
       timed_out = 1;
-      if (!child_done && waitpid(pid, &status, 0) == pid) child_done = 1;
+      if (waitpid(pid, &status, 0) == pid) child_done = 1;
     }
     struct pollfd descriptor = {pipe_fds[0], POLLIN | POLLHUP, 0};
     int polled = pipe_open ? poll(&descriptor, 1, child_done ? 0 : 100) :
@@ -387,6 +454,7 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
         ssize_t count = read(pipe_fds[0], buffer, sizeof(buffer));
         if (count > 0) {
           for (ssize_t i = 0; i < count; i++) if (buffer[i] == '\0') buffer[i] = '?';
+          exec_stream(options, buffer, (size_t)count);
           size_t kept = output->len < output_limit ? output_limit - output->len : 0;
           if ((size_t)count > kept) truncated = 1;
           if (kept > (size_t)count) kept = count;
@@ -411,9 +479,11 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
     if (kept < sizeof(message) - 1) truncated = 1;
     if (kept) clay_str_push_n(output, message, kept);
   }
-  if (exit_code) *exit_code = timed_out ? 124 : (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-  if (output_truncated)
-    *output_truncated = truncated;
+  result->exit_code =
+      timed_out ? 124 : (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+  result->output_truncated = truncated;
+  result->timed_out = timed_out;
+  result->stopped = stopped;
   return 0;
 #endif
 }

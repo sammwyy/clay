@@ -39,9 +39,9 @@ void clay_cmd_exec(const char *args, void *user_data) {
     ClayTask *task = clay_app_task_start(commands->app, "$ %s", args);
     ClayStr output;
     clay_str_init(&output);
-    int exit_code = -1;
-    int truncated = 0;
-    int rc = clay_sandbox_exec(&sandbox, args, &output, CLAY_EXEC_OUTPUT_LIMIT, &exit_code, &truncated);
+    ClayExecResult exec = {0};
+    int rc = clay_sandbox_exec(&sandbox, args, &output, CLAY_EXEC_OUTPUT_LIMIT, NULL, &exec);
+    int exit_code = exec.exit_code;
     free(workspace_dir);
     free(scratch_dir);
     for (size_t i = 0; i < readonly_mount_count; i++) free(readonly_mounts[i]);
@@ -53,6 +53,6 @@ void clay_cmd_exec(const char *args, void *user_data) {
 
     if (*output.data) printf("%s\n", output.data);
     else clay_list_bullet("(no output)");
-    if (truncated) clay_sayc(CLAY_GRAY, "(output truncated)");
+    if (exec.output_truncated) clay_sayc(CLAY_GRAY, "(output truncated)");
     clay_str_free(&output);
 }

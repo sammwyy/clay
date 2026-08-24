@@ -603,9 +603,10 @@ ClayJson *clay_fs_tool_grep(const ClayJson *arguments, void *userdata) {
     };
     ClayStr output;
     clay_str_init(&output);
-    int exit_code = -1;
-    int truncated = 0;
-    int rc = clay_sandbox_exec(&sandbox, invocation.data, &output, CLAY_FS_GREP_CAPTURE_LIMIT, &exit_code, &truncated);
+    ClayExecResult exec = {0};
+    int rc = clay_sandbox_exec(&sandbox, invocation.data, &output, CLAY_FS_GREP_CAPTURE_LIMIT, NULL, &exec);
+    int exit_code = exec.exit_code;
+    int truncated = exec.output_truncated;
     free(workspace_dir);
     free(scratch_dir);
     clay_str_free(&invocation);

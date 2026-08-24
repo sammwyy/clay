@@ -100,6 +100,14 @@ ASK_USER_TEST_SRC    := tests/test_ask_user.c
 ASK_USER_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(ASK_USER_TEST_SRC))
 ASK_USER_TEST_TARGET := $(BIN_DIR)/test_ask_user
 
+TASKS_TEST_SRC    := tests/test_tasks.c
+TASKS_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(TASKS_TEST_SRC))
+TASKS_TEST_TARGET := $(BIN_DIR)/test_tasks
+
+MODES_TEST_SRC    := tests/test_modes.c
+MODES_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(MODES_TEST_SRC))
+MODES_TEST_TARGET := $(BIN_DIR)/test_modes
+
 PROCESS_TEST_SRC    := tests/test_process.c
 PROCESS_TEST_OBJ    := $(patsubst tests/%.c,$(BUILD_DIR)/tests/%.o,$(PROCESS_TEST_SRC))
 PROCESS_TEST_TARGET := $(BIN_DIR)/test_process
@@ -144,7 +152,7 @@ TEST_OBJ_ALL := $(CLI_TEST_OBJ) $(COMMAND_TEST_OBJ) $(CHAT_TEST_OBJ) \
 	$(UUID_TEST_OBJ) $(MEMORY_TEST_OBJ) $(SANDBOX_TEST_OBJ) \
 	$(FS_TOOLS_TEST_OBJ) $(CHECKPOINT_TEST_OBJ) $(PERMISSIONS_TEST_OBJ) \
 	$(CONTEXT_COMPACT_TEST_OBJ) $(PROJECT_INSTRUCTIONS_TEST_OBJ) \
-	$(TODOWRITE_TEST_OBJ) $(ASK_USER_TEST_OBJ) $(PROCESS_TEST_OBJ) $(MCP_TEST_OBJ) \
+	$(TODOWRITE_TEST_OBJ) $(ASK_USER_TEST_OBJ) $(TASKS_TEST_OBJ) $(MODES_TEST_OBJ) $(PROCESS_TEST_OBJ) $(MCP_TEST_OBJ) \
 	$(REPO_MAP_TEST_OBJ) $(ENV_BLOCK_TEST_OBJ) $(COMPACT_TEST_OBJ) \
 	$(CODEX_TEST_OBJ) $(GROK_TEST_OBJ) $(UNDO_TEST_OBJ) \
 	$(STORAGE_TEST_OBJ) $(SKILL_TEST_OBJ) $(TEST_OBJ)
@@ -167,12 +175,12 @@ UNIT_TEST_TARGETS := $(CLI_TEST_TARGET) $(COMMAND_TEST_TARGET) $(CHAT_TEST_TARGE
 	$(UUID_TEST_TARGET) $(MEMORY_TEST_TARGET) $(SANDBOX_TEST_TARGET) \
 	$(FS_TOOLS_TEST_TARGET) $(CHECKPOINT_TEST_TARGET) $(PERMISSIONS_TEST_TARGET) \
 	$(CONTEXT_COMPACT_TEST_TARGET) $(PROJECT_INSTRUCTIONS_TEST_TARGET) \
-	$(TODOWRITE_TEST_TARGET) $(ASK_USER_TEST_TARGET) $(PROCESS_TEST_TARGET) $(MCP_TEST_TARGET) \
+	$(TODOWRITE_TEST_TARGET) $(ASK_USER_TEST_TARGET) $(TASKS_TEST_TARGET) $(MODES_TEST_TARGET) $(PROCESS_TEST_TARGET) $(MCP_TEST_TARGET) \
 	$(REPO_MAP_TEST_TARGET) $(ENV_BLOCK_TEST_TARGET) $(COMPACT_TEST_TARGET) \
 	$(CODEX_TEST_TARGET) $(GROK_TEST_TARGET) $(UNDO_TEST_TARGET) $(STORAGE_TEST_TARGET) \
 	$(SKILL_TEST_TARGET)
 
-.PHONY: all build release build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-ask-user test-process test-mcp test-repo-map test-environment-block test-compact test-undo test-storage test-skill completions man-pages run compress compress-release compress-win clean debug
+.PHONY: all build release build-win build_win test test-openai test-openai-codex test-grok test-cli test-command test-chat test-uuid test-memory test-sandbox test-fs-tools test-checkpoint test-permissions test-context-compact test-project-instructions test-todowrite test-ask-user test-tasks test-modes test-process test-mcp test-repo-map test-environment-block test-compact test-undo test-storage test-skill completions man-pages run compress compress-release compress-win clean debug
 
 all: build
 
@@ -306,6 +314,18 @@ test-ask-user: $(ASK_USER_TEST_TARGET)
 
 $(ASK_USER_TEST_TARGET): $(LIB_OBJ) $(ASK_USER_TEST_OBJ) | $(BIN_DIR)
 	$(CC) $(LIB_OBJ) $(ASK_USER_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-tasks: $(TASKS_TEST_TARGET)
+	@./$<
+
+$(TASKS_TEST_TARGET): $(LIB_OBJ) $(TASKS_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(TASKS_TEST_OBJ) -o $@ $(LDFLAGS)
+
+test-modes: $(MODES_TEST_TARGET)
+	@./$<
+
+$(MODES_TEST_TARGET): $(LIB_OBJ) $(MODES_TEST_OBJ) | $(BIN_DIR)
+	$(CC) $(LIB_OBJ) $(MODES_TEST_OBJ) -o $@ $(LDFLAGS)
 
 test-process: $(PROCESS_TEST_TARGET)
 	@./$<

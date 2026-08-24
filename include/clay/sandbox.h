@@ -1,7 +1,7 @@
 #ifndef CLAY_SANDBOX_H
 #define CLAY_SANDBOX_H
 
-#include "clay/str.h"
+#include "clay/term.h"
 
 #include <stddef.h>
 
@@ -30,6 +30,6 @@ int clay_sandbox_supported(void);
    remaps the filesystem per `config`. Fails closed: if sandbox setup
    itself fails, the command is never run unsandboxed. */
 int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, ClayStr *output,
-                       size_t output_limit, int *exit_code, int *output_truncated);
+                       size_t output_limit, const ClayExecOptions *options, ClayExecResult *result);
 
 #endif /* CLAY_SANDBOX_H */

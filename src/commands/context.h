@@ -67,6 +67,10 @@ typedef enum {
 
 /* Whether the user has agreed to let the configured auto-test command run
    after edits, asked once per session (not once per edit). */
+/* One backgrounded shell command (src/commands/tasks.c). Opaque: a
+   reader thread owns its output buffer. */
+typedef struct ClayBackgroundTask ClayBackgroundTask;
+
 typedef enum {
   CLAY_AUTO_TEST_UNASKED,
   CLAY_AUTO_TEST_ALLOWED,
@@ -111,6 +115,8 @@ struct ClayCommands {
   int undo_pending_valid;
   char *auto_test_command; /* "" if unset */
   ClayAutoTestChoice auto_test_choice;
+  ClayArray tasks; /* ClayBackgroundTask*, background commands this session */
+  int next_task_id;
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands,
@@ -182,6 +188,9 @@ int clay_permissions_check(ClayCommands *commands,
                            ClayPermissionCategory category, const char *action,
                            const char *detail);
 void clay_commands_update_sandbox_below(ClayCommands *commands);
+/* Splits a persisted sandbox_mode value into its two axes. */
+void clay_commands_parse_sandbox_mode(const char *value, ClaySandboxMode *mode,
+                                      int *auto_approve);
 void clay_commands_cycle_sandbox(ClayCommands *commands);
 void clay_cmd_cycle_sandbox(const char *args, void *user_data);
 /* True if `command`'s program name is on the curated read-only-ish
@@ -265,5 +274,27 @@ ClayJson *todowrite_schema(void);
    userdata is a ClayCommands*. */
 ClayJson *ask_user_tool(const ClayJson *arguments, void *userdata);
 ClayJson *ask_user_schema(void);
+
+/* Background command tools (src/commands/tasks.c). task_run starts a
+   command on its own thread and returns as soon as it has had a moment to
+   fail; the others read, stop, and list what is running. userdata is a
+   ClayCommands*. */
+ClayJson *task_run_tool(const ClayJson *arguments, void *userdata);
+ClayJson *task_run_schema(void);
+ClayJson *task_output_tool(const ClayJson *arguments, void *userdata);
+ClayJson *task_output_schema(void);
+ClayJson *task_stop_tool(const ClayJson *arguments, void *userdata);
+ClayJson *task_stop_schema(void);
+ClayJson *task_list_tool(const ClayJson *arguments, void *userdata);
+ClayJson *task_list_schema(void);
+
+/* Stops every background task, waits for its thread, and empties the
+   registry. */
+void clay_commands_stop_tasks(ClayCommands *commands);
+
+/* Snapshots the workspace into the chat's checkpoint repo before a tool
+   call that may change it. Best-effort: a failed snapshot never blocks the
+   call. */
+void clay_commands_checkpoint(ClayCommands *commands, const char *label);
 
 #endif /* CLAY_COMMANDS_CONTEXT_H */

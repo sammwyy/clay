@@ -27,6 +27,10 @@ void clay_below_set_enabled(const char *id, int enabled);
 void clay_below_reorder(const char *id, int index);
 void clay_below_set_alignment(const char *id, ClayBelowAlign alignment);
 
+/* Marks a module as droppable: it is skipped entirely on a redraw where the
+   enabled modules would not all fit in the rows available. */
+void clay_below_set_optional(const char *id, int optional);
+
 /* Shows a fixed-width elapsed timer in place of a module's text. */
 void clay_below_start_elapsed(const char *id);
 void clay_below_stop_elapsed(const char *id);

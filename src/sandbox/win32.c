@@ -9,14 +9,14 @@
 #include <stdlib.h>
 
 static int integrated_exec(const char *command, ClayStr *output, size_t output_limit,
-                           int *exit_code, int *output_truncated) {
+                           ClayExecResult *result) {
     FILE *capture = tmpfile();
     if (!capture) return -1;
     char *cwd = _getcwd(NULL, 0);
     int saved_out = _dup(_fileno(stdout)), saved_err = _dup(_fileno(stderr));
     if (saved_out < 0 || saved_err < 0 || _dup2(_fileno(capture), _fileno(stdout)) < 0 ||
         _dup2(_fileno(capture), _fileno(stderr)) < 0) { fclose(capture); free(cwd); return -1; }
-    *exit_code = clay_shell_run_command(command);
+    result->exit_code = clay_shell_run_command(command);
     fflush(stdout); fflush(stderr);
     _dup2(saved_out, _fileno(stdout)); _dup2(saved_err, _fileno(stderr));
     _close(saved_out); _close(saved_err);
@@ -27,7 +27,7 @@ static int integrated_exec(const char *command, ClayStr *output, size_t output_l
         size_t remaining = output->len < output_limit ? output_limit - output->len : 0;
         size_t kept = count < remaining ? count : remaining;
         if (kept) clay_str_push_n(output, buffer, kept);
-        if (kept != count) *output_truncated = 1;
+        if (kept != count) result->output_truncated = 1;
     }
     fclose(capture);
     return 0;
@@ -38,8 +38,13 @@ int clay_sandbox_supported(void) {
 }
 
 int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, ClayStr *output,
-                      size_t output_limit, int *exit_code, int *output_truncated) {
-    if (config->use_integrated_shell)
-        return integrated_exec(command, output, output_limit, exit_code, output_truncated);
-    return clay_term_shell_exec(command, output, output_limit, exit_code, output_truncated);
+                      size_t output_limit, const ClayExecOptions *options, ClayExecResult *result) {
+    if (config->use_integrated_shell) {
+        result->exit_code = -1;
+        result->output_truncated = 0;
+        result->timed_out = 0;
+        result->stopped = 0;
+        return integrated_exec(command, output, output_limit, result);
+    }
+    return clay_term_shell_exec(command, output, output_limit, options, result);
 }

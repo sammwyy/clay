@@ -24,7 +24,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#define CLAY_SANDBOX_TIMEOUT_SECONDS 120
 #define CLAY_SANDBOX_CPU_SECONDS 60
 #define CLAY_SANDBOX_ADDRESS_SPACE_LIMIT (1024ULL * 1024 * 1024)
 #define CLAY_SANDBOX_PROCESS_LIMIT 64
@@ -422,10 +421,19 @@ int clay_sandbox_supported(void) {
 }
 
 int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, ClayStr *output,
-                      size_t output_limit, int *exit_code, int *output_truncated) {
+                      size_t output_limit, const ClayExecOptions *options, ClayExecResult *result) {
     if (config->mode == CLAY_SANDBOX_MODE_UNLEASHED) {
-        return clay_term_shell_exec(command, output, output_limit, exit_code, output_truncated);
+        return clay_term_shell_exec(command, output, output_limit, options, result);
     }
+    result->exit_code = -1;
+    result->output_truncated = 0;
+    result->timed_out = 0;
+    result->stopped = 0;
+    int timeout_seconds = options && options->timeout_seconds > 0
+                              ? options->timeout_seconds
+                              : CLAY_SHELL_DEFAULT_TIMEOUT_SECONDS;
+    if (timeout_seconds > CLAY_SHELL_MAX_TIMEOUT_SECONDS)
+        timeout_seconds = CLAY_SHELL_MAX_TIMEOUT_SECONDS;
 
     int fds[2];
     if (pipe(fds) != 0) return -1;
@@ -477,6 +485,8 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
     int child_done = 0;
     int pipe_open = 1;
     int timed_out = 0;
+    int stopped = 0;
+    long long stopped_at = 0;
     int flags = fcntl(fds[0], F_GETFL);
     if (flags < 0 || fcntl(fds[0], F_SETFL, flags | O_NONBLOCK) != 0) {
         close(fds[0]);
@@ -486,10 +496,20 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
         return -1;
     }
 
-    long long deadline = monotonic_milliseconds() + (long long)CLAY_SANDBOX_TIMEOUT_SECONDS * 1000;
+    long long deadline = monotonic_milliseconds() + (long long)timeout_seconds * 1000;
     while (pipe_open || !child_done) {
+        long long now = monotonic_milliseconds();
         if (!child_done && waitpid(pid, &status, WNOHANG) == pid) child_done = 1;
-        if (!child_done && !timed_out && monotonic_milliseconds() >= deadline) {
+        if (!child_done && !stopped && options && options->should_stop &&
+            options->should_stop(options->user_data)) {
+            if (kill(-pid, SIGTERM) != 0) kill(pid, SIGTERM);
+            stopped = 1;
+            stopped_at = now;
+        }
+        /* SIGTERM lets a server flush and exit; SIGKILL is the backstop for
+           one that ignores it. */
+        if (stopped && !child_done && now - stopped_at >= 2000) stop_process_group(pid);
+        if (!child_done && !timed_out && now >= deadline) {
             stop_process_group(pid);
             timed_out = 1;
         }
@@ -513,6 +533,8 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
                 for (ssize_t i = 0; i < read_count; i++) {
                     if (buffer[i] == '\0') buffer[i] = '?';
                 }
+                if (options && options->on_output)
+                    options->on_output(buffer, (size_t)read_count, options->user_data);
                 append_output(output, output_limit, buffer, (size_t)read_count, &truncated);
                 continue;
             }
@@ -535,8 +557,10 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
         static const char timeout_message[] = "\nclay: sandbox command timed out\n";
         append_output(output, output_limit, timeout_message, sizeof(timeout_message) - 1, &truncated);
     }
-    if (exit_code) *exit_code = timed_out ? 124 : (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-    if (output_truncated) *output_truncated = truncated;
+    result->exit_code = timed_out ? 124 : (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+    result->output_truncated = truncated;
+    result->timed_out = timed_out;
+    result->stopped = stopped;
     cleanup_stage_dir(pid);
     return 0;
 }

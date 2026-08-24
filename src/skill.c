@@ -80,9 +80,9 @@ static char *git_sync(const char *url, const char *ref) {
 
     ClayStr output;
     clay_str_init(&output);
-    int exit_code = -1;
-    int truncated = 0;
-    int rc = clay_term_shell_exec(command.data, &output, CLAY_SKILL_GIT_OUTPUT_LIMIT, &exit_code, &truncated);
+    ClayExecResult exec = {0};
+    int rc = clay_term_shell_exec(command.data, &output, CLAY_SKILL_GIT_OUTPUT_LIMIT, NULL, &exec);
+    int exit_code = exec.exit_code;
     clay_str_free(&command);
     clay_str_free(&output);
     if (rc != 0 || exit_code != 0) {
