@@ -16,6 +16,7 @@
 typedef struct {
   ClayCommands *commands;
   int status_visible;
+  int ended_after_tool; /* last thing this turn produced was a tool result */
   int started;
   int response_active;
   long error_status;
@@ -853,9 +854,18 @@ static void set_status(double seconds, int success) {
   clay_str_free(&text);
 }
 
+/* Row hook for the reasoning block: keeps the pinned status row below it. */
+static void push_status_row(void) { clay_below_status_push_down(); }
+
 static void collapse_thinking(ClayConversationStream *stream) {
   if (!stream->thinking_output_started)
     return;
+  /* Hand the pinned row back before clay_thinking_finish rewrites the block:
+     its row math assumes nothing of ours sits underneath. */
+  if (stream->status_visible) {
+    clay_below_status_release();
+    stream->status_visible = 0;
+  }
   clay_thinking_finish(stream->thinking_seconds);
   stream->thinking_output_started = 0;
 }
@@ -896,15 +906,19 @@ static void on_reasoning(const char *text, void *userdata) {
     clay_str_push_n(&stream->thinking, text, len);
   if (!stream->response_active && clay_term_is_interactive()) {
     if (!stream->thinking_output_started) {
-      /* Reasoning text takes the row the spinner was on: hand it back
-         whole, or clay_thinking_finish's row math erases the wrong rows.
-         The elapsed clock keeps running for the rest of the turn. */
-      clay_below_set_enabled("status", 0);
-      hide_status(stream);
-      clay_thinking_begin();
+      if (stream->status_visible) {
+        /* The animator paints wherever the cursor is; from here the
+           streaming thread repaints the pinned row itself. */
+        clay_below_set_editing(0);
+        clay_below_status_insert_above();
+      }
+      clay_thinking_begin(stream->status_visible ? push_status_row : NULL);
       stream->thinking_output_started = 1;
     }
     clay_thinking_write(text);
+    /* Reasoning can run for minutes: keep the spinner and the clock moving
+       so a stalled provider looks stalled, not finished. */
+    clay_below_status_tick();
   }
 }
 
@@ -1130,6 +1144,7 @@ static void on_tool_call(const char *name, const char *arguments_json,
 static void on_tool_result(const char *name, const ClayJson *result,
                            void *userdata) {
   ClayConversationStream *stream = userdata;
+  stream->ended_after_tool = 1;
   int ok = clay_json_bool_value(clay_json_object_get(result, "ok"));
   long exit_code =
       (long)clay_json_number_value(clay_json_object_get(result, "exit_code"));
@@ -1187,6 +1202,7 @@ static void on_token(const char *text, void *userdata) {
   finish_thinking(stream);
   collapse_thinking(stream);
   clay_str_push(&stream->response, text);
+  stream->ended_after_tool = 0;
   if (!stream->response_active) {
     if (clay_term_is_interactive()) {
       /* Take the row under the answer back - reasoning output gave it up -
@@ -1390,18 +1406,8 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
         "Compacted %d old tool result%s to stay within the context budget.",
         collapsed, collapsed == 1 ? "" : "s");
   }
-  size_t history_end = clay_json_array_count(commands->conversation);
+  clay_commands_sync_context_blocks(commands);
   ClayJson *messages = clay_json_clone(commands->conversation);
-  const char *notes = clay_chat_notes(commands->chat);
-  int has_notes = *notes != '\0';
-  if (has_notes) {
-    ClayStr block;
-    clay_str_init(&block);
-    clay_str_printf(&block, "Notes from earlier in this conversation:\n%s",
-                    notes);
-    clay_json_array_push(messages, clay_openai_message("system", block.data));
-    clay_str_free(&block);
-  }
   size_t turn_start = clay_json_array_count(messages);
   clay_json_array_push(messages, clay_openai_message("user", input));
   ClayConversationStream stream = {0};
@@ -1457,6 +1463,9 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     } else {
       hide_status(&stream);
     }
+    /* Stop the clock and the spinner, or they keep running under the next
+       prompt as if the turn were still going. */
+    set_status(seconds, 0);
     clay_sayc(CLAY_YELLOW, "Operation aborted by user.");
     clay_str_free(&stream.response);
     clay_wrap_free(&stream.wrap);
@@ -1467,8 +1476,6 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   if (rc == 0) {
     persist_thinking(commands, &stream);
     clay_chat_finish_turn(commands->chat, messages, turn_start, "completed");
-    if (has_notes)
-      clay_json_array_remove(messages, history_end);
     clay_json_free(commands->conversation);
     commands->conversation = messages;
     set_status(seconds, 1);
@@ -1501,6 +1508,19 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
                                                   : "network_error");
     clay_json_free(messages);
     set_status(seconds, 0);
+  }
+  /* A model that stops right after a tool call leaves nothing on screen;
+     say so rather than looking like clay swallowed the answer. */
+  if (rc == 0 && stream.ended_after_tool) {
+    if (had_response && stream.status_visible) {
+      clay_below_status_finish_output();
+      stream.status_visible = 0;
+    } else {
+      hide_status(&stream);
+    }
+    clay_sayc(CLAY_GRAY,
+              "The model ended the turn after its last tool call, without a "
+              "closing message.");
   }
   if (stream.started && clay_term_is_interactive()) {
     if (stream.status_visible)

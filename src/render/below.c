@@ -13,6 +13,8 @@
 
 #define CLAY_BELOW_MAX_MODULES 64
 #define CLAY_BELOW_SPINNER_FRAMES 10
+#define CLAY_BELOW_SPINNER_INTERVAL_MS 80
+#define CLAY_BELOW_QUIET_MS 300
 #define CLAY_BELOW_SEPARATOR_WIDTH 3 /* " · " */
 
 typedef struct {
@@ -49,6 +51,9 @@ static int g_max_rows_established = 1; /* rows below the prompt ever created via
 static int g_spinner_frame = 0;
 static int g_editing = 0;
 static int g_status_only = 0;
+static int g_status_below = 0; /* the pinned row sits one row under the cursor */
+static long long g_status_ticked_ms = 0;
+static long long g_status_activity_ms = 0; /* last chunk from the streaming thread */
 
 static pthread_t g_animator;
 static int g_animator_started = 0;
@@ -475,12 +480,37 @@ static void render_status_locked(void) {
     fflush(stdout);
 }
 
+static long long monotonic_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static void repaint_pinned_row_locked(long long now) {
+    g_status_ticked_ms = now;
+    g_spinner_frame = (g_spinner_frame + 1) % CLAY_BELOW_SPINNER_FRAMES;
+    clay_term_cursor_save();
+    clay_term_cursor_down(1);
+    render_status_locked();
+    clay_term_cursor_restore();
+    fflush(stdout);
+}
+
 static void *animator_loop(void *arg) {
     (void)arg;
     for (;;) {
         clay_term_sleep_ms(80);
         pthread_mutex_lock(&g_lock);
-        if (g_editing && has_loading_module()) {
+        long long now = monotonic_ms();
+        if (g_status_only && g_status_below) {
+            /* Only once the streaming thread has gone quiet: while text is
+               arriving it repaints the row itself, and two threads writing
+               to the same terminal would interleave. A provider that stalls
+               still gets a moving spinner and a climbing clock. */
+            if (now - g_status_activity_ms >= CLAY_BELOW_QUIET_MS &&
+                now - g_status_ticked_ms >= CLAY_BELOW_SPINNER_INTERVAL_MS)
+                repaint_pinned_row_locked(now);
+        } else if (g_editing && has_loading_module()) {
             g_spinner_frame = (g_spinner_frame + 1) % CLAY_BELOW_SPINNER_FRAMES;
             if (g_status_only) render_status_locked();
             else render_locked();
@@ -615,6 +645,7 @@ void clay_below_render(const char *input, size_t cursor) {
     clay_str_push(&g_last_input, input);
     g_last_cursor = cursor;
     g_status_only = 0;
+    g_status_below = 0;
     render_locked();
     pthread_mutex_unlock(&g_lock);
 }
@@ -625,6 +656,7 @@ void clay_below_clear_screen(void) {
     g_last_line_count = 0;
     g_max_rows_established = 1;
     g_status_only = 0;
+    g_status_below = 0;
     fflush(stdout);
     pthread_mutex_unlock(&g_lock);
 }
@@ -632,6 +664,7 @@ void clay_below_clear_screen(void) {
 void clay_below_render_status(void) {
     pthread_mutex_lock(&g_lock);
     g_status_only = 1;
+    g_status_below = 0;
     render_status_locked();
     pthread_mutex_unlock(&g_lock);
 }
@@ -640,6 +673,7 @@ void clay_below_render_status(void) {
 void clay_below_status_insert_above(void) {
     pthread_mutex_lock(&g_lock);
     if (g_status_only) {
+        g_status_below = 1;
         fputc('\r', stdout);
         clay_term_clear_line();
         fputc('\n', stdout);
@@ -673,9 +707,37 @@ void clay_below_status_finish_output(void) {
         fputc('\r', stdout);
         clay_term_clear_line();
         g_status_only = 0;
+        g_status_below = 0;
         g_last_line_count = 0;
         fflush(stdout);
     }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_status_tick(void) {
+    pthread_mutex_lock(&g_lock);
+    long long now = monotonic_ms();
+    g_status_activity_ms = now;
+    if (g_status_only && g_status_below &&
+        now - g_status_ticked_ms >= CLAY_BELOW_SPINNER_INTERVAL_MS) {
+        repaint_pinned_row_locked(now);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+void clay_below_status_release(void) {
+    pthread_mutex_lock(&g_lock);
+    if (g_status_only && g_status_below) {
+        clay_term_cursor_save();
+        clay_term_cursor_down(1);
+        fputc('\r', stdout);
+        clay_term_clear_line();
+        clay_term_cursor_restore();
+        fflush(stdout);
+    }
+    g_status_only = 0;
+    g_status_below = 0;
+    g_last_line_count = 0;
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -704,6 +766,7 @@ void clay_below_status_prepare_prompt(void) {
         clay_term_cursor_up(1);
         fputc('\r', stdout);
         g_status_only = 0;
+        g_status_below = 0;
         g_last_line_count = 0;
         g_max_rows_established = 2;
         fflush(stdout);
@@ -719,6 +782,7 @@ void clay_below_finish(void) {
         clay_term_clear_line();
         fflush(stdout);
         g_status_only = 0;
+        g_status_below = 0;
         g_last_line_count = 0;
         pthread_mutex_unlock(&g_lock);
         return;

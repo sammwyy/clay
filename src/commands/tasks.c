@@ -269,15 +269,19 @@ ClayJson *task_run_tool(const ClayJson *arguments, void *userdata) {
   ClayJson *result = clay_json_object();
   clay_json_object_set(result, "ok", clay_json_bool(1));
   describe_task(task, result, 0);
-  /* Each sandboxed command gets its own empty network namespace, so a port
-     this one opens is unreachable from anywhere else. */
+  /* Every sandboxed command gets its own network namespace, so a port this
+     task opens exists only inside it. */
   if (task->mode == CLAY_SANDBOX_MODE_SANDBOX)
     clay_json_object_set(
         result, "note",
-        clay_json_string("Sandboxed: this task has its own empty network "
-                         "namespace, so nothing outside it can reach a port "
-                         "it opens. If it needs to serve traffic, ask the "
-                         "user for Unleashed mode (Shift+Tab)."));
+        clay_json_string("Sandboxed: this task has its own network namespace. "
+                         "A port it opens is reachable from inside that same "
+                         "command only - a separate shell_exec runs in its own "
+                         "namespace and will get connection refused, and so "
+                         "will your browser. To reach it from elsewhere, ask "
+                         "the user for Unleashed mode (Shift+Tab); to test it "
+                         "here, start the server and curl it inside one "
+                         "command."));
   update_tasks_below(commands);
   return result;
 }

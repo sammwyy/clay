@@ -14,9 +14,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -216,6 +220,23 @@ static int run_id_mapper(const char *tool, pid_t pid, unsigned id) {
 /* Namespaces the process and remaps its filesystem view via pivot_root.
    Any failure returns -1 before exec, so a broken sandbox never falls
    back to running the command unsandboxed. */
+/* A fresh network namespace has loopback present but down, so a command
+   cannot reach even a server it started itself. Bringing lo up keeps the
+   isolation (there is still no route off the namespace) and makes
+   "start it, then curl it" work inside one sandboxed command. */
+static void bring_loopback_up(void) {
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return;
+    struct ifreq request;
+    memset(&request, 0, sizeof(request));
+    strncpy(request.ifr_name, "lo", IFNAMSIZ - 1);
+    if (ioctl(fd, SIOCGIFFLAGS, &request) == 0) {
+        request.ifr_flags |= IFF_UP | IFF_RUNNING;
+        ioctl(fd, SIOCSIFFLAGS, &request);
+    }
+    close(fd);
+}
+
 static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int mapped_fd, char *diag,
                          size_t diag_len) {
     if (unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS | CLONE_NEWNET) != 0) {
@@ -234,6 +255,7 @@ static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int m
         snprintf(diag, diag_len, "clay: sandbox uid/gid mapping failed (missing newuidmap/newgidmap?)\n");
         return -1;
     }
+    bring_loopback_up();
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
         snprintf(diag, diag_len, "clay: sandbox mount-private failed: %s\n", strerror(errno));
         return -1;
@@ -384,6 +406,9 @@ static void run_child(const ClaySandboxConfig *config, const char *command, int 
     _exit(WIFEXITED(status) ? WEXITSTATUS(status) : 128);
 }
 
+#define CLAY_SANDBOX_STOP_GRACE_MS 2000
+#define CLAY_SANDBOX_DRAIN_MS 500
+
 static long long monotonic_milliseconds(void) {
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
@@ -486,6 +511,7 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
     int pipe_open = 1;
     int timed_out = 0;
     int stopped = 0;
+    int killed = 0;
     long long stopped_at = 0;
     int flags = fcntl(fds[0], F_GETFL);
     if (flags < 0 || fcntl(fds[0], F_SETFL, flags | O_NONBLOCK) != 0) {
@@ -497,25 +523,47 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
     }
 
     long long deadline = monotonic_milliseconds() + (long long)timeout_seconds * 1000;
+    long long drain_since = 0;
     while (pipe_open || !child_done) {
         long long now = monotonic_milliseconds();
-        if (!child_done && waitpid(pid, &status, WNOHANG) == pid) child_done = 1;
+        if (!child_done && waitpid(pid, &status, WNOHANG) == pid) {
+            child_done = 1;
+            drain_since = now;
+        }
         if (!child_done && !stopped && options && options->should_stop &&
             options->should_stop(options->user_data)) {
             if (kill(-pid, SIGTERM) != 0) kill(pid, SIGTERM);
             stopped = 1;
             stopped_at = now;
         }
-        /* SIGTERM lets a server flush and exit; SIGKILL is the backstop for
-           one that ignores it. */
-        if (stopped && !child_done && now - stopped_at >= 2000) stop_process_group(pid);
+        /* SIGTERM gives a server a chance to flush, but the command runs as
+           PID 1 of the sandbox's PID namespace and the kernel never delivers
+           SIGTERM there - it outlives the child that started it. Once that
+           child is reaped there is nothing left to exit gracefully, so kill
+           the group immediately; otherwise wait out the grace period. */
+        if (stopped && !killed &&
+            (child_done || now - stopped_at >= CLAY_SANDBOX_STOP_GRACE_MS)) {
+            stop_process_group(pid);
+            killed = 1;
+        }
         if (!child_done && !timed_out && now >= deadline) {
             stop_process_group(pid);
+            killed = 1;
             timed_out = 1;
+        }
+        /* Anything still holding the pipe after the child is gone is a
+           descendant that outlived it; give it a moment, then stop reading
+           rather than waiting on an EOF that may never come. Never before
+           the kill has gone out, or the command would be left running. */
+        if (pipe_open && child_done && (!stopped || killed) &&
+            now - drain_since >= CLAY_SANDBOX_DRAIN_MS) {
+            close(fds[0]);
+            pipe_open = 0;
+            continue;
         }
 
         struct pollfd poll_fd = {fds[0], POLLIN | POLLHUP, 0};
-        int polled = pipe_open ? poll(&poll_fd, 1, child_done ? 0 : 100) : poll(NULL, 0, 100);
+        int polled = pipe_open ? poll(&poll_fd, 1, 20) : poll(NULL, 0, 20);
         if (polled < 0) {
             if (errno == EINTR) continue;
             close(fds[0]);

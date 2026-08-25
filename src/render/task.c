@@ -63,10 +63,12 @@ static void render_line(const char *icon_color, const char *icon, const char *la
 void clay_task_render_pause(void) {
     pthread_mutex_lock(&g_render_lock);
     g_render_pause_depth++;
-    /* Park the live row: whatever interrupts a running task (a permission
-       prompt, a question) gets a fresh line instead of overwriting it. */
+    /* Take the live row back: whatever interrupts a running task (a
+       permission prompt, a question) reuses it, and the task redraws below
+       once the prompt is done - no half-finished spinner left behind. */
     if (g_line_open) {
-        fputc('\n', stdout);
+        fputc('\r', stdout);
+        clay_term_clear_line();
         fflush(stdout);
         g_line_open = 0;
     }

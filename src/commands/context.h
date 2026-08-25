@@ -115,6 +115,10 @@ struct ClayCommands {
   int undo_pending_valid;
   char *auto_test_command; /* "" if unset */
   ClayAutoTestChoice auto_test_choice;
+  /* Last context block of each kind appended to `conversation`, so an
+     unchanged one is never appended twice. */
+  char *environment_block;
+  char *notes_block;
   ClayArray tasks; /* ClayBackgroundTask*, background commands this session */
   int next_task_id;
   /* The spinner row of the tool call running right now, for a long call that
@@ -140,6 +144,14 @@ void clay_commands_set_tokens_below_with_cache(
     ClayCommands *commands, long input_tokens, long output_tokens,
     long cached_input_tokens, int cached_input_tokens_known);
 void clay_commands_reset_conversation(ClayCommands *commands);
+/* Platform, date, working directory, git branch and the workspace's
+   top-level entries, as they are at this instant. Malloc'd; sent with each
+   message rather than frozen into the system prompt. */
+char *clay_commands_environment_block(void);
+/* Appends the environment (and the chat's notes, when set) to the
+   conversation, but only when they differ from the last ones appended, so
+   the message array only ever grows and the provider's prefix cache holds. */
+void clay_commands_sync_context_blocks(ClayCommands *commands);
 /* Walks up from the cwd to the repo root, concatenating AGENTS.md/CLAY.md
    at each level (root-first). Malloc'd; NULL if none found. */
 char *clay_commands_load_project_instructions(void);

@@ -16,6 +16,10 @@ void clay_term_clear_line(void);
 void clay_term_cursor_up(int n);
 void clay_term_cursor_down(int n);
 void clay_term_cursor_col(int col); /* 0-based column, absolute */
+/* DECSC/DECRC: remember one cursor position and jump back to it, so a
+   pinned row can be repainted without losing the caller's place mid-line. */
+void clay_term_cursor_save(void);
+void clay_term_cursor_restore(void);
 void clay_term_sleep_ms(int ms);
 
 /* Notifies the user when an interactive session needs attention. */
@@ -42,6 +46,10 @@ typedef struct {
 
 #define CLAY_SHELL_DEFAULT_TIMEOUT_SECONDS 120
 #define CLAY_SHELL_MAX_TIMEOUT_SECONDS 3600
+/* How long a stopped command gets to exit on SIGTERM before SIGKILL, and how
+   long anything it left behind may hold the output pipe afterwards. */
+#define CLAY_SHELL_STOP_GRACE_MS 2000
+#define CLAY_SHELL_DRAIN_MS 500
 
 /* Runs a shell command in the current directory, appending combined
    stdout/stderr to output up to output_limit. */
@@ -113,6 +121,11 @@ typedef enum {
   CLAY_KEY_CLEAR_SCREEN,
   CLAY_KEY_HISTORY_SEARCH,
   CLAY_KEY_ESCAPE,
+  /* An escape sequence this build has no binding for: a focus or mouse
+     report, a Home/End/Delete key, a reply to a terminal query. Never treat
+     it as Escape - that would cancel a running turn behind the user's
+     back. */
+  CLAY_KEY_UNKNOWN,
   CLAY_KEY_INTERRUPT,
   CLAY_KEY_EOF,
   CLAY_KEY_RESIZE

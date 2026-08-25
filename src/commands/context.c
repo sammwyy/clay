@@ -215,11 +215,12 @@
   "output instead of describing it. Never claim more confidence " \
   "than your evidence supports."
 
-/* Sliding window: reused as-is (and its clock reset) while a chat-less
-   session starts within this long of the cache's last use, since the
-   provider's own prefix cache is likely still warm; rebuilt with fresh
-   memory/environment data once it's likely gone cold anyway. Never
-   applies to an existing chat - see clay_chat_system_prompt. */
+/* Reused as-is by a chat-less session started within this long of the
+   cached text being built, so the provider's prefix cache stays warm;
+   rebuilt with current memory/skill data once it expires. The window runs
+   from when it was built, never extended by use, so a stale prompt cannot
+   live forever. Never applies to an existing chat - see
+   clay_chat_system_prompt. */
 #define CLAY_SYSTEM_PROMPT_TTL_SECONDS 600
 
 static const ClayProviderType PROVIDER_TYPES[] = {
@@ -685,13 +686,25 @@ void clay_commands_set_tokens_below_with_cache(
   clay_str_free(&text);
 }
 
+/* FNV-1a over the build's base prompt: a cache written by a different build
+   describes a clay that no longer exists. */
+static double base_prompt_fingerprint(void) {
+  unsigned long hash = 2166136261UL;
+  for (const char *p = CLAY_SYSTEM_PROMPT_BASE; *p; p++) {
+    hash ^= (unsigned char)*p;
+    hash *= 16777619UL;
+    hash &= 0xffffffffUL;
+  }
+  return (double)hash;
+}
+
 static char *system_prompt_cache_path(void) {
   return clay_storage_path("system_prompt.json");
 }
 
 /* 0 with text_out/last_used_out/cwd_out set on a hit, -1 on a miss. */
-static int load_system_prompt_cache(char **text_out, long long *last_used_out,
-                                    char **cwd_out) {
+static int load_system_prompt_cache(char **text_out, long long *built_at_out,
+                                    char **cwd_out, double *fingerprint_out) {
   char *path = system_prompt_cache_path();
   if (!path)
     return -1;
@@ -706,22 +719,25 @@ static int load_system_prompt_cache(char **text_out, long long *last_used_out,
     return -1;
   }
   *text_out = strdup(text);
-  *last_used_out = (long long)clay_json_number_value(
-      clay_json_object_get(root, "last_used_at"));
+  *built_at_out = (long long)clay_json_number_value(
+      clay_json_object_get(root, "built_at"));
+  *fingerprint_out =
+      clay_json_number_value(clay_json_object_get(root, "base_fingerprint"));
   const char *cwd = clay_json_string_value(clay_json_object_get(root, "cwd"));
   *cwd_out = strdup(cwd ? cwd : "");
   clay_json_free(root);
   return 0;
 }
 
-static void save_system_prompt_cache(const char *text, long long last_used_at,
+static void save_system_prompt_cache(const char *text, long long built_at,
                                      const char *cwd) {
   if (clay_storage_ensure_dir("") != 0)
     return;
   ClayJson *root = clay_json_object();
   clay_json_object_set(root, "text", clay_json_string(text));
-  clay_json_object_set(root, "last_used_at",
-                       clay_json_number((double)last_used_at));
+  clay_json_object_set(root, "built_at", clay_json_number((double)built_at));
+  clay_json_object_set(root, "base_fingerprint",
+                       clay_json_number(base_prompt_fingerprint()));
   clay_json_object_set(root, "cwd", clay_json_string(cwd));
   char *path = clay_storage_path("system_prompt.json");
   if (!path) {
@@ -889,18 +905,19 @@ char *clay_commands_list_top_level(const char *dir) {
   return out.data;
 }
 
-static char *build_fresh_system_prompt(void) {
+/* Sent fresh with every message instead of living in the system prompt: the
+   prompt is frozen for the life of a chat (for the provider's prefix cache),
+   and a file listing frozen an hour ago is worse than none - the model acts
+   on files that are no longer there. */
+char *clay_commands_environment_block(void) {
   ClayStr text;
   clay_str_init(&text);
-  clay_str_push(&text, CLAY_SYSTEM_PROMPT_BASE);
-
   char *platform = clay_term_platform_name();
   char *date = clay_time_format_date(clay_time_now());
-  clay_str_printf(&text, "\n\nEnvironment: %s. Today's date (UTC): %s.",
+  clay_str_printf(&text, "Environment right now: %s. Today's date (UTC): %s.",
                   platform, date);
   free(platform);
   free(date);
-
   char *cwd = clay_term_cwd();
   if (cwd) {
     clay_str_printf(&text, " Working directory: %s.", cwd);
@@ -911,10 +928,18 @@ static char *build_fresh_system_prompt(void) {
     }
     char *listing = clay_commands_list_top_level(cwd);
     if (listing && *listing)
-      clay_str_printf(&text, "\nTop-level directory listing: %s", listing);
+      clay_str_printf(&text, "\nTop-level entries as of this message: %s",
+                      listing);
     free(listing);
     free(cwd);
   }
+  return text.data;
+}
+
+static char *build_fresh_system_prompt(void) {
+  ClayStr text;
+  clay_str_init(&text);
+  clay_str_push(&text, CLAY_SYSTEM_PROMPT_BASE);
 
   char *index = clay_memory_index();
   if (*index)
@@ -939,24 +964,28 @@ static char *build_fresh_system_prompt(void) {
   return text.data;
 }
 
-/* Reuses the cached prompt (and slides its TTL forward) if it's recent
-   enough that the provider's own prefix cache is plausibly still warm;
-   otherwise rebuilds with current memory/environment data. Only ever
+/* Reuses the cached prompt while it is recent enough that the provider's
+   own prefix cache is plausibly still warm; otherwise rebuilds with current
+   memory/skill data. Only ever
    called for a chat-less session - clay_commands_reset_conversation
    never calls this once commands->chat exists. */
 static char *clay_commands_build_system_prompt(void) {
   char *cached_text = NULL;
   char *cached_cwd = NULL;
-  long long last_used = 0;
+  long long built_at = 0;
+  double fingerprint = 0;
   long long now = clay_time_now();
   char *cwd = clay_term_cwd();
-  int hit =
-      load_system_prompt_cache(&cached_text, &last_used, &cached_cwd) == 0 &&
-      now - last_used < CLAY_SYSTEM_PROMPT_TTL_SECONDS && cwd &&
-      strcmp(cached_cwd, cwd) == 0;
+  int hit = load_system_prompt_cache(&cached_text, &built_at, &cached_cwd,
+                                     &fingerprint) == 0 &&
+            fingerprint == base_prompt_fingerprint() &&
+            now - built_at < CLAY_SYSTEM_PROMPT_TTL_SECONDS && cwd &&
+            strcmp(cached_cwd, cwd) == 0;
   free(cached_cwd);
   if (hit) {
-    save_system_prompt_cache(cached_text, now, cwd);
+    /* Deliberately not re-stamped: the window runs from when the memory and
+       skill indexes in this text were read, not from the last session that
+       happened to reuse it. */
     free(cwd);
     return cached_text;
   }
@@ -1034,9 +1063,43 @@ int clay_commands_run_completion(ClayCommands *commands, ClayJson *messages,
   return rc;
 }
 
+/* Appends `text` as a system message the first time it differs from what
+   `slot` last held. Deliberately kept in the conversation rather than
+   injected per request and removed: the provider's prefix cache only holds
+   while the message array grows at the end, and a block that appears and
+   disappears in the middle invalidates every turn after it. */
+static void append_context_block(ClayCommands *commands, char **slot,
+                                 const char *text) {
+  if (*slot && strcmp(*slot, text) == 0)
+    return;
+  free(*slot);
+  *slot = strdup(text);
+  clay_json_array_push(commands->conversation,
+                       clay_openai_message("system", text));
+}
+
+void clay_commands_sync_context_blocks(ClayCommands *commands) {
+  char *environment = clay_commands_environment_block();
+  append_context_block(commands, &commands->environment_block, environment);
+  free(environment);
+
+  const char *notes = clay_chat_notes(commands->chat);
+  if (!*notes)
+    return;
+  ClayStr block;
+  clay_str_init(&block);
+  clay_str_printf(&block, "Notes from earlier in this conversation:\n%s", notes);
+  append_context_block(commands, &commands->notes_block, block.data);
+  clay_str_free(&block);
+}
+
 void clay_commands_reset_conversation(ClayCommands *commands) {
   clay_json_free(commands->conversation);
   commands->conversation = clay_json_array();
+  free(commands->environment_block);
+  commands->environment_block = NULL;
+  free(commands->notes_block);
+  commands->notes_block = NULL;
   free(commands->system_prompt);
   const char *persisted =
       commands->chat ? clay_chat_system_prompt(commands->chat) : "";
@@ -1335,6 +1398,8 @@ void clay_commands_destroy(ClayCommands *commands) {
   if (!commands)
     return;
   clay_commands_stop_tasks(commands);
+  free(commands->environment_block);
+  free(commands->notes_block);
   for (size_t i = 0; i < commands->providers.count; i++)
     provider_free(clay_array_get(&commands->providers, i));
   clay_array_free(&commands->providers);

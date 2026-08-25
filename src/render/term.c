@@ -114,6 +114,10 @@ void clay_term_cursor_down(int n) {
     printf("\x1b[%dB", n);
 }
 
+void clay_term_cursor_save(void) { fputs("\x1b" "7", stdout); }
+
+void clay_term_cursor_restore(void) { fputs("\x1b" "8", stdout); }
+
 void clay_term_cursor_col(int col) { printf("\x1b[%dG", col + 1); }
 
 void clay_term_row_enter(int row, int *established) {
@@ -412,35 +416,56 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
     return -1;
   }
 
-  int truncated = 0, timed_out = 0, stopped = 0, child_done = 0, pipe_open = 1;
+  int truncated = 0, timed_out = 0, stopped = 0, killed = 0, child_done = 0,
+      pipe_open = 1;
   int status = 0;
   long long stopped_at = 0;
+  long long drain_since = 0;
   struct timespec started;
   clock_gettime(CLOCK_MONOTONIC, &started);
   while (pipe_open || !child_done) {
-    if (!child_done && waitpid(pid, &status, WNOHANG) == pid) child_done = 1;
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     long long elapsed = (long long)(now.tv_sec - started.tv_sec) * 1000 +
                         (now.tv_nsec - started.tv_nsec) / 1000000;
+    if (!child_done && waitpid(pid, &status, WNOHANG) == pid) {
+      child_done = 1;
+      drain_since = elapsed;
+    }
     if (!child_done && !stopped && exec_should_stop(options)) {
       kill(-pid, SIGTERM);
       stopped = 1;
       stopped_at = elapsed;
     }
-    /* SIGTERM lets a server flush and exit; SIGKILL is the backstop for one
-       that ignores it. */
-    if (stopped && !child_done && elapsed - stopped_at >= 2000)
+    /* SIGTERM gives the command a chance to flush; SIGKILL is the backstop
+       for one that ignores it, and for whatever it left running after it -
+       once the shell is reaped there is nothing left to exit gracefully. */
+    if (stopped && !killed &&
+        (child_done || elapsed - stopped_at >= CLAY_SHELL_STOP_GRACE_MS)) {
       kill(-pid, SIGKILL);
+      killed = 1;
+    }
     if (!child_done && !timed_out &&
         elapsed >= (long long)timeout_seconds * 1000) {
       kill(-pid, SIGKILL);
+      killed = 1;
       timed_out = 1;
-      if (waitpid(pid, &status, 0) == pid) child_done = 1;
+      if (waitpid(pid, &status, 0) == pid) {
+        child_done = 1;
+        drain_since = elapsed;
+      }
+    }
+    /* A background child of the command can hold the pipe open long after
+       the command itself is gone: read what it has, then stop waiting on an
+       EOF that may never come. */
+    if (pipe_open && child_done && (!stopped || killed) &&
+        elapsed - drain_since >= CLAY_SHELL_DRAIN_MS) {
+      close(pipe_fds[0]);
+      pipe_open = 0;
+      continue;
     }
     struct pollfd descriptor = {pipe_fds[0], POLLIN | POLLHUP, 0};
-    int polled = pipe_open ? poll(&descriptor, 1, child_done ? 0 : 100) :
-                             poll(NULL, 0, 100);
+    int polled = pipe_open ? poll(&descriptor, 1, 20) : poll(NULL, 0, 20);
     if (polled < 0) {
       if (errno == EINTR) continue;
       close(pipe_fds[0]);
@@ -1004,7 +1029,7 @@ ClayKey clay_term_read_key(char *ch_out) {
     case 15:
       return CLAY_KEY_CYCLE_SANDBOX;
     default:
-      return CLAY_KEY_ESCAPE;
+      return CLAY_KEY_UNKNOWN;
     }
   }
   if (ch_out)
@@ -1072,7 +1097,7 @@ ClayKey clay_term_read_key(char *ch_out) {
     /* Shift+Tab is standardized as CSI Z by xterm-compatible terminals. */
     if (strcmp((char *)seq, "[Z") == 0)
       return CLAY_KEY_CYCLE_SANDBOX;
-    return CLAY_KEY_ESCAPE;
+    return CLAY_KEY_UNKNOWN;
   }
 
   if (ch_out)

@@ -131,6 +131,25 @@ static void test_background_tasks(ClayCommands *commands) {
     result = call(task_run_tool, commands, "{\"command\":\"\"}");
     assert(!ok(result));
     clay_json_free(result);
+
+    /* A command that leaves something running holds the output pipe open
+       after its shell exits; stopping it must not wait on an EOF that never
+       comes. */
+    result = call(task_run_tool, commands,
+                  "{\"command\":\"sleep 30 & echo detached\"}");
+    assert(ok(result));
+    int detached_id =
+        (int)clay_json_number_value(clay_json_object_get(result, "task_id"));
+    clay_json_free(result);
+    ClayStr detached;
+    clay_str_init(&detached);
+    clay_str_printf(&detached, "{\"task_id\":%d}", detached_id);
+    started = now_ms();
+    result = call(task_stop_tool, commands, detached.data);
+    assert(ok(result));
+    assert(now_ms() - started < 5000);
+    clay_json_free(result);
+    clay_str_free(&detached);
 }
 
 int main(void) {

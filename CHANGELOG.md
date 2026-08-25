@@ -28,6 +28,49 @@
   `timed_out` when it kills a command, so a stuck command returns what it
   printed instead of stalling the session.
 
+### Fixed
+
+- Stopping a background task no longer hangs. A sandboxed command runs as PID
+  1 of its own namespace, where the kernel drops SIGTERM, so it outlived the
+  child clay was waiting on and kept the output pipe open - the reader spun
+  forever and `task_stop` never returned, leaving the command running. The
+  kill now escalates as soon as that child is reaped, output stops being
+  drained once nothing is left to write it, and the poll loop always sleeps.
+  The same hang could happen outside the sandbox with a command that
+  backgrounds a child of its own.
+- Sandboxed commands can now reach their own ports: an unshared network
+  namespace leaves loopback down, so even `server & curl localhost` failed
+  inside a single command. Loopback is brought up in the namespace, which
+  still has no route anywhere else - a sandboxed command reaches its own
+  servers and nothing beyond them.
+- A stray terminal escape sequence no longer cancels a running turn. Anything
+  clay has no binding for - a focus in/out report when you switch windows, a
+  mouse report, Home/End/Delete, a reply to a terminal query - used to read as
+  Escape and abort the request silently, mid-work. Only a real Escape cancels
+  now.
+- The workspace's file listing left the system prompt, where it was frozen for
+  the life of a chat and could describe files deleted hours earlier, sending
+  the model chasing them. It now rides in the conversation as a context
+  message, appended only when the environment actually changes - the message
+  array still only grows, so the provider's prefix cache keeps hitting (97%
+  on a third turn here, against 0% for a block injected and removed each
+  request). The chat's notes block moved to the same footing. The cached
+  system prompt also carries a fingerprint of the build that wrote it and
+  expires from when it was built rather than from its last use, so it can no
+  longer outlive its contents.
+- A turn that ends right after a tool call, with no closing message from the
+  model, now says so instead of leaving a blank gap that looks like clay lost
+  the answer.
+- A permission prompt or question raised by a running tool no longer leaves a
+  half-drawn spinner row behind it: the prompt takes that row over and the
+  tool's result line lands underneath.
+- The reasoning stream keeps a live spinner and clock in the status row under
+  it, repainted by the animator once the stream goes quiet. A provider that
+  stalls mid-answer now shows a climbing clock instead of a screen that looks
+  frozen, and Escape still cancels the request while it is stalled.
+- Aborting a turn stops the clock and the spinner instead of leaving them
+  running under the next prompt.
+
 ### Changed
 
 - One place now builds the tool list and one runs a request against the

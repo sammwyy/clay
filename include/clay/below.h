@@ -65,6 +65,11 @@ void clay_below_render_status(void);
    separator row before the next prompt. */
 void clay_below_status_insert_above(void);
 void clay_below_status_push_down(void);
+/* Repaints the pinned row (advancing the spinner) without moving the
+   caller's cursor. Rate-limited, so streaming code can call it per chunk. */
+void clay_below_status_tick(void);
+/* Clears the pinned row and hands it back, leaving the cursor untouched. */
+void clay_below_status_release(void);
 void clay_below_status_finish_output(void);
 void clay_below_status_refresh_below(void);
 void clay_below_status_prepare_prompt(void);

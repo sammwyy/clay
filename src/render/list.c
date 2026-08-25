@@ -194,6 +194,7 @@ void clay_wrap_write(ClayWrap *wrap, const char *text) {
 }
 
 static ClayWrap g_thinking_wrap;
+static void (*g_thinking_pin)(void);
 
 static void thinking_write_raw(const char *text, void *user_data) {
     (void)user_data;
@@ -202,17 +203,19 @@ static void thinking_write_raw(const char *text, void *user_data) {
 
 static void thinking_break_row(void *user_data) {
     (void)user_data;
+    if (g_thinking_pin) g_thinking_pin();
     fputc('\n', stdout);
     fputs("  ", stdout);
     g_thinking_rows++;
 }
 
-void clay_thinking_begin(void) {
+void clay_thinking_begin(void (*before_new_row)(void)) {
     ensure_thinking();
     clay_str_clear(&g_thinking);
     g_thinking_streaming = 1;
     g_thinking_expanded = 0;
     g_thinking_rows = 1;
+    g_thinking_pin = before_new_row;
     clay_wrap_init(&g_thinking_wrap, clay_response_prefix_width(),
                    thinking_write_raw, thinking_break_row, NULL);
     g_thinking_wrap.col = clay_response_prefix_width() +
@@ -236,6 +239,7 @@ void clay_thinking_finish(double seconds) {
     if (!g_thinking_streaming) return;
     clay_wrap_flush(&g_thinking_wrap);
     clay_wrap_free(&g_thinking_wrap);
+    g_thinking_pin = NULL;
     g_thinking_seconds = seconds;
     fputs(clay_color(CLAY_RESET), stdout);
     fputc('\n', stdout);
