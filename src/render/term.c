@@ -391,6 +391,9 @@ int clay_term_shell_exec(const char *command, ClayStr *output,
 #else
   int pipe_fds[2];
   if (pipe(pipe_fds) != 0) return -1;
+  /* Anything still sitting in stdout's buffer would be flushed into the
+     child's pipe and come back as command output. */
+  fflush(NULL);
   pid_t pid = fork();
   if (pid < 0) {
     close(pipe_fds[0]);

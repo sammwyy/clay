@@ -155,11 +155,14 @@
   "shell_exec runs in /workspace, the sandbox alias of the project " \
   "directory; do not try to discover its host path or inspect " \
   "mounts. /scratch is this conversation's private directory under " \
-  "/tmp, for temporary files. Sandboxed commands reach neither the " \
-  "network nor host paths outside the configured read-only mounts. " \
-  "Normal POSIX syntax works (variables, command substitution, " \
-  "globs, redirections) but may need an execution confirmation. " \
-  "Keep commands focused and summarize what came back." \
+  "/tmp, for temporary files. Sandboxed commands cannot reach host " \
+  "paths outside the configured read-only mounts, and their network " \
+  "reaches only each other: a server one command starts is " \
+  "reachable from your next command over localhost, and from " \
+  "nothing on the user's machine. Normal POSIX syntax works " \
+  "(variables, command substitution, globs, redirections) but may " \
+  "need an execution confirmation. Keep commands focused and " \
+  "summarize what came back." \
   "\n\n" \
   "shell_exec kills a command after 120 seconds and hands you what " \
   "it printed by then, so a stuck command never stalls the session; " \
@@ -1360,6 +1363,8 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   clay_array_init(&commands->mcp_bindings, sizeof(ClayMcpToolBinding));
   clay_array_init(&commands->undo_history, sizeof(ClayUndoEntry));
   clay_array_init(&commands->tasks, sizeof(ClayBackgroundTask *));
+  if (clay_sandbox_supported())
+    commands->sandbox_namespaces = clay_sandbox_namespaces_create();
   commands->auto_test_command = clay_config_auto_test_command();
   commands->auto_test_choice = CLAY_AUTO_TEST_UNASKED;
   clay_commands_reset_conversation(commands);
@@ -1398,6 +1403,7 @@ void clay_commands_destroy(ClayCommands *commands) {
   if (!commands)
     return;
   clay_commands_stop_tasks(commands);
+  clay_sandbox_namespaces_destroy(commands->sandbox_namespaces);
   free(commands->environment_block);
   free(commands->notes_block);
   for (size_t i = 0; i < commands->providers.count; i++)

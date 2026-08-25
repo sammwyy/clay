@@ -10,6 +10,14 @@ typedef enum {
     CLAY_SANDBOX_MODE_UNLEASHED,
 } ClaySandboxMode;
 
+/* User and network namespaces held open for the whole session. Sandboxed
+   commands after the first join them, so a server one command starts is
+   reachable from the next; everything else (filesystem, pids, ipc) stays
+   private per command. NULL gives every command its own isolated set. */
+typedef struct ClaySandboxNamespaces ClaySandboxNamespaces;
+ClaySandboxNamespaces *clay_sandbox_namespaces_create(void);
+void clay_sandbox_namespaces_destroy(ClaySandboxNamespaces *namespaces);
+
 typedef struct {
     ClaySandboxMode mode;
     const char *workspace_dir; /* bound to /workspace */
@@ -17,6 +25,7 @@ typedef struct {
     int use_integrated_shell;
     const char *const *readonly_mounts;
     size_t readonly_mount_count;
+    ClaySandboxNamespaces *shared; /* optional; see above */
 } ClaySandboxConfig;
 
 /* True if this platform can run CLAY_SANDBOX_MODE_SANDBOX. Linux only for

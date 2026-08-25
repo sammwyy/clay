@@ -96,6 +96,9 @@ struct ClayCommands {
   char *selected_model;
   int reasoning_effort_index;
   ClaySandboxMode sandbox_mode;
+  /* Shared by every sandboxed command this session, so one can reach a
+     server another started. */
+  ClaySandboxNamespaces *sandbox_namespaces;
   int sandbox_auto_approve;
   int use_integrated_shell;
   int auto_approve[CLAY_PERMISSION_CATEGORY_COUNT];

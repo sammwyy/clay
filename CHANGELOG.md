@@ -38,11 +38,18 @@
   drained once nothing is left to write it, and the poll loop always sleeps.
   The same hang could happen outside the sandbox with a command that
   backgrounds a child of its own.
-- Sandboxed commands can now reach their own ports: an unshared network
-  namespace leaves loopback down, so even `server & curl localhost` failed
-  inside a single command. Loopback is brought up in the namespace, which
-  still has no route anywhere else - a sandboxed command reaches its own
-  servers and nothing beyond them.
+- Sandboxed commands can reach each other's ports. Loopback was left down in
+  the unshared network namespace, so even `server & curl localhost` failed
+  inside a single command, and every command got its own namespace besides -
+  a server started by `task_run` was unreachable from the next `shell_exec`.
+  Loopback is now brought up, and the session's sandboxed commands join one
+  user and network namespace (filesystem, pids and ipc stay private per
+  command). A server started in the sandbox answers the next command over
+  localhost and stays unreachable from the host: verified at 200 across
+  commands with an outside request still blocked.
+- Buffered terminal output could be flushed into a command's own pipe by the
+  fork that ran it and come back as part of its output. The flush now happens
+  before the fork.
 - A stray terminal escape sequence no longer cancels a running turn. Anything
   clay has no binding for - a focus in/out report when you switch windows, a
   mouse report, Home/End/Delete, a reply to a terminal query - used to read as

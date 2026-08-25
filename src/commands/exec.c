@@ -25,6 +25,7 @@ void clay_cmd_exec(const char *args, void *user_data) {
     char **readonly_mounts = clay_config_sandbox_readonly_mounts(&readonly_mount_count);
     ClaySandboxConfig sandbox = {
         .mode = commands->sandbox_mode,
+        .shared = commands->sandbox_namespaces,
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
         .use_integrated_shell = commands->use_integrated_shell &&

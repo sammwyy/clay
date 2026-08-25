@@ -24,6 +24,7 @@ struct ClayBackgroundTask {
   int stopped; /* ended because task_stop asked, guarded by lock */
   int joined;  /* UI thread only: pthread_join must happen exactly once */
   ClaySandboxMode mode;
+  ClaySandboxNamespaces *namespaces; /* the session's, which outlives the task */
   char *workspace_dir;
   char *scratch_dir;
   char **readonly_mounts;
@@ -91,6 +92,7 @@ static void *task_thread(void *arg) {
   ClayBackgroundTask *task = arg;
   ClaySandboxConfig sandbox = {
       .mode = task->mode,
+      .shared = task->namespaces,
       .workspace_dir = task->workspace_dir,
       .scratch_dir = task->scratch_dir,
       .use_integrated_shell = 0,
@@ -253,6 +255,7 @@ ClayJson *task_run_tool(const ClayJson *arguments, void *userdata) {
   pthread_mutex_init(&task->lock, NULL);
   clay_str_init(&task->output);
   task->mode = commands->sandbox_mode;
+  task->namespaces = commands->sandbox_namespaces;
   task->workspace_dir = clay_term_cwd();
   task->scratch_dir = clay_chat_scratch_dir(commands->chat);
   task->readonly_mounts =
@@ -269,19 +272,17 @@ ClayJson *task_run_tool(const ClayJson *arguments, void *userdata) {
   ClayJson *result = clay_json_object();
   clay_json_object_set(result, "ok", clay_json_bool(1));
   describe_task(task, result, 0);
-  /* Every sandboxed command gets its own network namespace, so a port this
-     task opens exists only inside it. */
+  /* The session's sandboxed commands share one network namespace, which
+     nothing outside it can route to. */
   if (task->mode == CLAY_SANDBOX_MODE_SANDBOX)
     clay_json_object_set(
         result, "note",
-        clay_json_string("Sandboxed: this task has its own network namespace. "
-                         "A port it opens is reachable from inside that same "
-                         "command only - a separate shell_exec runs in its own "
-                         "namespace and will get connection refused, and so "
-                         "will your browser. To reach it from elsewhere, ask "
-                         "the user for Unleashed mode (Shift+Tab); to test it "
-                         "here, start the server and curl it inside one "
-                         "command."));
+        clay_json_string("Sandboxed: a port this task opens is reachable from "
+                         "your other sandboxed commands (curl it with "
+                         "shell_exec), but not from the user's browser or "
+                         "anything else on their machine. If they need to open "
+                         "it themselves, ask them for Unleashed mode "
+                         "(Shift+Tab)."));
   update_tasks_below(commands);
   return result;
 }

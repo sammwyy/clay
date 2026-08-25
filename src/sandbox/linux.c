@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
@@ -220,6 +221,46 @@ static int run_id_mapper(const char *tool, pid_t pid, unsigned id) {
 /* Namespaces the process and remaps its filesystem view via pivot_root.
    Any failure returns -1 before exec, so a broken sandbox never falls
    back to running the command unsandboxed. */
+struct ClaySandboxNamespaces {
+    pthread_mutex_t lock;
+    int user_fd; /* < 0 until the first sandboxed command has built them */
+    int net_fd;
+};
+
+ClaySandboxNamespaces *clay_sandbox_namespaces_create(void) {
+    ClaySandboxNamespaces *namespaces = malloc(sizeof(*namespaces));
+    if (!namespaces) return NULL;
+    pthread_mutex_init(&namespaces->lock, NULL);
+    namespaces->user_fd = -1;
+    namespaces->net_fd = -1;
+    return namespaces;
+}
+
+void clay_sandbox_namespaces_destroy(ClaySandboxNamespaces *namespaces) {
+    if (!namespaces) return;
+    if (namespaces->user_fd >= 0) close(namespaces->user_fd);
+    if (namespaces->net_fd >= 0) close(namespaces->net_fd);
+    pthread_mutex_destroy(&namespaces->lock);
+    free(namespaces);
+}
+
+/* Holding these open keeps the namespaces alive after the command that
+   created them exits, which is what lets the next one join. */
+static void capture_namespaces(ClaySandboxNamespaces *namespaces, pid_t pid) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/ns/user", (int)pid);
+    int user_fd = open(path, O_RDONLY | O_CLOEXEC);
+    snprintf(path, sizeof(path), "/proc/%d/ns/net", (int)pid);
+    int net_fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (user_fd < 0 || net_fd < 0) {
+        if (user_fd >= 0) close(user_fd);
+        if (net_fd >= 0) close(net_fd);
+        return;
+    }
+    namespaces->user_fd = user_fd;
+    namespaces->net_fd = net_fd;
+}
+
 /* A fresh network namespace has loopback present but down, so a command
    cannot reach even a server it started itself. Bringing lo up keeps the
    isolation (there is still no route off the namespace) and makes
@@ -237,8 +278,26 @@ static void bring_loopback_up(void) {
     close(fd);
 }
 
-static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int mapped_fd, char *diag,
-                         size_t diag_len) {
+/* First command of a session: build the namespaces and wait for the parent
+   to write the uid/gid map. Every command after it joins the same user and
+   network namespaces and unshares only what stays private. */
+static int enter_namespaces(const ClaySandboxConfig *config, int unshared_fd, int mapped_fd,
+                            char *diag, size_t diag_len) {
+    if (config->shared && config->shared->user_fd >= 0) {
+        close(unshared_fd);
+        close(mapped_fd);
+        if (setns(config->shared->user_fd, CLONE_NEWUSER) != 0 ||
+            setns(config->shared->net_fd, CLONE_NEWNET) != 0) {
+            snprintf(diag, diag_len, "clay: sandbox namespace join failed: %s\n", strerror(errno));
+            return -1;
+        }
+        if (unshare(CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS) != 0) {
+            snprintf(diag, diag_len, "clay: sandbox unshare failed: %s\n", strerror(errno));
+            return -1;
+        }
+        return 0;
+    }
+
     if (unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS | CLONE_NEWNET) != 0) {
         snprintf(diag, diag_len, "clay: sandbox unshare failed: %s\n", strerror(errno));
         return -1;
@@ -256,6 +315,12 @@ static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int m
         return -1;
     }
     bring_loopback_up();
+    return 0;
+}
+
+static int setup_sandbox(const ClaySandboxConfig *config, int unshared_fd, int mapped_fd, char *diag,
+                         size_t diag_len) {
+    if (enter_namespaces(config, unshared_fd, mapped_fd, diag, diag_len) != 0) return -1;
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
         snprintf(diag, diag_len, "clay: sandbox mount-private failed: %s\n", strerror(errno));
         return -1;
@@ -368,8 +433,6 @@ static void run_child(const ClaySandboxConfig *config, const char *command, int 
         _exit(126);
     }
 
-    /* Do not duplicate buffered terminal/UI bytes into the child pipe. */
-    fflush(NULL);
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "clay: sandbox fork failed: %s\n", strerror(errno));
@@ -460,16 +523,30 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
     if (timeout_seconds > CLAY_SHELL_MAX_TIMEOUT_SECONDS)
         timeout_seconds = CLAY_SHELL_MAX_TIMEOUT_SECONDS;
 
+    /* Held across the fork so two commands starting at once cannot both
+       build a session namespace, leaving one of them off on its own. */
+    int joining = 0;
+    if (config->shared) {
+        pthread_mutex_lock(&config->shared->lock);
+        joining = config->shared->user_fd >= 0;
+    }
     int fds[2];
-    if (pipe(fds) != 0) return -1;
+    if (pipe(fds) != 0) {
+        if (config->shared) pthread_mutex_unlock(&config->shared->lock);
+        return -1;
+    }
     int unshared_fds[2];
     int mapped_fds[2];
     if (pipe(unshared_fds) != 0 || pipe(mapped_fds) != 0) {
         close(fds[0]);
         close(fds[1]);
+        if (config->shared) pthread_mutex_unlock(&config->shared->lock);
         return -1;
     }
 
+    /* Anything still sitting in stdout's buffer would be flushed into the
+       child's pipe and come back as command output. */
+    fflush(NULL);
     pid_t pid = fork();
     if (pid < 0) {
         close(fds[0]);
@@ -478,6 +555,7 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
         close(unshared_fds[1]);
         close(mapped_fds[0]);
         close(mapped_fds[1]);
+        if (config->shared) pthread_mutex_unlock(&config->shared->lock);
         return -1;
     }
     if (pid == 0) {
@@ -494,16 +572,24 @@ int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, Clay
     close(fds[1]);
     close(unshared_fds[1]);
     close(mapped_fds[0]);
-    char unshared = 0;
-    int mapped = read(unshared_fds[0], &unshared, 1) == 1 && run_id_mapper("newuidmap", pid, getuid()) == 0 &&
-                 run_id_mapper("newgidmap", pid, getgid()) == 0;
-    close(unshared_fds[0]);
-    if (mapped) {
-        char ready = 1;
-        ssize_t unused = write(mapped_fds[1], &ready, 1);
-        (void)unused;
+    if (joining) {
+        close(unshared_fds[0]);
+        close(mapped_fds[1]);
+    } else {
+        char unshared = 0;
+        int mapped = read(unshared_fds[0], &unshared, 1) == 1 &&
+                     run_id_mapper("newuidmap", pid, getuid()) == 0 &&
+                     run_id_mapper("newgidmap", pid, getgid()) == 0;
+        close(unshared_fds[0]);
+        if (mapped) {
+            char ready = 1;
+            ssize_t unused = write(mapped_fds[1], &ready, 1);
+            (void)unused;
+        }
+        close(mapped_fds[1]);
+        if (mapped && config->shared) capture_namespaces(config->shared, pid);
     }
-    close(mapped_fds[1]);
+    if (config->shared) pthread_mutex_unlock(&config->shared->lock);
 
     int truncated = 0;
     int status = 0;

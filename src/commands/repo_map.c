@@ -49,6 +49,7 @@ static int try_ctags(ClayCommands *commands, const char *workspace_dir, ClayArra
     char *scratch_dir = clay_chat_scratch_dir(commands->chat);
     ClaySandboxConfig sandbox = {
         .mode = commands->sandbox_mode,
+        .shared = commands->sandbox_namespaces,
         .workspace_dir = workspace_dir,
         .scratch_dir = scratch_dir,
     };

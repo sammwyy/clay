@@ -37,6 +37,14 @@ int clay_sandbox_supported(void) {
     return 0;
 }
 
+ClaySandboxNamespaces *clay_sandbox_namespaces_create(void) {
+    return NULL;
+}
+
+void clay_sandbox_namespaces_destroy(ClaySandboxNamespaces *namespaces) {
+    (void)namespaces;
+}
+
 int clay_sandbox_exec(const ClaySandboxConfig *config, const char *command, ClayStr *output,
                       size_t output_limit, const ClayExecOptions *options, ClayExecResult *result) {
     if (config->use_integrated_shell) {
