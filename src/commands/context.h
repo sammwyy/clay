@@ -261,6 +261,7 @@ void clay_cmd_exec(const char *args, void *user_data);
 void clay_cmd_checkpoints(const char *args, void *user_data);
 void clay_cmd_permissions(const char *args, void *user_data);
 void clay_cmd_plan(const char *args, void *user_data);
+void clay_cmd_tasks(const char *args, void *user_data);
 void clay_cmd_undo(const char *args, void *user_data);
 void clay_cmd_skill(const char *args, void *user_data);
 

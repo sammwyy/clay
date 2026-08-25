@@ -4,6 +4,8 @@
 
 ### Added
 
+- `/tasks` lists running background commands in an interactive picker and can
+  stop a selected task after confirmation.
 - `ask_user` tool: the model can ask one question mid-turn and get the answer
   back in the same turn, through the same picker `/permissions` uses. Options
   come with optional one-line notes, and a "Type your own..." row is offered

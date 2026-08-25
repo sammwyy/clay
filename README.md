@@ -14,7 +14,7 @@ Bring your own model. Stay in your flow. Ship better work.
 </div>
 
 ```text
-◆ Clay  v0.0.3
+◆ Clay  v0.0.4
   /help for commands  ·  Ctrl+O reasoning
 
 › review this project and find the rough edges
@@ -161,6 +161,8 @@ session can be used by `-p` as-is; headless Codex sessions may provide
 **Remembers on purpose, not by accident.** The agent saves a long-term memory entry after real decisions and bug fixes, and reads one back up in a future chat — you stay in control with `/memory`, which browses, reads, or deletes any entry.
 
 **Cancel without losing your place.** Press `Esc` or `Ctrl-C` while Clay is generating. The generation stops, the chat is preserved, and you are back at the prompt.
+
+**Keep background work in hand.** `/tasks` lists the commands still running in the background; select one and confirm to stop it.
 
 **Caching without provider logic in the harness.** Clay keeps the stable system
 prompt and conversation in the chat journal, then lets each provider adapter

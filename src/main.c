@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CLAY_VERSION "0.0.3"
+#define CLAY_VERSION "0.0.4"
 
 static int require_provider(ClayCommands *commands) {
     clay_sayc(CLAY_YELLOW, "Connect a provider to continue.");

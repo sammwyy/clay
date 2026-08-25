@@ -127,6 +127,13 @@ static void join_task(ClayBackgroundTask *task) {
   pthread_join(task->thread, NULL);
 }
 
+static void task_stop(ClayBackgroundTask *task) {
+  pthread_mutex_lock(&task->lock);
+  task->stop_requested = 1;
+  pthread_mutex_unlock(&task->lock);
+  join_task(task);
+}
+
 static void task_free(ClayBackgroundTask *task) {
   free(task->command);
   free(task->workspace_dir);
@@ -318,15 +325,65 @@ ClayJson *task_stop_tool(const ClayJson *arguments, void *userdata) {
   ClayBackgroundTask *task = task_by_argument(commands, arguments, &error);
   if (!task)
     return error;
-  pthread_mutex_lock(&task->lock);
-  task->stop_requested = 1;
-  pthread_mutex_unlock(&task->lock);
-  join_task(task);
+  task_stop(task);
   ClayJson *result = clay_json_object();
   clay_json_object_set(result, "ok", clay_json_bool(1));
   describe_task(task, result, CLAY_TASK_DEFAULT_TAIL_LINES);
   update_tasks_below(commands);
   return result;
+}
+
+void clay_cmd_tasks(const char *args, void *user_data) {
+  (void)args;
+  ClayCommands *commands = user_data;
+  ClayChoice *choices = calloc(commands->tasks.count, sizeof(*choices));
+  int *ids = calloc(commands->tasks.count, sizeof(*ids));
+  int count = 0;
+
+  for (size_t i = 0; i < commands->tasks.count; i++) {
+    ClayBackgroundTask *task = task_at(commands, i);
+    if (!task_is_running(task))
+      continue;
+    choices[count].title = strdup(task->command);
+    ClayStr description;
+    clay_str_init(&description);
+    clay_str_printf(&description, "Task #%d · running", task->id);
+    choices[count].desc = description.data;
+    ids[count++] = task->id;
+  }
+
+  if (count == 0) {
+    clay_sayc(CLAY_GRAY, "No background tasks are running.");
+    free(choices);
+    free(ids);
+    return;
+  }
+
+  int selected = clay_app_choice(
+      commands->app, "Background tasks (select one to stop):", choices,
+      count, 0, NULL);
+  int id = selected >= 0 ? ids[selected] : 0;
+  for (int i = 0; i < count; i++) {
+    free((char *)choices[i].title);
+    free((char *)choices[i].desc);
+  }
+  free(choices);
+  free(ids);
+  if (selected < 0)
+    return;
+
+  ClayBackgroundTask *task = find_task(commands, id);
+  if (!task || !task_is_running(task)) {
+    clay_sayc(CLAY_GRAY, "Task #%d already finished.", id);
+    update_tasks_below(commands);
+    return;
+  }
+  if (!clay_app_confirm(commands->app, "Stop this background task?", 0))
+    return;
+
+  task_stop(task);
+  update_tasks_below(commands);
+  clay_sayc(CLAY_GREEN, "Stopped task #%d: %s", task->id, task->command);
 }
 
 ClayJson *task_list_tool(const ClayJson *arguments, void *userdata) {
