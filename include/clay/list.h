@@ -70,6 +70,15 @@ void clay_list_header(const char *fmt, ...);
    `info` is dim gray inside parens. Pass info = NULL to omit it. */
 void clay_list_step(int index, const char *verb, const char *target, const char *info, int link);
 
+/* One line of the model's plan: a green check for a finished step, an
+   orange arrow for the one running, a dim dot for the rest. */
+typedef enum {
+    CLAY_STEP_PENDING,
+    CLAY_STEP_ACTIVE,
+    CLAY_STEP_DONE
+} ClayStepState;
+void clay_plan_step(ClayStepState state, const char *text);
+
 /* Prints a plain bullet item ("  · text"), for simple unordered lists. */
 void clay_list_bullet(const char *fmt, ...);
 

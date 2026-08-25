@@ -10,6 +10,7 @@
 #define CLAY_SHELL_CAPTURE_LIMIT                                               \
   (4 * 1024 * 1024) /* captured, for the scratch dump */
 #define CLAY_TOOL_VISIBLE_LINES 8
+#define CLAY_PLAN_STEP_COLUMNS 28
 #define CLAY_THINKING_LIMIT (4 * 1024 * 1024)
 #define CLAY_ASK_USER_MAX_OPTIONS 6
 
@@ -733,7 +734,17 @@ ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata) {
                            "pending/in_progress/completed"));
       return result;
     }
-    ClayTodoItem item = {strdup(content), strdup(status)};
+    /* Same step text as before means the same step: keep what the screen
+       already shows for it, so only real movement gets printed. */
+    char *shown = NULL;
+    for (size_t j = 0; j < commands->todos.count; j++) {
+      ClayTodoItem *previous = clay_array_get(&commands->todos, j);
+      if (strcmp(previous->content, content) == 0 && previous->shown) {
+        shown = strdup(previous->shown);
+        break;
+      }
+    }
+    ClayTodoItem item = {strdup(content), strdup(status), shown};
     clay_array_push_val(&items, &item);
   }
 
@@ -1118,6 +1129,54 @@ static void print_tool_output(const ClayJson *result, int show_command,
   clay_str_free(&line);
 }
 
+/* Prints the steps that moved since the last time the plan was drawn, and
+   points the live status row at whichever one is running now. */
+static void render_plan(ClayCommands *commands) {
+  const ClayTodoItem *active = NULL;
+  size_t done = 0;
+  for (size_t i = 0; i < commands->todos.count; i++) {
+    ClayTodoItem *item = clay_array_get(&commands->todos, i);
+    int completed = strcmp(item->status, "completed") == 0;
+    int running = strcmp(item->status, "in_progress") == 0;
+    if (completed)
+      done++;
+    if (running && !active)
+      active = item;
+    if (!item->shown || strcmp(item->shown, item->status) != 0) {
+      clay_plan_step(completed     ? CLAY_STEP_DONE
+                     : running     ? CLAY_STEP_ACTIVE
+                                   : CLAY_STEP_PENDING,
+                     item->content);
+      free(item->shown);
+      item->shown = strdup(item->status);
+    }
+  }
+  if (!active || commands->todos.count == 0) {
+    clay_below_set_enabled("plan", 0);
+    return;
+  }
+  /* The row is shared with the model, the token counts and the mode, so the
+     step gets a short label rather than its whole sentence. */
+  size_t bytes = 0;
+  int columns = 0;
+  while (active->content[bytes] && columns < CLAY_PLAN_STEP_COLUMNS) {
+    unsigned char c = (unsigned char)active->content[bytes];
+    bytes += (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+    columns++;
+  }
+  ClayStr text;
+  clay_str_init(&text);
+  clay_str_printf(&text, "%s%zu/%zu%s ", clay_color(CLAY_GRAY), done + 1,
+                  commands->todos.count, clay_color(CLAY_RESET));
+  clay_str_push_n(&text, active->content, bytes);
+  if (active->content[bytes])
+    clay_str_push(&text, "\xe2\x80\xa6");
+  clay_below_set_text("plan", text.data);
+  clay_below_set_state("plan", CLAY_BELOW_LOADING);
+  clay_below_set_enabled("plan", 1);
+  clay_str_free(&text);
+}
+
 static void on_tool_call(const char *name, const char *arguments_json,
                          void *userdata) {
   ClayConversationStream *stream = userdata;
@@ -1138,8 +1197,10 @@ static void on_tool_call(const char *name, const char *arguments_json,
   clay_str_init(&label);
   tool_label(&label, name, 0, 0, detail);
   clay_json_free(args);
-  stream->tool_task = clay_task_start("%s", label.data);
-  stream->commands->active_tool_task = stream->tool_task;
+  if (strcmp(name, "todowrite") != 0) {
+    stream->tool_task = clay_task_start("%s", label.data);
+    stream->commands->active_tool_task = stream->tool_task;
+  }
   clay_str_free(&label);
 }
 
@@ -1160,6 +1221,17 @@ static void on_tool_result(const char *name, const ClayJson *result,
           ? clay_json_string_value(clay_json_object_get(result, detail_key))
           : NULL;
   int error_in_label = 0;
+  if (strcmp(name, "todowrite") == 0) {
+    if (ok)
+      render_plan(stream->commands);
+    else
+      clay_sayc(CLAY_RED, "Plan rejected: %s",
+                clay_json_string_value(clay_json_object_get(result, "error")));
+    if (clay_term_is_interactive())
+      clay_term_raw_enable();
+    show_thinking(stream);
+    return;
+  }
   if (stream->tool_task) {
     ClayStr label;
     clay_str_init(&label);

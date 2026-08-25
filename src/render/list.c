@@ -320,6 +320,26 @@ void clay_list_step(int index, const char *verb, const char *target, const char 
     fputc('\n', stdout);
 }
 
+void clay_plan_step(ClayStepState state, const char *text) {
+    const char *icon = state == CLAY_STEP_DONE     ? CLAY_ICON_CHECK
+                       : state == CLAY_STEP_ACTIVE ? CLAY_ICON_ARROW
+                                                   : CLAY_ICON_DOT;
+    const char *icon_color = state == CLAY_STEP_DONE     ? CLAY_GREEN
+                             : state == CLAY_STEP_ACTIVE ? CLAY_ORANGE
+                                                         : CLAY_GRAY;
+    const char *text_color = state == CLAY_STEP_ACTIVE ? CLAY_WHITE : CLAY_GRAY;
+    printf("  %s%s%s ", clay_color(icon_color), icon, clay_color(CLAY_RESET));
+    fputs(clay_color(text_color), stdout);
+    int room = clay_term_width() - 5;
+    if (room > 1 && (int)clay_utf8_width(text) > room) {
+        clay_term_write_clipped(text, room - 1);
+        fputs("\xe2\x80\xa6", stdout);
+    } else {
+        fputs(text, stdout);
+    }
+    printf("%s\n", clay_color(CLAY_RESET));
+}
+
 void clay_list_bullet(const char *fmt, ...) {
     printf("%s%s%s%s ", CLAY_INDENT, clay_color(CLAY_GRAY), CLAY_ICON_DOT, clay_color(CLAY_RESET));
     va_list args;

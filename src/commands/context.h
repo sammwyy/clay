@@ -44,7 +44,9 @@ typedef struct {
 
 typedef struct {
   char *content;
-  char *status; /* "pending", "in_progress", or "completed" */
+  char *status;   /* "pending", "in_progress", or "completed" */
+  char *shown;    /* the status already on screen, so a redraw prints only
+                     the steps that actually moved. NULL until printed. */
 } ClayTodoItem;
 
 /* Approval categories, independent of the sandbox (namespace) axis: whether

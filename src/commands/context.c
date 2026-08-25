@@ -98,7 +98,10 @@
   "\n\n" \
   "When a job is that big, write the plan first with todowrite, in " \
   "steps a person could tick off, then work through them one at a " \
-  "time." \
+  "time. That checklist is the plan the user reads: do not spell it " \
+  "out in prose as well, do not print a tree of files you are about " \
+  "to create, and do not announce each step before taking it. Write " \
+  "the plan, do the work, then say what came of it." \
   "\n\n" \
   "A step that stands on its own can go to the subagent tool. It " \
   "runs on a fresh agent with your tools but none of this " \
@@ -1191,8 +1194,10 @@ void clay_commands_clear_todos(ClayCommands *commands) {
     ClayTodoItem *item = clay_array_get(&commands->todos, i);
     free(item->content);
     free(item->status);
+    free(item->shown);
   }
   clay_array_clear(&commands->todos);
+  clay_below_set_enabled("plan", 0);
 }
 
 void clay_commands_new_chat(ClayCommands *commands) {
@@ -1389,9 +1394,13 @@ ClayCommands *clay_commands_create(ClayApp *app) {
   clay_below_set_enabled("hint", 0);
   clay_below_add(5, "mode");
   clay_below_set_enabled("mode", 0);
-  clay_below_add(6, "tasks");
+  /* Not droppable: while a plan is running, the step in flight is the most
+     useful thing on the row. */
+  clay_below_add(6, "plan");
+  clay_below_set_enabled("plan", 0);
+  clay_below_add(7, "tasks");
   clay_below_set_enabled("tasks", 0);
-  clay_below_add(7, "sandbox");
+  clay_below_add(8, "sandbox");
   clay_below_set_alignment("sandbox", CLAY_BELOW_ALIGN_RIGHT);
   clay_commands_set_tokens_below(commands, 0, 0);
   clay_commands_update_selected_below(commands);

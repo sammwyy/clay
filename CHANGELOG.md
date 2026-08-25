@@ -30,6 +30,12 @@
 
 ### Fixed
 
+- The plan reads like a checklist instead of a wall of text. `todowrite` no
+  longer prints a spinner row and a dump of every step on each call: the
+  first plan prints once, and later calls print only the steps that actually
+  moved, as `✓ done` / `→ running` / `· pending` lines. The step in flight
+  also shows in the status row with its own spinner and a `2/3` counter, and
+  clears when the plan finishes.
 - Stopping a background task no longer hangs. A sandboxed command runs as PID
   1 of its own namespace, where the kernel drops SIGTERM, so it outlived the
   child clay was waiting on and kept the output pipe open - the reader spun
@@ -79,6 +85,10 @@
   running under the next prompt.
 
 ### Changed
+
+- The system prompt now says the checklist is the plan the user reads: no
+  restating it in prose, no printing a tree of files about to be created, no
+  announcing each step before taking it.
 
 - One place now builds the tool list and one runs a request against the
   selected provider, so the message loop, `/compact`, and subagents no longer
