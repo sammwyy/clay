@@ -117,6 +117,9 @@ struct ClayCommands {
   ClayAutoTestChoice auto_test_choice;
   ClayArray tasks; /* ClayBackgroundTask*, background commands this session */
   int next_task_id;
+  /* The spinner row of the tool call running right now, for a long call that
+     wants to report progress on it (see subagent.c). NULL between calls. */
+  ClayTask *active_tool_task;
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands,
@@ -127,6 +130,10 @@ int clay_commands_fetch_models(void *ctx, ClayArray *out);
 int clay_commands_select_model(ClayCommands *commands, const char *provider,
                                const char *model);
 void clay_commands_update_selected_below(ClayCommands *commands);
+/* Folds a nested run's usage (a subagent, say) into the session totals so
+   the status line and the chat journal stay honest. */
+void clay_commands_add_usage(ClayCommands *commands, long input_tokens,
+                             long output_tokens);
 void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens,
                                     long output_tokens);
 void clay_commands_set_tokens_below_with_cache(
@@ -263,6 +270,40 @@ void clay_fs_walk_files(const char *base_dir, const char *rel_prefix,
    - it returns only symbol names/kinds/line numbers, not file content. */
 ClayJson *clay_fs_tool_repo_map(const ClayJson *arguments, void *userdata);
 ClayJson *clay_fs_tool_repo_map_schema(void);
+
+/* Every tool one agent turn can call, plus the schema objects those tools
+   borrow. Built by clay_commands_tools_build, released by
+   clay_commands_tools_free. */
+typedef struct {
+  ClayArray tools;   /* ClayTool */
+  ClayArray schemas; /* ClayJson*, owned here */
+} ClayToolSet;
+
+/* `allow_subagent` adds the two tools that only make sense for the agent
+   talking to the user: ask_user and subagent. A subagent gets everything
+   else, so it cannot nest or block on a question. */
+void clay_commands_tools_build(ClayCommands *commands, ClayToolSet *set,
+                               int allow_subagent);
+void clay_commands_tools_free(ClayToolSet *set);
+
+/* Rounds of tool calls one agent gets before the provider loop gives up. */
+#define CLAY_AGENT_MAX_ROUNDS 8
+#define CLAY_SUBAGENT_MAX_ROUNDS 24
+
+/* Runs `messages` against the selected provider until the model answers or
+   `max_rounds` is spent, appending the reply and tool results in place.
+   `cache_key` groups the request for the provider's prefix cache. Returns 0
+   on success, 1 when cancelled, -1 on failure. */
+int clay_commands_run_completion(ClayCommands *commands, ClayJson *messages,
+                                 const ClayToolSet *tools, int max_rounds,
+                                 const char *cache_key,
+                                 const ClayOpenAICallbacks *callbacks);
+
+/* Delegation tool (src/commands/subagent.c). Runs one step of a plan in a
+   fresh agent with no conversation history and returns its summary.
+   userdata is a ClayCommands*. */
+ClayJson *subagent_tool(const ClayJson *arguments, void *userdata);
+ClayJson *subagent_schema(void);
 
 /* Plan/checklist tool (src/commands/message.c). Replaces commands->todos
    wholesale on each call. userdata is a ClayCommands*. */

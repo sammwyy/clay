@@ -88,6 +88,33 @@
   "for anything the code already answers, or for routine judgment " \
   "calls that are yours to make: state the assumption and move on." \
   "\n\n" \
+  "# Planning and delegation" \
+  "\n\n" \
+  "Most work needs no ceremony: read what you need, make the " \
+  "change, verify it, say what you did. Reach for a plan only when " \
+  "the job has several real parts, and for a subagent only when one " \
+  "of those parts is big enough to be worth briefing someone else " \
+  "on." \
+  "\n\n" \
+  "When a job is that big, write the plan first with todowrite, in " \
+  "steps a person could tick off, then work through them one at a " \
+  "time." \
+  "\n\n" \
+  "A step that stands on its own can go to the subagent tool. It " \
+  "runs on a fresh agent with your tools but none of this " \
+  "conversation, so its prompt has to carry everything: what to do, " \
+  "which files and commands matter, what earlier steps produced, " \
+  "and what its summary should answer. It works alone and hands " \
+  "back that summary; feed what the next step needs into the next " \
+  "prompt. Keep steps sequential and non-overlapping, since two " \
+  "subagents editing the same file will fight." \
+  "\n\n" \
+  "Delegate the self-contained parts (a module, a test suite, a " \
+  "survey of unfamiliar code) and keep the rest: anything that " \
+  "turns on the user's own words, or on judgment about the job as a " \
+  "whole. If a subagent comes back empty or wrong, do that step " \
+  "yourself instead of retrying it blindly." \
+  "\n\n" \
   "# Comments and writing" \
   "\n\n" \
   "Comments state what the code does or the constraint it obeys, " \
@@ -620,6 +647,12 @@ void clay_commands_update_selected_below(ClayCommands *commands) {
   clay_str_free(&text);
 }
 
+void clay_commands_add_usage(ClayCommands *commands, long input_tokens,
+                             long output_tokens) {
+  commands->total_input_tokens += input_tokens;
+  commands->total_output_tokens += output_tokens;
+}
+
 void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens,
                                     long output_tokens) {
   clay_commands_set_tokens_below_with_cache(commands, input_tokens,
@@ -932,6 +965,73 @@ static char *clay_commands_build_system_prompt(void) {
   save_system_prompt_cache(fresh, now, cwd ? cwd : "");
   free(cwd);
   return fresh;
+}
+
+/* One request loop against whichever provider is selected: the three client
+   types differ only in how they are built and how their credentials are
+   refreshed afterwards. */
+int clay_commands_run_completion(ClayCommands *commands, ClayJson *messages,
+                                 const ClayToolSet *tools, int max_rounds,
+                                 const char *cache_key,
+                                 const ClayOpenAICallbacks *callbacks) {
+  ClayConnectedProvider *provider =
+      clay_commands_find_provider(commands, commands->selected_provider);
+  if (!provider)
+    return -1;
+  const ClayTool *tool_list = tools ? tools->tools.data : NULL;
+  size_t tool_count = tools ? tools->tools.count : 0;
+  const char *effort = clay_commands_reasoning_effort(commands)->id;
+  int is_codex = strcmp(provider->type->id, "openai-codex") == 0;
+  int is_grok_subscription =
+      strcmp(provider->type->id, "grok") == 0 && provider->grok_client != NULL;
+
+  if (is_codex) {
+    ClayCodexCredentials credentials = {
+        provider->config->access_token, provider->config->refresh_token,
+        provider->config->id_token, provider->config->account_id,
+        provider->config->expires_at};
+    ClayOpenAICodex *codex =
+        clay_openai_codex_create(&credentials, commands->selected_model);
+    if (!codex)
+      return -1;
+    clay_openai_codex_set_reasoning_effort(codex, effort);
+    clay_openai_codex_set_prompt_cache_key(codex, cache_key);
+    int rc = clay_openai_codex_run(codex, messages, tool_list, tool_count,
+                                   max_rounds, callbacks);
+    /* Save a refresh or rotated refresh token before discarding the client. */
+    clay_commands_save_codex_credentials(provider, codex);
+    clay_openai_codex_destroy(codex);
+    return rc;
+  }
+  if (is_grok_subscription) {
+    ClayGrokCredentials credentials = {
+        provider->config->access_token, provider->config->refresh_token,
+        provider->config->id_token, provider->config->expires_at};
+    ClayGrok *grok = clay_grok_create(&credentials, commands->selected_model);
+    if (!grok)
+      return -1;
+    clay_grok_set_reasoning_effort(grok, effort);
+    clay_grok_set_conversation_id(grok, cache_key);
+    int rc =
+        clay_grok_run(grok, messages, tool_list, tool_count, max_rounds, callbacks);
+    clay_commands_save_grok_credentials(provider, grok);
+    clay_grok_destroy(grok);
+    return rc;
+  }
+  ClayOpenAI *client =
+      clay_openai_create(provider->config->base_url, provider->config->apikey,
+                         commands->selected_model);
+  if (!client)
+    return -1;
+  clay_openai_set_reasoning_effort(client, effort);
+  if (strcmp(provider->type->id, "openai") == 0)
+    clay_openai_set_prompt_cache_key(client, cache_key);
+  else if (strcmp(provider->type->id, "grok") == 0)
+    clay_openai_set_extra_header(client, "x-grok-conv-id", cache_key);
+  int rc = clay_openai_run(client, messages, tool_list, tool_count, max_rounds,
+                           callbacks);
+  clay_openai_destroy(client);
+  return rc;
 }
 
 void clay_commands_reset_conversation(ClayCommands *commands) {

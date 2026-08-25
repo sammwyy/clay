@@ -9,6 +9,15 @@
   come with optional one-line notes, and a "Type your own..." row is offered
   unless the model turns it off. Without a tty the call fails with an
   instruction to assume and continue, so `-p` and piped runs never hang.
+- Subagents: a `subagent` tool that runs one step of a plan on a fresh agent
+  with the same tools but no conversation history, and hands back a summary
+  the caller passes into the next step. It cannot nest or ask the user, its
+  file changes are checkpointed and permission-gated like any other tool, the
+  spinner shows which tool it is running right now, and the whole run (prompt,
+  every message, summary, timing) is written to
+  `~/.clay/chats/<chat id>/subagents/<execution id>.json`. The system prompt
+  keeps it optional: plan and delegate only when the job has several real
+  parts, otherwise just do the work.
 - Background tasks: `task_run`, `task_output`, `task_stop`, and `task_list`
   let the model start a blocking command (a dev server, a watcher) on its own
   thread and keep working - start it, curl it, read its log, stop it, all in
@@ -20,6 +29,10 @@
   printed instead of stalling the session.
 
 ### Changed
+
+- One place now builds the tool list and one runs a request against the
+  selected provider, so the message loop, `/compact`, and subagents no longer
+  each carry their own copy of the OpenAI/Codex/Grok client plumbing.
 
 - Shell execution is now two axes cycled together by Shift+Tab: Sandbox (Ask),
   Sandbox (Auto), Unleashed (Ask), Unleashed (Auto). Ask prompts for every

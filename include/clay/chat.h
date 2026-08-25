@@ -59,6 +59,10 @@ char *clay_chat_scratch_dir(const ClayChat *chat);
    NULL on failure. */
 char *clay_chat_checkpoints_dir(const ClayChat *chat);
 
+/* ~/.clay/chats/<id>/subagents/<execution id>.json, where one delegated run
+   is recorded whole. Malloc'd; NULL on failure. */
+char *clay_chat_subagent_path(const ClayChat *chat, const char *execution_id);
+
 /* Writes `content` to a fresh file under this chat's scratch dir, named
    "<prefix>-<uuid>.txt". For dumping tool output too large to return
    inline. Malloc'd path, or NULL on failure. */

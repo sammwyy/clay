@@ -20,6 +20,7 @@ static const char *SPINNER_FRAMES[CLAY_SPINNER_FRAME_COUNT] = {
 static pthread_mutex_t g_render_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_render_ready = PTHREAD_COND_INITIALIZER;
 static unsigned int g_render_pause_depth = 0;
+static int g_line_open = 0; /* a task row is on screen, waiting to be finished */
 
 struct ClayTask {
     ClayStr label;
@@ -54,6 +55,7 @@ static void render_line(const char *icon_color, const char *icon, const char *la
     fputs(clay_color(CLAY_RESET), stdout);
     if (active) fputs("\xe2\x80\xa6", stdout);
     if (suffix) printf(" %s", suffix);
+    g_line_open = active;
     fflush(stdout);
     pthread_mutex_unlock(&g_render_lock);
 }
@@ -61,6 +63,13 @@ static void render_line(const char *icon_color, const char *icon, const char *la
 void clay_task_render_pause(void) {
     pthread_mutex_lock(&g_render_lock);
     g_render_pause_depth++;
+    /* Park the live row: whatever interrupts a running task (a permission
+       prompt, a question) gets a fresh line instead of overwriting it. */
+    if (g_line_open) {
+        fputc('\n', stdout);
+        fflush(stdout);
+        g_line_open = 0;
+    }
     pthread_mutex_unlock(&g_render_lock);
 }
 
@@ -75,16 +84,23 @@ static void *spinner_loop(void *arg) {
     ClayTask *task = arg;
     int frame = 0;
 
+    ClayStr label;
+    clay_str_init(&label);
     for (;;) {
+        /* Copy the label out: clay_task_relabel can replace it between
+           frames. */
         pthread_mutex_lock(&task->lock);
         int running = task->running;
+        clay_str_clear(&label);
+        clay_str_push(&label, task->label.data);
         pthread_mutex_unlock(&task->lock);
         if (!running) break;
 
-        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], task->label.data, NULL, 1);
+        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], label.data, NULL, 1);
         frame = (frame + 1) % CLAY_SPINNER_FRAME_COUNT;
         clay_term_sleep_ms(80);
     }
+    clay_str_free(&label);
     return NULL;
 }
 
@@ -104,6 +120,20 @@ ClayTask *clay_task_start(const char *fmt, ...) {
     clay_term_hide_cursor();
     pthread_create(&task->thread, NULL, spinner_loop, task);
     return task;
+}
+
+void clay_task_relabel(ClayTask *task, const char *fmt, ...) {
+    if (!task) return;
+    ClayStr label;
+    clay_str_init(&label);
+    va_list args;
+    va_start(args, fmt);
+    clay_str_vprintf(&label, fmt, args);
+    va_end(args);
+    pthread_mutex_lock(&task->lock);
+    clay_str_free(&task->label);
+    task->label = label;
+    pthread_mutex_unlock(&task->lock);
 }
 
 static void finish(ClayTask *task, const char *icon_color, const char *icon, const char *label,

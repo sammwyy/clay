@@ -14,6 +14,7 @@
 #define CLAY_ASK_USER_MAX_OPTIONS 6
 
 typedef struct {
+  ClayCommands *commands;
   int status_visible;
   int started;
   int response_active;
@@ -1003,6 +1004,9 @@ static void tool_label(ClayStr *out, const char *name, int completed,
   else if (strcmp(name, "task_list") == 0)
     verb = completed ? (success ? "Listed tasks" : "Failed to list tasks")
                      : "Listing tasks";
+  else if (strcmp(name, "subagent") == 0)
+    verb = completed ? (success ? "Subagent done" : "Subagent failed")
+                     : "Delegating";
   if (verb) {
     clay_str_push(out, verb);
     if (detail && *detail) {
@@ -1024,6 +1028,8 @@ static const char *tool_detail_key(const char *name) {
     return "path";
   if (strcmp(name, "task_run") == 0)
     return "command";
+  if (strcmp(name, "subagent") == 0)
+    return "description";
   if (strcmp(name, "glob") == 0 || strcmp(name, "grep") == 0)
     return "pattern";
   return NULL;
@@ -1117,6 +1123,7 @@ static void on_tool_call(const char *name, const char *arguments_json,
   tool_label(&label, name, 0, 0, detail);
   clay_json_free(args);
   stream->tool_task = clay_task_start("%s", label.data);
+  stream->commands->active_tool_task = stream->tool_task;
   clay_str_free(&label);
 }
 
@@ -1163,6 +1170,7 @@ static void on_tool_result(const char *name, const ClayJson *result,
     }
     clay_str_free(&label);
     stream->tool_task = NULL;
+    stream->commands->active_tool_task = NULL;
   } else
     clay_sayc(ok ? CLAY_GREEN : CLAY_RED, "%s: %s", ok ? "Executed" : "Failed",
               name);
@@ -1227,6 +1235,115 @@ static void on_usage_details(const ClayTokenUsage *usage, void *userdata) {
   stream->has_usage = 1;
 }
 
+/* Every tool this turn can call, plus the schema objects they borrow. */
+static void add_tool(ClayToolSet *set, const char *name, const char *description,
+                     ClayJson *schema, ClayToolFn fn, void *userdata) {
+  clay_array_push_val(&set->schemas, &schema);
+  ClayTool tool = {name, description, schema, fn, userdata};
+  clay_array_push_val(&set->tools, &tool);
+}
+
+void clay_commands_tools_build(ClayCommands *commands, ClayToolSet *set,
+                               int allow_subagent) {
+  clay_array_init(&set->tools, sizeof(ClayTool));
+  clay_array_init(&set->schemas, sizeof(ClayJson *));
+  add_tool(set, "shell_exec",
+           "Runs a shell command in the current workspace and returns stdout, "
+           "stderr, and exit status.",
+           shell_exec_schema(), shell_exec_tool, commands);
+  add_tool(set, "memory_save",
+           "Saves or updates a long-term memory entry that persists across every "
+           "future chat.",
+           memory_save_schema(), memory_save_tool, commands);
+  add_tool(set, "memory_read",
+           "Reads one long-term memory entry by its slug from the index in your "
+           "system prompt.",
+           memory_read_schema(), memory_read_tool, commands);
+  add_tool(set, "remember",
+           "Replaces this chat's short-term scratchpad, shown alongside the "
+           "conversation every turn.",
+           remember_schema(), remember_tool, commands);
+  add_tool(set, "read",
+           "Reads a file from the workspace, with line numbers. Prefer this over "
+           "shell_exec for reading files.",
+           clay_fs_tool_read_schema(), read_tool_gated, commands);
+  add_tool(set, "write",
+           "Creates or overwrites a file in the workspace with the given content.",
+           clay_fs_tool_write_schema(), write_tool_checkpointed, commands);
+  add_tool(set, "edit",
+           "Replaces an exact, unique text match in a file. Prefer this over "
+           "shell_exec/sed for edits.",
+           clay_fs_tool_edit_schema(), edit_tool_checkpointed, commands);
+  add_tool(set, "glob",
+           "Lists files in the workspace whose path matches a wildcard pattern.",
+           clay_fs_tool_glob_schema(), glob_tool_gated, commands);
+  add_tool(set, "grep",
+           "Searches file contents in the workspace for a regular expression.",
+           clay_fs_tool_grep_schema(), grep_tool_gated, commands);
+  add_tool(set, "todowrite",
+           "Writes the full task plan, shown to the user as a checklist. Use for "
+           "any multi-step task.",
+           todowrite_schema(), todowrite_tool, commands);
+  add_tool(set, "repo_map",
+           "Lists the workspace's top-level definitions (functions, classes, "
+           "structs, ...) ranked by how "
+           "often each is referenced elsewhere. Good for orienting in an "
+           "unfamiliar codebase before "
+           "reading specific files.",
+           clay_fs_tool_repo_map_schema(), clay_fs_tool_repo_map, commands);
+  add_tool(set, "skill",
+           "Loads one skill's full instructions by name from the index in your "
+           "system prompt. Call it before starting a task a skill covers.",
+           skill_schema(), skill_tool, commands);
+  add_tool(set, "task_run",
+           "Starts a command in the background and returns right away. For "
+           "anything that keeps running until you stop it: a dev server, a "
+           "watcher, a tail.",
+           task_run_schema(), task_run_tool, commands);
+  add_tool(set, "task_output",
+           "Returns what a background task has printed so far, plus whether it "
+           "is still running.",
+           task_output_schema(), task_output_tool, commands);
+  add_tool(set, "task_stop",
+           "Stops a background task and returns its exit status and final "
+           "output.",
+           task_stop_schema(), task_stop_tool, commands);
+  add_tool(set, "task_list",
+           "Lists this session's background tasks and their status.",
+           task_list_schema(), task_list_tool, commands);
+
+  /* A subagent gets everything except the two tools that only make sense
+     for the agent talking to the user. */
+  if (allow_subagent) {
+    add_tool(set, "ask_user",
+             "Asks the user one question in their terminal, with options to "
+             "pick from, and returns their answer. Use it when an unknown "
+             "would change what you build.",
+             ask_user_schema(), ask_user_tool, commands);
+    add_tool(set, "subagent",
+             "Hands one self-contained step of a larger job to a fresh agent "
+             "that starts with no conversation history, works on its own, and "
+             "returns a summary. For big multi-part work only.",
+             subagent_schema(), subagent_tool, commands);
+  }
+  clay_commands_connect_mcp_servers(commands);
+  for (size_t i = 0; i < commands->mcp_bindings.count; i++) {
+    ClayMcpToolBinding *binding = clay_array_get(&commands->mcp_bindings, i);
+    const ClayMcpTool *mcp_tool =
+        clay_mcp_find_tool(binding->server, binding->tool_name);
+    /* The binding owns this schema, so it never joins set->schemas. */
+    ClayTool tool = {binding->exposed_name, mcp_tool->description,
+                     mcp_tool->input_schema, clay_mcp_tool_call_fn, binding};
+    clay_array_push_val(&set->tools, &tool);
+  }
+}
+
+void clay_commands_tools_free(ClayToolSet *set) {
+  for (size_t i = 0; i < set->schemas.count; i++)
+    clay_json_free(*(ClayJson **)clay_array_get(&set->schemas, i));
+  clay_array_free(&set->schemas);
+  clay_array_free(&set->tools);
+}
 static int should_abort(void *userdata) {
   (void)userdata;
   if (clay_term_take_think_toggle()) {
@@ -1287,51 +1404,8 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   }
   size_t turn_start = clay_json_array_count(messages);
   clay_json_array_push(messages, clay_openai_message("user", input));
-  int is_codex = strcmp(provider->type->id, "openai-codex") == 0;
-  int is_grok_subscription = strcmp(provider->type->id, "grok") == 0 &&
-                             provider->grok_client != NULL;
-  ClayOpenAI *client = NULL;
-  ClayOpenAICodex *codex = NULL;
-  ClayGrok *grok = NULL;
-  if (is_codex) {
-    ClayCodexCredentials credentials = {
-        provider->config->access_token, provider->config->refresh_token,
-        provider->config->id_token, provider->config->account_id,
-        provider->config->expires_at};
-    codex = clay_openai_codex_create(&credentials, commands->selected_model);
-    clay_openai_codex_set_reasoning_effort(
-        codex, clay_commands_reasoning_effort(commands)->id);
-  } else if (is_grok_subscription) {
-    ClayGrokCredentials credentials = {provider->config->access_token,
-                                       provider->config->refresh_token,
-                                       provider->config->id_token,
-                                       provider->config->expires_at};
-    grok = clay_grok_create(&credentials, commands->selected_model);
-    clay_grok_set_reasoning_effort(
-        grok, clay_commands_reasoning_effort(commands)->id);
-  } else {
-    client =
-        clay_openai_create(provider->config->base_url, provider->config->apikey,
-                           commands->selected_model);
-    clay_openai_set_reasoning_effort(
-        client, clay_commands_reasoning_effort(commands)->id);
-  }
-  if (!client && !codex && !grok) {
-    clay_json_free(messages);
-    clay_sayc(CLAY_RED, "Provider authentication is unavailable. Connect it "
-                        "again with /connect.");
-    return 0;
-  }
-  const char *session_id = clay_chat_id(commands->chat);
-  if (codex)
-    clay_openai_codex_set_prompt_cache_key(codex, session_id);
-  else if (grok)
-    clay_grok_set_conversation_id(grok, session_id);
-  else if (client && strcmp(provider->type->id, "openai") == 0)
-    clay_openai_set_prompt_cache_key(client, session_id);
-  else if (client && strcmp(provider->type->id, "grok") == 0)
-    clay_openai_set_extra_header(client, "x-grok-conv-id", session_id);
   ClayConversationStream stream = {0};
+  stream.commands = commands;
   clay_str_init(&stream.response);
   clay_str_init(&stream.thinking);
   ClayOpenAICallbacks callbacks = {0};
@@ -1348,149 +1422,17 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   clock_gettime(CLOCK_MONOTONIC, &started_at);
   show_thinking(&stream);
   clay_app_set_state(commands->app, CLAY_APP_BUSY);
-  ClayJson *shell_schema = shell_exec_schema();
-  ClayJson *memory_save_schema_json = memory_save_schema();
-  ClayJson *memory_read_schema_json = memory_read_schema();
-  ClayJson *remember_schema_json = remember_schema();
-  ClayJson *read_schema_json = clay_fs_tool_read_schema();
-  ClayJson *write_schema_json = clay_fs_tool_write_schema();
-  ClayJson *edit_schema_json = clay_fs_tool_edit_schema();
-  ClayJson *glob_schema_json = clay_fs_tool_glob_schema();
-  ClayJson *grep_schema_json = clay_fs_tool_grep_schema();
-  ClayJson *todowrite_schema_json = todowrite_schema();
-  ClayJson *repo_map_schema_json = clay_fs_tool_repo_map_schema();
-  ClayJson *skill_schema_json = skill_schema();
-  ClayJson *ask_user_schema_json = ask_user_schema();
-  ClayJson *task_run_schema_json = task_run_schema();
-  ClayJson *task_output_schema_json = task_output_schema();
-  ClayJson *task_stop_schema_json = task_stop_schema();
-  ClayJson *task_list_schema_json = task_list_schema();
-  clay_commands_connect_mcp_servers(commands);
-  ClayArray tool_list;
-  clay_array_init(&tool_list, sizeof(ClayTool));
-  ClayTool builtin_tools[] = {
-      {"shell_exec",
-       "Runs a shell command in the current workspace and returns stdout, "
-       "stderr, and exit status.",
-       shell_schema, shell_exec_tool, commands},
-      {"memory_save",
-       "Saves or updates a long-term memory entry that persists across every "
-       "future chat.",
-       memory_save_schema_json, memory_save_tool, commands},
-      {"memory_read",
-       "Reads one long-term memory entry by its slug from the index in your "
-       "system prompt.",
-       memory_read_schema_json, memory_read_tool, commands},
-      {"remember",
-       "Replaces this chat's short-term scratchpad, shown alongside the "
-       "conversation every turn.",
-       remember_schema_json, remember_tool, commands},
-      {"read",
-       "Reads a file from the workspace, with line numbers. Prefer this over "
-       "shell_exec for reading files.",
-       read_schema_json, read_tool_gated, commands},
-      {"write",
-       "Creates or overwrites a file in the workspace with the given content.",
-       write_schema_json, write_tool_checkpointed, commands},
-      {"edit",
-       "Replaces an exact, unique text match in a file. Prefer this over "
-       "shell_exec/sed for edits.",
-       edit_schema_json, edit_tool_checkpointed, commands},
-      {"glob",
-       "Lists files in the workspace whose path matches a wildcard pattern.",
-       glob_schema_json, glob_tool_gated, commands},
-      {"grep",
-       "Searches file contents in the workspace for a regular expression.",
-       grep_schema_json, grep_tool_gated, commands},
-      {"todowrite",
-       "Writes the full task plan, shown to the user as a checklist. Use for "
-       "any multi-step task.",
-       todowrite_schema_json, todowrite_tool, commands},
-      {"repo_map",
-       "Lists the workspace's top-level definitions (functions, classes, "
-       "structs, ...) ranked by how "
-       "often each is referenced elsewhere. Good for orienting in an "
-       "unfamiliar codebase before "
-       "reading specific files.",
-       repo_map_schema_json, clay_fs_tool_repo_map, commands},
-      {"skill",
-       "Loads one skill's full instructions by name from the index in your "
-       "system prompt. Call it before starting a task a skill covers.",
-       skill_schema_json, skill_tool, commands},
-      {"ask_user",
-       "Asks the user one question in their terminal, with options to pick "
-       "from, and returns their answer. Use it when an unknown would change "
-       "what you build.",
-       ask_user_schema_json, ask_user_tool, commands},
-      {"task_run",
-       "Starts a command in the background and returns right away. For "
-       "anything that keeps running until you stop it: a dev server, a "
-       "watcher, a tail.",
-       task_run_schema_json, task_run_tool, commands},
-      {"task_output",
-       "Returns what a background task has printed so far, plus whether it "
-       "is still running.",
-       task_output_schema_json, task_output_tool, commands},
-      {"task_stop",
-       "Stops a background task and returns its exit status and final "
-       "output.",
-       task_stop_schema_json, task_stop_tool, commands},
-      {"task_list", "Lists this session's background tasks and their status.",
-       task_list_schema_json, task_list_tool, commands},
-  };
-  for (size_t i = 0; i < sizeof(builtin_tools) / sizeof(builtin_tools[0]);
-       i++) {
-    clay_array_push_val(&tool_list, &builtin_tools[i]);
-  }
-  for (size_t i = 0; i < commands->mcp_bindings.count; i++) {
-    ClayMcpToolBinding *binding = clay_array_get(&commands->mcp_bindings, i);
-    const ClayMcpTool *mcp_tool =
-        clay_mcp_find_tool(binding->server, binding->tool_name);
-    ClayTool tool = {binding->exposed_name, mcp_tool->description,
-                     mcp_tool->input_schema, clay_mcp_tool_call_fn, binding};
-    clay_array_push_val(&tool_list, &tool);
-  }
-
+  ClayToolSet tools;
+  clay_commands_tools_build(commands, &tools, 1);
   if (clay_term_is_interactive())
     clay_term_raw_enable();
-  int rc = is_codex ? clay_openai_codex_run(codex, messages, tool_list.data,
-                                            tool_list.count, 8, &callbacks)
-                    : is_grok_subscription
-                          ? clay_grok_run(grok, messages, tool_list.data,
-                                          tool_list.count, 8, &callbacks)
-                          : clay_openai_run(client, messages, tool_list.data,
-                                            tool_list.count, 8, &callbacks);
+  int rc = clay_commands_run_completion(commands, messages, &tools,
+                                        CLAY_AGENT_MAX_ROUNDS,
+                                        clay_chat_id(commands->chat),
+                                        &callbacks);
   if (clay_term_is_interactive())
     clay_term_raw_disable();
-  clay_array_free(&tool_list);
-  clay_json_free(shell_schema);
-  clay_json_free(memory_save_schema_json);
-  clay_json_free(memory_read_schema_json);
-  clay_json_free(remember_schema_json);
-  clay_json_free(read_schema_json);
-  clay_json_free(write_schema_json);
-  clay_json_free(edit_schema_json);
-  clay_json_free(glob_schema_json);
-  clay_json_free(grep_schema_json);
-  clay_json_free(todowrite_schema_json);
-  clay_json_free(repo_map_schema_json);
-  clay_json_free(skill_schema_json);
-  clay_json_free(ask_user_schema_json);
-  clay_json_free(task_run_schema_json);
-  clay_json_free(task_output_schema_json);
-  clay_json_free(task_stop_schema_json);
-  clay_json_free(task_list_schema_json);
-  clay_openai_destroy(client);
-  if (codex) {
-    /* Save a refresh or rotated refresh token before discarding this request
-     * client. */
-    clay_commands_save_codex_credentials(provider, codex);
-    clay_openai_codex_destroy(codex);
-  }
-  if (grok) {
-    clay_commands_save_grok_credentials(provider, grok);
-    clay_grok_destroy(grok);
-  }
+  clay_commands_tools_free(&tools);
   struct timespec finished_at;
   clock_gettime(CLOCK_MONOTONIC, &finished_at);
   double seconds = (double)(finished_at.tv_sec - started_at.tv_sec) +

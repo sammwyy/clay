@@ -12,6 +12,10 @@ void clay_task_render_resume(void);
    clay_task_success/fail. */
 ClayTask *clay_task_start(const char *fmt, ...);
 
+/* Replaces a running task's label in place; its spinner and timer keep
+   going. For a long call that wants to show what it is doing right now. */
+void clay_task_relabel(ClayTask *task, const char *fmt, ...);
+
 /* Stops the spinner, replaces it with a green check and elapsed time,
    then prints the given result text on the same line. */
 void clay_task_success(ClayTask *task, const char *fmt, ...);

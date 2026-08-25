@@ -454,6 +454,21 @@ char *clay_chat_checkpoints_dir(const ClayChat *chat) {
     return full_path;
 }
 
+char *clay_chat_subagent_path(const ClayChat *chat, const char *execution_id) {
+    if (ensure_chat_dir(chat->id) != 0) return NULL;
+    ClayStr relative;
+    clay_str_init(&relative);
+    clay_str_printf(&relative, "chats/%s/subagents", chat->id);
+    if (clay_storage_ensure_dir(relative.data) != 0) {
+        clay_str_free(&relative);
+        return NULL;
+    }
+    clay_str_printf(&relative, "/%s.json", execution_id);
+    char *path = clay_storage_path(relative.data);
+    clay_str_free(&relative);
+    return path;
+}
+
 char *clay_chat_dump_scratch(const ClayChat *chat, const char *prefix, const char *content) {
     char *dir = clay_chat_scratch_dir(chat);
     if (!dir) return NULL;
