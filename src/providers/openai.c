@@ -626,5 +626,7 @@ int clay_openai_run(ClayOpenAI *client, ClayJson *messages,
     stream_state_free(&st);
   }
 
-  return -1;
+  /* Rounds spent with tool calls still coming: not a failure, just an
+     unfinished turn the user can continue. */
+  return CLAY_RUN_OUT_OF_ROUNDS;
 }

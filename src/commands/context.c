@@ -103,14 +103,20 @@
   "to create, and do not announce each step before taking it. Write " \
   "the plan, do the work, then say what came of it." \
   "\n\n" \
-  "A step that stands on its own can go to the subagent tool. It " \
+  "Branches of the work that do not depend on each other go out " \
+  "together, in one subagent call: it takes a list of tasks, starts " \
+  "them all at once, and returns when the last one is done. Each " \
   "runs on a fresh agent with your tools but none of this " \
-  "conversation, so its prompt has to carry everything: what to do, " \
-  "which files and commands matter, what earlier steps produced, " \
-  "and what its summary should answer. It works alone and hands " \
-  "back that summary; feed what the next step needs into the next " \
-  "prompt. Keep steps sequential and non-overlapping, since two " \
-  "subagents editing the same file will fight." \
+  "conversation, so its prompt has to carry everything it needs: " \
+  "what to build, which files are its own, any contract it must " \
+  "honour, and what its summary should answer. Each plans its own " \
+  "work; you do not plan for it, and \"launch the subagent\" is not a " \
+  "step in your plan - delegating is how you do a step, not a step " \
+  "of its own. Give every branch its own files, since two of them " \
+  "editing the same file will fight. Settle whatever they all " \
+  "depend on (a shared contract, an interface, a schema) before you " \
+  "fan them out, and feed the summaries that come back into " \
+  "whatever follows." \
   "\n\n" \
   "Delegate the self-contained parts (a module, a test suite, a " \
   "survey of unfamiliar code) and keep the rest: anything that " \
@@ -656,8 +662,10 @@ void clay_commands_update_selected_below(ClayCommands *commands) {
 
 void clay_commands_add_usage(ClayCommands *commands, long input_tokens,
                              long output_tokens) {
+  pthread_mutex_lock(&commands->tool_lock);
   commands->total_input_tokens += input_tokens;
   commands->total_output_tokens += output_tokens;
+  pthread_mutex_unlock(&commands->tool_lock);
 }
 
 void clay_commands_set_tokens_below(ClayCommands *commands, long input_tokens,
@@ -1189,15 +1197,16 @@ int clay_commands_maybe_compact(ClayCommands *commands) {
   return collapsed;
 }
 
-void clay_commands_clear_todos(ClayCommands *commands) {
-  for (size_t i = 0; i < commands->todos.count; i++) {
-    ClayTodoItem *item = clay_array_get(&commands->todos, i);
+void clay_plan_clear(ClayPlan *plan) {
+  for (size_t i = 0; i < plan->todos.count; i++) {
+    ClayTodoItem *item = clay_array_get(&plan->todos, i);
     free(item->content);
     free(item->status);
     free(item->shown);
   }
-  clay_array_clear(&commands->todos);
-  clay_below_set_enabled("plan", 0);
+  clay_array_clear(&plan->todos);
+  if (plan->rendered)
+    clay_below_set_enabled("plan", 0);
 }
 
 void clay_commands_new_chat(ClayCommands *commands) {
@@ -1211,7 +1220,7 @@ void clay_commands_new_chat(ClayCommands *commands) {
   clay_below_stop_elapsed("status");
   clay_below_set_enabled("status", 0);
   clay_commands_set_tokens_below(commands, 0, 0);
-  clay_commands_clear_todos(commands);
+  clay_plan_clear(&commands->plan);
 }
 
 int clay_commands_select_model(ClayCommands *commands, const char *provider,
@@ -1363,13 +1372,19 @@ ClayCommands *clay_commands_create(ClayApp *app) {
         clay_permissions_category_name((ClayPermissionCategory)i));
     clay_array_init(&commands->remembered_patterns[i], sizeof(char *));
   }
-  clay_array_init(&commands->todos, sizeof(ClayTodoItem));
+  clay_array_init(&commands->plan.todos, sizeof(ClayTodoItem));
+  commands->plan.rendered = 1;
   clay_array_init(&commands->mcp_servers, sizeof(ClayMcpServer *));
   clay_array_init(&commands->mcp_bindings, sizeof(ClayMcpToolBinding));
   clay_array_init(&commands->undo_history, sizeof(ClayUndoEntry));
   clay_array_init(&commands->tasks, sizeof(ClayBackgroundTask *));
   if (clay_sandbox_supported())
     commands->sandbox_namespaces = clay_sandbox_namespaces_create();
+  pthread_mutexattr_t tool_lock_attributes;
+  pthread_mutexattr_init(&tool_lock_attributes);
+  pthread_mutexattr_settype(&tool_lock_attributes, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&commands->tool_lock, &tool_lock_attributes);
+  pthread_mutexattr_destroy(&tool_lock_attributes);
   commands->auto_test_command = clay_config_auto_test_command();
   commands->auto_test_choice = CLAY_AUTO_TEST_UNASKED;
   clay_commands_reset_conversation(commands);
@@ -1413,6 +1428,7 @@ void clay_commands_destroy(ClayCommands *commands) {
     return;
   clay_commands_stop_tasks(commands);
   clay_sandbox_namespaces_destroy(commands->sandbox_namespaces);
+  pthread_mutex_destroy(&commands->tool_lock);
   free(commands->environment_block);
   free(commands->notes_block);
   for (size_t i = 0; i < commands->providers.count; i++)
@@ -1429,8 +1445,8 @@ void clay_commands_destroy(ClayCommands *commands) {
       free(*(char **)clay_array_get(remembered, j));
     clay_array_free(remembered);
   }
-  clay_commands_clear_todos(commands);
-  clay_array_free(&commands->todos);
+  clay_plan_clear(&commands->plan);
+  clay_array_free(&commands->plan.todos);
   for (size_t i = 0; i < commands->mcp_bindings.count; i++) {
     ClayMcpToolBinding *binding = clay_array_get(&commands->mcp_bindings, i);
     free(binding->tool_name);

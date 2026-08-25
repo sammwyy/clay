@@ -8,7 +8,7 @@
 
 static ClayJson *call(ClayCommands *commands, const char *json_args) {
     ClayJson *args = clay_json_parse(json_args, NULL);
-    ClayJson *result = todowrite_tool(args, commands);
+    ClayJson *result = todowrite_tool(args, &commands->plan);
     clay_json_free(args);
     return result;
 }
@@ -20,7 +20,7 @@ static int ok(ClayJson *result) {
 int main(void) {
     ClayCommands commands;
     memset(&commands, 0, sizeof(commands));
-    clay_array_init(&commands.todos, sizeof(ClayTodoItem));
+    clay_array_init(&commands.plan.todos, sizeof(ClayTodoItem));
 
     ClayJson *result =
         call(&commands, "{\"todos\":[{\"content\":\"Write tests\",\"status\":\"in_progress\"},"
@@ -30,8 +30,8 @@ int main(void) {
     assert(strstr(output, "Write tests"));
     assert(strstr(output, "Ship it"));
     clay_json_free(result);
-    assert(commands.todos.count == 2);
-    ClayTodoItem *first = clay_array_get(&commands.todos, 0);
+    assert(commands.plan.todos.count == 2);
+    ClayTodoItem *first = clay_array_get(&commands.plan.todos, 0);
     assert(strcmp(first->content, "Write tests") == 0);
     assert(strcmp(first->status, "in_progress") == 0);
 
@@ -39,15 +39,15 @@ int main(void) {
     result = call(&commands, "{\"todos\":[{\"content\":\"Ship it\",\"status\":\"completed\"}]}");
     assert(ok(result));
     clay_json_free(result);
-    assert(commands.todos.count == 1);
-    ClayTodoItem *only = clay_array_get(&commands.todos, 0);
+    assert(commands.plan.todos.count == 1);
+    ClayTodoItem *only = clay_array_get(&commands.plan.todos, 0);
     assert(strcmp(only->status, "completed") == 0);
 
     /* An invalid status is rejected and leaves the previous plan intact. */
     result = call(&commands, "{\"todos\":[{\"content\":\"x\",\"status\":\"done\"}]}");
     assert(!ok(result));
     clay_json_free(result);
-    assert(commands.todos.count == 1);
+    assert(commands.plan.todos.count == 1);
 
     /* Empty content is rejected. */
     result = call(&commands, "{\"todos\":[{\"content\":\"\",\"status\":\"pending\"}]}");
@@ -59,8 +59,8 @@ int main(void) {
     assert(!ok(result));
     clay_json_free(result);
 
-    clay_commands_clear_todos(&commands);
-    clay_array_free(&commands.todos);
+    clay_plan_clear(&commands.plan);
+    clay_array_free(&commands.plan.todos);
 
     printf("todowrite tests passed\n");
     return 0;

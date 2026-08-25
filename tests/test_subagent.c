@@ -45,31 +45,48 @@ int main(void) {
     ClayCommands commands;
     memset(&commands, 0, sizeof(commands));
     clay_array_init(&commands.tasks, sizeof(ClayBackgroundTask *));
+    clay_array_init(&commands.plan.todos, sizeof(ClayTodoItem));
     clay_array_init(&commands.mcp_bindings, sizeof(ClayMcpToolBinding));
     clay_array_init(&commands.mcp_servers, sizeof(ClayMcpServer *));
     commands.mcp_connect_attempted = 1; /* no servers to dial in a test */
     commands.mode = CLAY_MODE_ACT;
 
-    ClayJson *result = call(&commands, "{\"prompt\":\"do the thing\"}");
+    ClayJson *result = call(&commands, "{\"tasks\":[]}");
+    assert(!ok(result));
+    assert(strstr(error_of(result), "non-empty"));
+    clay_json_free(result);
+
+    /* One call fans out, but not without limit. */
+    result = call(&commands,
+                  "{\"tasks\":[{\"description\":\"a\",\"prompt\":\"p\"},"
+                  "{\"description\":\"b\",\"prompt\":\"p\"},"
+                  "{\"description\":\"c\",\"prompt\":\"p\"},"
+                  "{\"description\":\"d\",\"prompt\":\"p\"},"
+                  "{\"description\":\"e\",\"prompt\":\"p\"}]}");
+    assert(!ok(result));
+    assert(strstr(error_of(result), "at most 4"));
+    clay_json_free(result);
+
+    result = call(&commands, "{\"tasks\":[{\"prompt\":\"do the thing\"}]}");
     assert(!ok(result));
     assert(strstr(error_of(result), "description"));
     clay_json_free(result);
 
-    result = call(&commands, "{\"description\":\"step one\"}");
+    result = call(&commands, "{\"tasks\":[{\"description\":\"step one\"}]}");
     assert(!ok(result));
     assert(strstr(error_of(result), "prompt"));
     clay_json_free(result);
 
     /* Plan mode refuses before anything is spawned. */
     commands.mode = CLAY_MODE_PLAN;
-    result = call(&commands, "{\"description\":\"step one\",\"prompt\":\"do it\"}");
+    result = call(&commands, "{\"tasks\":[{\"description\":\"step one\",\"prompt\":\"do it\"}]}");
     assert(!ok(result));
     assert(strstr(error_of(result), "Plan mode"));
     clay_json_free(result);
     commands.mode = CLAY_MODE_ACT;
 
     /* Without a chat there is nowhere to record the run. */
-    result = call(&commands, "{\"description\":\"step one\",\"prompt\":\"do it\"}");
+    result = call(&commands, "{\"tasks\":[{\"description\":\"step one\",\"prompt\":\"do it\"}]}");
     assert(!ok(result));
     assert(strstr(error_of(result), "chat"));
     clay_json_free(result);
@@ -77,7 +94,7 @@ int main(void) {
     /* A subagent gets the working tools but neither the user's ear nor the
        ability to spawn more subagents. */
     ClayToolSet delegated;
-    clay_commands_tools_build(&commands, &delegated, 0);
+    clay_commands_tools_build(&commands, &commands.plan, &delegated, 0);
     assert(has_tool(&delegated, "read"));
     assert(has_tool(&delegated, "shell_exec"));
     assert(has_tool(&delegated, "todowrite"));
@@ -87,7 +104,7 @@ int main(void) {
     clay_commands_tools_free(&delegated);
 
     ClayToolSet top;
-    clay_commands_tools_build(&commands, &top, 1);
+    clay_commands_tools_build(&commands, &commands.plan, &top, 1);
     assert(has_tool(&top, "subagent"));
     assert(has_tool(&top, "ask_user"));
     assert(top.tools.count == delegated_count + 2);
@@ -107,9 +124,12 @@ int main(void) {
 
     ClayJson *schema = subagent_schema();
     ClayJson *properties = clay_json_object_get(schema, "properties");
-    assert(clay_json_object_get(properties, "description"));
-    assert(clay_json_object_get(properties, "prompt"));
-    assert(clay_json_array_count(clay_json_object_get(schema, "required")) == 2);
+    ClayJson *tasks = clay_json_object_get(properties, "tasks");
+    assert(tasks);
+    ClayJson *task = clay_json_object_get(tasks, "items");
+    assert(clay_json_object_get(clay_json_object_get(task, "properties"), "description"));
+    assert(clay_json_object_get(clay_json_object_get(task, "properties"), "prompt"));
+    assert(clay_json_array_count(clay_json_object_get(schema, "required")) == 1);
     clay_json_free(schema);
 
     printf("subagent tests passed\n");

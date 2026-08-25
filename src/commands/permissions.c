@@ -139,10 +139,16 @@ int clay_permissions_check(ClayCommands *commands, ClayPermissionCategory catego
                            const char *detail) {
     if (commands->sandbox_auto_approve || commands->auto_approve[category]) return 1;
 
+    /* One question on screen at a time, however many subagents are running. */
+    pthread_mutex_lock(&commands->tool_lock);
+
     ClayArray *remembered = &commands->remembered_patterns[category];
     for (size_t i = 0; i < remembered->count; i++) {
         const char *pattern = *(char **)clay_array_get(remembered, i);
-        if (clay_str_wildcard_match(pattern, detail)) return 1;
+        if (clay_str_wildcard_match(pattern, detail)) {
+            pthread_mutex_unlock(&commands->tool_lock);
+            return 1;
+        }
     }
 
     ClayStr question;
@@ -165,8 +171,10 @@ int clay_permissions_check(ClayCommands *commands, ClayPermissionCategory catego
     if (index == 1) {
         char *pattern = derive_pattern(category, detail);
         clay_array_push_val(remembered, &pattern);
+        pthread_mutex_unlock(&commands->tool_lock);
         return 1;
     }
+    pthread_mutex_unlock(&commands->tool_lock);
     return index == 0;
 }
 

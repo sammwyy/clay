@@ -98,7 +98,17 @@ static void *spinner_loop(void *arg) {
         pthread_mutex_unlock(&task->lock);
         if (!running) break;
 
-        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], label.data, NULL, 1);
+        /* A long call (a subagent, a slow build) has to look alive, not
+           stuck: show the clock while it runs, not only when it ends. */
+        double seconds = elapsed_seconds(&task->start);
+        ClayStr elapsed;
+        clay_str_init(&elapsed);
+        if (seconds >= 1.0)
+            clay_str_printf(&elapsed, "%s(%.0fs)%s", clay_color(CLAY_GRAY), seconds,
+                            clay_color(CLAY_RESET));
+        render_line(CLAY_YELLOW, SPINNER_FRAMES[frame], label.data,
+                    elapsed.len ? elapsed.data : NULL, 1);
+        clay_str_free(&elapsed);
         frame = (frame + 1) % CLAY_SPINNER_FRAME_COUNT;
         clay_term_sleep_ms(80);
     }

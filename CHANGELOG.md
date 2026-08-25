@@ -9,15 +9,18 @@
   come with optional one-line notes, and a "Type your own..." row is offered
   unless the model turns it off. Without a tty the call fails with an
   instruction to assume and continue, so `-p` and piped runs never hang.
-- Subagents: a `subagent` tool that runs one step of a plan on a fresh agent
-  with the same tools but no conversation history, and hands back a summary
-  the caller passes into the next step. It cannot nest or ask the user, its
-  file changes are checkpointed and permission-gated like any other tool, the
-  spinner shows which tool it is running right now, and the whole run (prompt,
-  every message, summary, timing) is written to
+- Subagents: a `subagent` tool that forks up to four branches of a job at
+  once, each on a fresh agent with the same tools but no conversation
+  history, and returns every summary when the last one lands. Two branches
+  that each took 45s finished in 46s of wall clock here. Each plans its own
+  work with its own private `todowrite` checklist, none of them can nest or
+  ask the user, and their file writes, approvals and checkpoints serialize on
+  one session lock so parallel branches cannot interleave inside a change.
+  The spinner reports branches done, tool calls spent and which one is still
+  running; every run (prompt, messages, summary, timing) is written to
   `~/.clay/chats/<chat id>/subagents/<execution id>.json`. The system prompt
-  keeps it optional: plan and delegate only when the job has several real
-  parts, otherwise just do the work.
+  keeps it optional and says delegating is how you do a step, never a step of
+  its own.
 - Background tasks: `task_run`, `task_output`, `task_stop`, and `task_list`
   let the model start a blocking command (a dev server, a watcher) on its own
   thread and keep working - start it, curl it, read its log, stop it, all in
@@ -30,6 +33,23 @@
 
 ### Fixed
 
+- A turn no longer stops dead in the middle of a job. The tool-call budget
+  was 8 rounds - a scaffold plus a build plus a verification pass spends that
+  long before it starts - and hitting it returned the same code as a network
+  failure, which the interactive path then reported as nothing at all: the
+  transcript just ended and a fresh prompt appeared. The budget is now 64
+  rounds (32 for a subagent), running out is its own outcome that keeps every
+  tool result in the conversation so the next message continues the job, and
+  the turn always says how it ended - out of rounds, provider error, or the
+  model stopping after its last tool call.
+- Reasoning streams on a single self-rewriting row instead of pouring into
+  the transcript. A minute of thinking - which for a coding model often means
+  whole drafts of the code it is about to write - used to cost a screenful of
+  scroll before collapsing to one line. Now it costs one row while it runs,
+  collapses to `Reasoning finished in Ns`, and `Ctrl+O` still expands the
+  whole text.
+- A running tool row shows its elapsed time, not just a spinner, so a long
+  call (a subagent, a slow build) reads as working rather than stuck.
 - The plan reads like a checklist instead of a wall of text. `todowrite` no
   longer prints a spinner row and a dump of every step on each call: the
   first plan prints once, and later calls print only the steps that actually

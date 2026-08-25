@@ -30,10 +30,10 @@ int clay_response_prefix_width(void);
 void clay_turn_header(const char *model);
 
 /* Streams and toggles the latest assistant reasoning block in the chat. */
-/* `before_new_row` (may be NULL) runs just before the block enters another
-   terminal row, so a caller keeping a status row pinned below can push it
-   down first. */
-void clay_thinking_begin(void (*before_new_row)(void));
+/* Streams reasoning onto a single self-rewriting row: the tail of what the
+   model is thinking, never more than one line of scroll. clay_thinking_finish
+   replaces it with a one-line summary; Ctrl+O expands the full text. */
+void clay_thinking_begin(void);
 void clay_thinking_write(const char *text);
 
 /* Greedy word wrap for text that arrives in chunks. Complete words go out as

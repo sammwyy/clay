@@ -160,13 +160,19 @@ static ClayJson *grep_tool_gated(const ClayJson *arguments, void *userdata) {
 
 static ClayJson *write_tool_checkpointed(const ClayJson *arguments,
                                          void *userdata) {
-  if (((ClayCommands *)userdata)->mode == CLAY_MODE_PLAN)
+  ClayCommands *commands = userdata;
+  pthread_mutex_lock(&commands->tool_lock);
+  if (commands->mode == CLAY_MODE_PLAN) {
+    pthread_mutex_unlock(&commands->tool_lock);
     return plan_blocked_result("writing files is disabled");
+  }
   const char *path =
       clay_json_string_value(clay_json_object_get(arguments, "path"));
   if (path && *path &&
-      !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Write", path))
+      !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Write", path)) {
+    pthread_mutex_unlock(&commands->tool_lock);
     return denied_result();
+  }
   ClayStr label;
   clay_str_init(&label);
   clay_str_printf(&label, "write: %s", path && *path ? path : "?");
@@ -179,18 +185,25 @@ static ClayJson *write_tool_checkpointed(const ClayJson *arguments,
   else
     clay_commands_undo_discard(userdata);
   run_auto_test(userdata, result);
+  pthread_mutex_unlock(&commands->tool_lock);
   return result;
 }
 
 static ClayJson *edit_tool_checkpointed(const ClayJson *arguments,
                                         void *userdata) {
-  if (((ClayCommands *)userdata)->mode == CLAY_MODE_PLAN)
+  ClayCommands *commands = userdata;
+  pthread_mutex_lock(&commands->tool_lock);
+  if (commands->mode == CLAY_MODE_PLAN) {
+    pthread_mutex_unlock(&commands->tool_lock);
     return plan_blocked_result("editing files is disabled");
+  }
   const char *path =
       clay_json_string_value(clay_json_object_get(arguments, "path"));
   if (path && *path &&
-      !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Edit", path))
+      !clay_permissions_check(userdata, CLAY_PERMISSION_EDIT, "Edit", path)) {
+    pthread_mutex_unlock(&commands->tool_lock);
     return denied_result();
+  }
   ClayStr label;
   clay_str_init(&label);
   clay_str_printf(&label, "edit: %s", path && *path ? path : "?");
@@ -203,6 +216,7 @@ static ClayJson *edit_tool_checkpointed(const ClayJson *arguments,
   else
     clay_commands_undo_discard(userdata);
   run_auto_test(userdata, result);
+  pthread_mutex_unlock(&commands->tool_lock);
   return result;
 }
 
@@ -272,6 +286,8 @@ static int authorize_shell_command(char *const argv[], void *user_data) {
 
 static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
   ClayCommands *commands = userdata;
+  /* A command can change anything; parallel subagents take turns. */
+  pthread_mutex_lock(&commands->tool_lock);
   const char *command =
       clay_json_string_value(clay_json_object_get(arguments, "command"));
   const char *args =
@@ -281,6 +297,7 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     clay_json_object_set(result, "ok", clay_json_bool(0));
     clay_json_object_set(result, "error",
                          clay_json_string("command is required"));
+    pthread_mutex_unlock(&commands->tool_lock);
     return result;
   }
   ClayStr invocation;
@@ -299,7 +316,8 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
                              &authorization) != 0) {
       clay_json_free(result);
       clay_str_free(&invocation);
-      return denied_result();
+      pthread_mutex_unlock(&commands->tool_lock);
+    return denied_result();
     }
   }
   if (!integrated_shell && commands->mode == CLAY_MODE_PLAN &&
@@ -308,6 +326,7 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
     ClayJson *blocked =
         plan_blocked_result("this command would mutate the workspace");
     clay_str_free(&invocation);
+    pthread_mutex_unlock(&commands->tool_lock);
     return blocked;
   }
   if (!integrated_shell) {
@@ -319,7 +338,8 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
                                 invocation.data)) {
       clay_json_free(result);
       clay_str_free(&invocation);
-      return denied_result();
+      pthread_mutex_unlock(&commands->tool_lock);
+    return denied_result();
     }
   }
   clay_commands_checkpoint(commands, invocation.data);
@@ -394,6 +414,7 @@ static ClayJson *shell_exec_tool(const ClayJson *arguments, void *userdata) {
   }
   clay_str_free(&output);
   clay_str_free(&invocation);
+  pthread_mutex_unlock(&commands->tool_lock);
   return result;
 }
 
@@ -702,7 +723,7 @@ static int valid_todo_status(const char *status) {
 }
 
 ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata) {
-  ClayCommands *commands = userdata;
+  ClayPlan *plan = userdata;
   const ClayJson *todos = clay_json_object_get(arguments, "todos");
   ClayJson *result = clay_json_object();
   if (clay_json_type(todos) != CLAY_JSON_ARRAY) {
@@ -737,8 +758,8 @@ ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata) {
     /* Same step text as before means the same step: keep what the screen
        already shows for it, so only real movement gets printed. */
     char *shown = NULL;
-    for (size_t j = 0; j < commands->todos.count; j++) {
-      ClayTodoItem *previous = clay_array_get(&commands->todos, j);
+    for (size_t j = 0; j < plan->todos.count; j++) {
+      ClayTodoItem *previous = clay_array_get(&plan->todos, j);
       if (strcmp(previous->content, content) == 0 && previous->shown) {
         shown = strdup(previous->shown);
         break;
@@ -748,14 +769,14 @@ ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata) {
     clay_array_push_val(&items, &item);
   }
 
-  clay_commands_clear_todos(commands);
-  clay_array_free(&commands->todos);
-  commands->todos = items;
+  clay_plan_clear(plan);
+  clay_array_free(&plan->todos);
+  plan->todos = items;
 
   ClayStr output;
   clay_str_init(&output);
-  for (size_t i = 0; i < commands->todos.count; i++) {
-    ClayTodoItem *item = clay_array_get(&commands->todos, i);
+  for (size_t i = 0; i < plan->todos.count; i++) {
+    ClayTodoItem *item = clay_array_get(&plan->todos, i);
     const char *box = strcmp(item->status, "completed") == 0 ? CLAY_ICON_CHECK
                       : strcmp(item->status, "in_progress") == 0
                           ? CLAY_ICON_ARROW
@@ -867,9 +888,6 @@ static void set_status(double seconds, int success) {
   clay_str_free(&text);
 }
 
-/* Row hook for the reasoning block: keeps the pinned status row below it. */
-static void push_status_row(void) { clay_below_status_push_down(); }
-
 static void collapse_thinking(ClayConversationStream *stream) {
   if (!stream->thinking_output_started)
     return;
@@ -925,7 +943,7 @@ static void on_reasoning(const char *text, void *userdata) {
         clay_below_set_editing(0);
         clay_below_status_insert_above();
       }
-      clay_thinking_begin(stream->status_visible ? push_status_row : NULL);
+      clay_thinking_begin();
       stream->thinking_output_started = 1;
     }
     clay_thinking_write(text);
@@ -1134,8 +1152,8 @@ static void print_tool_output(const ClayJson *result, int show_command,
 static void render_plan(ClayCommands *commands) {
   const ClayTodoItem *active = NULL;
   size_t done = 0;
-  for (size_t i = 0; i < commands->todos.count; i++) {
-    ClayTodoItem *item = clay_array_get(&commands->todos, i);
+  for (size_t i = 0; i < commands->plan.todos.count; i++) {
+    ClayTodoItem *item = clay_array_get(&commands->plan.todos, i);
     int completed = strcmp(item->status, "completed") == 0;
     int running = strcmp(item->status, "in_progress") == 0;
     if (completed)
@@ -1151,7 +1169,7 @@ static void render_plan(ClayCommands *commands) {
       item->shown = strdup(item->status);
     }
   }
-  if (!active || commands->todos.count == 0) {
+  if (!active || commands->plan.todos.count == 0) {
     clay_below_set_enabled("plan", 0);
     return;
   }
@@ -1167,7 +1185,7 @@ static void render_plan(ClayCommands *commands) {
   ClayStr text;
   clay_str_init(&text);
   clay_str_printf(&text, "%s%zu/%zu%s ", clay_color(CLAY_GRAY), done + 1,
-                  commands->todos.count, clay_color(CLAY_RESET));
+                  commands->plan.todos.count, clay_color(CLAY_RESET));
   clay_str_push_n(&text, active->content, bytes);
   if (active->content[bytes])
     clay_str_push(&text, "\xe2\x80\xa6");
@@ -1333,8 +1351,8 @@ static void add_tool(ClayToolSet *set, const char *name, const char *description
   clay_array_push_val(&set->tools, &tool);
 }
 
-void clay_commands_tools_build(ClayCommands *commands, ClayToolSet *set,
-                               int allow_subagent) {
+void clay_commands_tools_build(ClayCommands *commands, ClayPlan *plan,
+                               ClayToolSet *set, int allow_subagent) {
   clay_array_init(&set->tools, sizeof(ClayTool));
   clay_array_init(&set->schemas, sizeof(ClayJson *));
   add_tool(set, "shell_exec",
@@ -1373,7 +1391,7 @@ void clay_commands_tools_build(ClayCommands *commands, ClayToolSet *set,
   add_tool(set, "todowrite",
            "Writes the full task plan, shown to the user as a checklist. Use for "
            "any multi-step task.",
-           todowrite_schema(), todowrite_tool, commands);
+           todowrite_schema(), todowrite_tool, plan);
   add_tool(set, "repo_map",
            "Lists the workspace's top-level definitions (functions, classes, "
            "structs, ...) ranked by how "
@@ -1503,7 +1521,7 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
   show_thinking(&stream);
   clay_app_set_state(commands->app, CLAY_APP_BUSY);
   ClayToolSet tools;
-  clay_commands_tools_build(commands, &tools, 1);
+  clay_commands_tools_build(commands, &commands->plan, &tools, 1);
   if (clay_term_is_interactive())
     clay_term_raw_enable();
   int rc = clay_commands_run_completion(commands, messages, &tools,
@@ -1547,12 +1565,14 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_app_set_state(commands->app, CLAY_APP_IDLE);
     return 0;
   }
-  if (rc == 0) {
+  /* Running out of rounds is an unfinished turn, not a failed one: the tool
+     results are real and the user can say "keep going". */
+  if (rc == 0 || rc == CLAY_RUN_OUT_OF_ROUNDS) {
     persist_thinking(commands, &stream);
     clay_chat_finish_turn(commands->chat, messages, turn_start, "completed");
     clay_json_free(commands->conversation);
     commands->conversation = messages;
-    set_status(seconds, 1);
+    set_status(seconds, rc == 0);
     if (stream.has_usage) {
       commands->input_tokens = stream.input_tokens;
       commands->output_tokens = stream.output_tokens;
@@ -1583,18 +1603,31 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     clay_json_free(messages);
     set_status(seconds, 0);
   }
-  /* A model that stops right after a tool call leaves nothing on screen;
-     say so rather than looking like clay swallowed the answer. */
-  if (rc == 0 && stream.ended_after_tool) {
+  /* However the turn ended, say so: a turn that stops mid-job and one that
+     dies on a provider error both used to end in silence once any output had
+     been streamed. */
+  if (rc != 0 || stream.ended_after_tool) {
     if (had_response && stream.status_visible) {
       clay_below_status_finish_output();
       stream.status_visible = 0;
     } else {
       hide_status(&stream);
     }
-    clay_sayc(CLAY_GRAY,
-              "The model ended the turn after its last tool call, without a "
-              "closing message.");
+    if (rc == CLAY_RUN_OUT_OF_ROUNDS)
+      clay_sayc(CLAY_YELLOW,
+                "Stopped after %d rounds of tool calls with the job still "
+                "open. The work so far is kept - send another message to "
+                "continue.",
+                CLAY_AGENT_MAX_ROUNDS);
+    else if (rc != 0 && stream.error_status > 0)
+      clay_sayc(CLAY_RED, "Provider request failed (HTTP %ld).",
+                stream.error_status);
+    else if (rc != 0)
+      clay_sayc(CLAY_RED, "Provider request failed.");
+    else
+      clay_sayc(CLAY_GRAY,
+                "The model ended the turn after its last tool call, without a "
+                "closing message.");
   }
   if (stream.started && clay_term_is_interactive()) {
     if (stream.status_visible)
@@ -1607,13 +1640,6 @@ int clay_commands_run_message(ClayCommands *commands, const char *input) {
     return 1;
   }
   hide_status(&stream);
-  if (rc != 0) {
-    if (stream.error_status > 0)
-      clay_sayc(CLAY_RED, "Provider request failed (HTTP %ld).",
-                stream.error_status);
-    else
-      clay_sayc(CLAY_RED, "Provider request failed.");
-  }
   clay_str_free(&stream.response);
   clay_wrap_free(&stream.wrap);
   clay_str_free(&stream.thinking);

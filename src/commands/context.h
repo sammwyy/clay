@@ -7,6 +7,8 @@
 #include "clay/providers/grok.h"
 #include "clay/sandbox.h"
 
+#include <pthread.h>
+
 typedef struct {
   const char *id;
   const char *label;
@@ -48,6 +50,13 @@ typedef struct {
   char *shown;    /* the status already on screen, so a redraw prints only
                      the steps that actually moved. NULL until printed. */
 } ClayTodoItem;
+
+/* Where a todowrite call writes. The session has one plan, which is drawn
+   for the user; every subagent gets its own, which only it ever sees. */
+typedef struct {
+  ClayArray todos; /* ClayTodoItem */
+  int rendered;    /* draw it in the transcript and the status row */
+} ClayPlan;
 
 /* Approval categories, independent of the sandbox (namespace) axis: whether
    a tool call needs the user's OK before it runs at all. */
@@ -109,8 +118,7 @@ struct ClayCommands {
                                                               for this session
                                                               only */
   ClayCommandsMode mode;
-  ClayArray
-      todos; /* ClayTodoItem, the current plan - session-only, not persisted */
+  ClayPlan plan; /* the session's own checklist, session-only, not persisted */
   ClayArray
       mcp_servers; /* ClayMcpServer*, connected for the life of the session */
   ClayArray mcp_bindings; /* ClayMcpToolBinding, one per discovered MCP tool */
@@ -129,6 +137,11 @@ struct ClayCommands {
   /* The spinner row of the tool call running right now, for a long call that
      wants to report progress on it (see subagent.c). NULL between calls. */
   ClayTask *active_tool_task;
+  /* Held by every tool that changes something (files, checkpoints, undo,
+     background tasks, approvals) so parallel subagents cannot interleave in
+     the middle of one. Recursive: a gated tool takes it around a permission
+     check that takes it too. */
+  pthread_mutex_t tool_lock;
 };
 
 ClayConnectedProvider *clay_commands_find_provider(ClayCommands *commands,
@@ -172,9 +185,9 @@ char *clay_commands_list_top_level(const char *dir);
    content older than the last few turns to a short preview, in place on
    commands->conversation. Returns how many results it collapsed. */
 int clay_commands_maybe_compact(ClayCommands *commands);
-/* Frees every item's content/status and empties commands->todos in place
-   (keeps the array itself, so it's ready for more clay_array_push_val). */
-void clay_commands_clear_todos(ClayCommands *commands);
+/* Frees every item and empties `plan` in place (keeping the array, ready
+   for more steps). A rendered plan also clears its row. */
+void clay_plan_clear(ClayPlan *plan);
 /* Connects to every configured MCP server (src/commands/mcp.c) the first
    time it's called in this session; later calls are a no-op. Best-effort -
    a server that fails to connect is skipped with a warning, not fatal. */
@@ -299,13 +312,16 @@ typedef struct {
 /* `allow_subagent` adds the two tools that only make sense for the agent
    talking to the user: ask_user and subagent. A subagent gets everything
    else, so it cannot nest or block on a question. */
-void clay_commands_tools_build(ClayCommands *commands, ClayToolSet *set,
-                               int allow_subagent);
+void clay_commands_tools_build(ClayCommands *commands, ClayPlan *plan,
+                               ClayToolSet *set, int allow_subagent);
 void clay_commands_tools_free(ClayToolSet *set);
 
-/* Rounds of tool calls one agent gets before the provider loop gives up. */
-#define CLAY_AGENT_MAX_ROUNDS 8
-#define CLAY_SUBAGENT_MAX_ROUNDS 24
+/* Rounds of tool calls one agent gets before the provider loop stops and
+   hands the turn back. Real work runs long: a scaffold plus a build plus a
+   verification pass is dozens of calls, and the old ceiling of 8 cut turns
+   off mid-job. Escape still cancels, and each command has its own timeout. */
+#define CLAY_AGENT_MAX_ROUNDS 64
+#define CLAY_SUBAGENT_MAX_ROUNDS 32
 
 /* Runs `messages` against the selected provider until the model answers or
    `max_rounds` is spent, appending the reply and tool results in place.
@@ -322,8 +338,8 @@ int clay_commands_run_completion(ClayCommands *commands, ClayJson *messages,
 ClayJson *subagent_tool(const ClayJson *arguments, void *userdata);
 ClayJson *subagent_schema(void);
 
-/* Plan/checklist tool (src/commands/message.c). Replaces commands->todos
-   wholesale on each call. userdata is a ClayCommands*. */
+/* Plan/checklist tool (src/commands/message.c). Replaces the plan it was
+   built with, wholesale, on each call. userdata is a ClayPlan*. */
 ClayJson *todowrite_tool(const ClayJson *arguments, void *userdata);
 ClayJson *todowrite_schema(void);
 

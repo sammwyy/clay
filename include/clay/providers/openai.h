@@ -88,7 +88,9 @@ void clay_openai_usage_from_json(const ClayJson *usage, ClayTokenUsage *out);
    final token usage when the compatible endpoint supports it. Runs any
    requested tool calls and resends until it answers with plain content or
    `max_rounds` is hit. Appends the assistant reply and any tool results to
-   `messages` in place. Returns 0 on success, 1 when cancelled, or -1 on failure. */
+   `messages` in place. Returns 0 on success, 1 when cancelled, 2 when it ran
+   out of rounds with work still in flight, or -1 on failure. */
+#define CLAY_RUN_OUT_OF_ROUNDS 2
 int clay_openai_run(ClayOpenAI *client, ClayJson *messages, const ClayTool *tools, size_t tool_count,
                      int max_rounds, const ClayOpenAICallbacks *callbacks);
 

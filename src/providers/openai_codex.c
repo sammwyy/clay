@@ -786,7 +786,9 @@ int clay_openai_codex_run(ClayOpenAICodex *client, ClayJson *messages,
     apply_calls(messages, tools, tool_count, &stream, callbacks);
     stream_free(&stream);
   }
-  return -1;
+  /* Rounds spent with tool calls still coming: not a failure, just an
+     unfinished turn the user can continue. */
+  return CLAY_RUN_OUT_OF_ROUNDS;
 }
 static void append_model(ClayArray *models, ClayJson *item) {
   const char *id = NULL;

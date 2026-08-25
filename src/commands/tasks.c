@@ -234,17 +234,24 @@ static ClayBackgroundTask *task_by_argument(ClayCommands *commands,
 
 ClayJson *task_run_tool(const ClayJson *arguments, void *userdata) {
   ClayCommands *commands = userdata;
+  pthread_mutex_lock(&commands->tool_lock);
   const char *command =
       clay_json_string_value(clay_json_object_get(arguments, "command"));
-  if (!*command)
+  if (!*command) {
+    pthread_mutex_unlock(&commands->tool_lock);
     return task_error("command is required");
-  if (commands->mode == CLAY_MODE_PLAN)
+  }
+  if (commands->mode == CLAY_MODE_PLAN) {
+    pthread_mutex_unlock(&commands->tool_lock);
     return task_error("blocked: clay is in Plan mode - background commands "
                       "are disabled. Describe what you would run instead, or "
                       "ask the user to run /plan to switch to Act mode.");
+  }
   if (!clay_permissions_check(commands, CLAY_PERMISSION_EXEC_ALL,
-                              "Run in background", command))
+                              "Run in background", command)) {
+    pthread_mutex_unlock(&commands->tool_lock);
     return task_error("denied by the user");
+  }
 
   clay_commands_checkpoint(commands, command);
   ClayBackgroundTask *task = calloc(1, sizeof(*task));
@@ -262,6 +269,7 @@ ClayJson *task_run_tool(const ClayJson *arguments, void *userdata) {
       clay_config_sandbox_readonly_mounts(&task->readonly_mount_count);
   if (pthread_create(&task->thread, NULL, task_thread, task) != 0) {
     task_free(task);
+    pthread_mutex_unlock(&commands->tool_lock);
     return task_error("failed to start the background task");
   }
   clay_array_push_val(&commands->tasks, &task);
@@ -269,6 +277,7 @@ ClayJson *task_run_tool(const ClayJson *arguments, void *userdata) {
   /* Long enough for a command that dies on startup (port in use, bad flag)
      to report it in this same tool result. */
   clay_term_sleep_ms(CLAY_TASK_START_GRACE_MS);
+  pthread_mutex_unlock(&commands->tool_lock);
   ClayJson *result = clay_json_object();
   clay_json_object_set(result, "ok", clay_json_bool(1));
   describe_task(task, result, 0);

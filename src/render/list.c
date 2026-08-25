@@ -6,6 +6,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 /* Keeps ordinary list items visually separate from assistant messages. */
 #define CLAY_INDENT "  "
@@ -14,7 +15,6 @@ static ClayStr g_thinking;
 static int g_thinking_ready = 0;
 static int g_thinking_streaming = 0;
 static int g_thinking_expanded = 0;
-static int g_thinking_rows = 1;
 static double g_thinking_seconds = 0;
 static int g_response_line_start = 1;
 
@@ -193,62 +193,71 @@ void clay_wrap_write(ClayWrap *wrap, const char *text) {
     }
 }
 
-static ClayWrap g_thinking_wrap;
-static void (*g_thinking_pin)(void);
-
-static void thinking_write_raw(const char *text, void *user_data) {
-    (void)user_data;
-    fputs(text, stdout);
+/* Reasoning is streamed for reassurance, not for reading: it goes on one
+   line that rewrites itself, so a minute of thinking costs one row of scroll
+   instead of a screenful. Ctrl+O still expands the whole thing afterwards. */
+static const char *thinking_tail(const char *text, int columns) {
+    /* Walk back `columns` display characters from the end, on a UTF-8
+       boundary. */
+    size_t len = strlen(text);
+    size_t offset = len;
+    int seen = 0;
+    while (offset > 0 && seen < columns) {
+        offset--;
+        while (offset > 0 && (((unsigned char)text[offset]) & 0xC0) == 0x80) offset--;
+        seen++;
+    }
+    if (offset == 0) return text;
+    /* Start at a word, not halfway through one. */
+    size_t word = offset;
+    while (text[word] && text[word] != ' ' && word < offset + 24) word++;
+    return text[word] == ' ' ? text + word + 1 : text + offset;
 }
 
-static void thinking_break_row(void *user_data) {
-    (void)user_data;
-    if (g_thinking_pin) g_thinking_pin();
-    fputc('\n', stdout);
-    fputs("  ", stdout);
-    g_thinking_rows++;
+static void thinking_redraw(void) {
+    int room = clay_term_width() - 14; /* indent, "Thinking: ", last column */
+    if (room < 8) return;
+    ClayStr line;
+    clay_str_init(&line);
+    /* Newlines and runs of spaces would break the single row, so the tail
+       reads as one continuous sentence. */
+    for (const char *p = thinking_tail(g_thinking.data, room); *p; p++) {
+        char c = (*p == '\n' || *p == '\r' || *p == '\t') ? ' ' : *p;
+        if (c == ' ' && line.len && line.data[line.len - 1] == ' ') continue;
+        clay_str_push_char(&line, c);
+    }
+    fputc('\r', stdout);
+    clay_term_clear_line();
+    printf("  %sThinking:%s %s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET),
+           clay_color(CLAY_GRAY));
+    clay_term_write_clipped(line.data, room);
+    fputs(clay_color(CLAY_RESET), stdout);
+    fflush(stdout);
+    clay_str_free(&line);
 }
 
-void clay_thinking_begin(void (*before_new_row)(void)) {
+void clay_thinking_begin(void) {
     ensure_thinking();
     clay_str_clear(&g_thinking);
     g_thinking_streaming = 1;
     g_thinking_expanded = 0;
-    g_thinking_rows = 1;
-    g_thinking_pin = before_new_row;
-    clay_wrap_init(&g_thinking_wrap, clay_response_prefix_width(),
-                   thinking_write_raw, thinking_break_row, NULL);
-    g_thinking_wrap.col = clay_response_prefix_width() +
-                          (int)clay_utf8_width("Thinking: ");
-    fputs("  ", stdout);
-    fputs(clay_color(CLAY_GRAY), stdout);
-    fputs("Thinking: ", stdout);
+    printf("  %sThinking:%s", clay_color(CLAY_GRAY), clay_color(CLAY_RESET));
     fflush(stdout);
 }
 
 void clay_thinking_write(const char *text) {
     if (!text || !*text) return;
     ensure_thinking();
-    clay_str_push(&g_thinking, text); /* stored raw, for Ctrl+O */
-    clay_wrap_write(&g_thinking_wrap, text);
-    fflush(stdout);
+    clay_str_push(&g_thinking, text); /* kept whole, for Ctrl+O */
+    thinking_redraw();
 }
 
 void clay_thinking_finish(double seconds) {
     ensure_thinking();
     if (!g_thinking_streaming) return;
-    clay_wrap_flush(&g_thinking_wrap);
-    clay_wrap_free(&g_thinking_wrap);
-    g_thinking_pin = NULL;
     g_thinking_seconds = seconds;
-    fputs(clay_color(CLAY_RESET), stdout);
-    fputc('\n', stdout);
-    clay_term_cursor_up(g_thinking_rows);
-    for (int i = 0; i < g_thinking_rows; i++) {
-        clay_term_clear_line();
-        if (i + 1 < g_thinking_rows) clay_term_cursor_down(1);
-    }
-    if (g_thinking_rows > 1) clay_term_cursor_up(g_thinking_rows - 1);
+    fputc('\r', stdout);
+    clay_term_clear_line();
     print_thinking_summary(seconds);
     g_thinking_streaming = 0;
     g_thinking_expanded = 0;
